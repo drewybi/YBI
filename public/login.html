@@ -5,17 +5,10 @@
 <script>window.BASE="{{B}}"</script><link rel="stylesheet" href="{{B}}/assets/app.css"><title>Artwork proofs · YBI Creative</title></head><body>
 <svg class="svgdefs" width="0" height="0" aria-hidden="true" focusable="false"><defs><filter id="ol-m" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="erode" radius="1.4" result="e"/><feComposite in="SourceGraphic" in2="e" operator="out"/></filter></defs></svg>
 <header class="hdr"><div class="wrap"><a class="logo" href="https://www.ybicreative.com.au" target="_blank" rel="noopener" aria-label="YBI Creative"><img src="{{B}}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></a><div class="hdr__r">Artwork proofs</div></div></header>
-<main><div class="wrap"><div class="entry">
- <form class="panel" id="find">
-  <p class="eyebrow">Clients</p><h1 class="h2">Find your <span class="ol">proof.</span></h1>
-  <p class="mute" style="margin:16px 0 28px">Enter the job number from your YBI email or quote.</p>
-  <div class="field"><label for="jn">Job number</label><input id="jn" inputmode="text" autocomplete="off" placeholder="e.g. 30434" required></div>
-  <div class="btns" style="margin-top:28px"><button class="btn" type="submit">View proof <svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg></button></div>
-  <p class="msg err" id="fm"></p>
- </form>
+<main><div class="wrap"><div class="login">
  <form class="panel" id="f">
-  <p class="eyebrow">YBI Studio</p><h2 class="h2">Proof <span class="ol">desk.</span></h2>
-  <p class="mute" style="margin:16px 0 28px">Studio password to manage artwork proofs.</p>
+  <p class="eyebrow">YBI Studio</p><h1 class="h2">Proof <span class="ol">desk.</span></h1>
+  <p class="mute" style="margin:16px 0 28px">Studio password to manage artwork proofs. Clients open the private link you send — a job number alone won’t open a proof.</p>
   <div class="field"><label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required></div>
   <div class="btns" style="margin-top:28px"><button class="btn btn--ghost" type="submit">Enter studio</button></div>
   <p class="msg err" id="m"></p>
@@ -25,6 +18,5 @@
 <script>
 const B=window.BASE||'';const $=i=>document.getElementById(i);const next=new URLSearchParams(location.search).get('next');
 $('f').onsubmit=async e=>{e.preventDefault();const r=await fetch(B+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('pw').value})});if(r.ok)location.href=(next&&next.startsWith(B+'/studio'))?next:B+'/studio';else $('m').textContent='That password didn’t work.';};
-$('find').onsubmit=e=>{e.preventDefault();const v=$('jn').value.trim().replace(/^#/,'');if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(v)){$('fm').textContent='Please check the job number.';return;}location.href=B+'/'+encodeURIComponent(v);};
-if(next)$('pw').focus();else $('jn').focus();
+$('pw').focus();
 </script></body></html>

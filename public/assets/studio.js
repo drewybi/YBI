@@ -1,11 +1,11 @@
-import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, harryStrip, mountHarry, pinsFrom, STATUS } from './common.js';
+import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 
 function band(eyebrow, title, sub = '', right = '') {
-  return harryStrip() + `<div class="wrap bandhead"><div class="bandhead__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div></div>`;
+  return engineBand(`<div class="eband__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div>`);
 }
 const lastDecision = j => { const v = j.versions.at(-1); return v && [...v.feedback].reverse().find(f => f.type !== 'note'); };
 
@@ -20,7 +20,6 @@ async function dashboard() {
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
    <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
   </div>`;
-  mountHarry(app);
   const tb = $('tbody', app);
   const draw = () => {
     const list = jobs.filter(j => (filter === 'all' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
@@ -34,12 +33,12 @@ async function dashboard() {
   bindNew();
 }
 
-function fbHtml(f) {
+function fbHtml(f, v, jobId) {
   const t = f.type === 'approve' ? 'Approved' : 'Changes requested';
   const imgs = f.attachments.filter(a => /\.(png|jpe?g|webp|gif)$/i.test(a.name));
   return `<div class="fb fb--${f.type}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span><b>${t}</b> · ${esc(f.name)}</span><span class="small dim">${fmtDate(f.at)}</span></div>
    ${f.note ? `<p>${esc(f.note)}</p>` : ''}
-   ${f.stickies?.length ? `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n">${s.n}</span><span class="note__t">${esc(s.text)}</span><span class="small dim">p.${s.page}</span></button></li>`).join('')}</ol>` : ''}
+   ${f.stickies?.length ? `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n" aria-hidden="true">${s.n}</span><span class="note__body"><span class="note__t">${esc(s.text)}</span><span class="note__meta">Page ${s.page}</span></span></button></li>`).join('')}</ol><div class="btns" style="margin-top:14px"><a class="btn btn--sm btn--ghost" href="${B}/api/jobs/${encodeURIComponent(jobId)}/changes.pdf?v=${v.n}&f=${encodeURIComponent(f.id)}">Download changes PDF</a></div>` : ''}
    ${imgs.length ? `<div class="thumbatt">${imgs.map(a => `<a href="${a.url}" target="_blank" rel="noopener"><img src="${a.url}" alt="${esc(a.name)}"></a>`).join('')}</div>` : ''}
    ${f.attachments.length ? `<div class="att">${f.attachments.map(a => `<a href="${a.url}?download">↓ ${esc(a.name)} <span class="dim">${fmtSize(a.size)}</span></a>`).join('')}</div>` : ''}</div>`;
 }
@@ -52,11 +51,8 @@ async function jobPage(key, showV) {
   app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(j.jobNumber), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div>${chip(j.status)}</div>`) +
   `<div class="wrap">
    <div class="panel" style="margin-top:36px"><span class="k">Client page — send this to ${esc(j.clientName)}</span>
-    <div class="linkbox"><input readonly value="${esc(j.access === 'private' ? j.secureUrl : j.reviewUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
-    <div class="linkrow small mute">
-     ${j.access === 'private' ? `<span>🔒 Private: only the secure link above works. <span class="dim">${esc(j.reviewUrl)}</span> asks for it.</span>` : `<span>Secure link (recommended for email): <button class="lnk" data-copy2 style="text-transform:none;letter-spacing:0;font-size:.86rem">${esc(j.secureUrl)}</button></span>`}
-    </div>
-    <label class="toggle"><input type="checkbox" data-private ${j.access === 'private' ? 'checked' : ''}> Private job — require the secure link (job number alone won’t open it)</label>
+    <div class="linkbox"><input readonly value="${esc(j.secureUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
+    <p class="small mute" style="margin:10px 0 0">Private link only. The job number alone won’t open this proof — send this link.</p>
     <div class="meta">
      <div><span class="k">Description</span>${esc(j.description) || '<span class="dim">—</span>'}</div>
      <div><span class="k">Client contact</span>${esc(j.clientName)}${j.clientEmail ? `<br><a href="mailto:${esc(j.clientEmail)}" class="mute">${esc(j.clientEmail)}</a>` : ''}</div>
@@ -75,14 +71,11 @@ async function jobPage(key, showV) {
      <div class="panel"><p class="eyebrow" style="margin-bottom:6px">Client feedback &amp; history</p>
       ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag">V${v.n}</span><span class="small dim">${esc(v.originalName)} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></div>
         ${v.studioNote ? `<p class="small mute" style="margin:8px 0 0">YBI note: ${esc(v.studioNote)}</p>` : ''}
-        ${v.feedback.length ? [...v.feedback].reverse().map(fbHtml).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
+        ${v.feedback.length ? [...v.feedback].reverse().map(f => fbHtml(f, v, j.id)).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
      </div>
      <div style="text-align:right"><button class="lnk" data-del>Delete job</button></div>
     </div></div></div>`;
-  mountHarry(app);
   $('[data-copy]', app).onclick = () => copy($('[data-main]', app).value);
-  const c2 = $('[data-copy2]', app); if (c2) c2.onclick = () => copy(j.secureUrl);
-  $('[data-private]', app).onchange = async e => { await api(`${B}/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify({ access: e.target.checked ? 'private' : 'public' }) }); toast(e.target.checked ? 'Job is now private' : 'Job number link is open'); jobPage(key, showV); };
   if (sel) {
     const pinFb = [...sel.feedback].reverse().find(f => f.stickies?.length);
     mountViewer($('[data-viewer]', app), sel, {
@@ -112,9 +105,8 @@ async function settings() {
   app.innerHTML = band('YBI Studio', 'Settings') + `<div class="wrap"><div class="panel" style="margin-top:36px;max-width:760px">
    <div class="field"><label>Notification email</label><input data-email type="email" value="${esc(s.notifyEmail)}" placeholder="e.g. drew@ybicreative.com.au"></div>
    <p class="small mute">Email alerts: <b>${s.emailEnabled ? 'ON (SMTP configured)' : 'OFF'}</b>. ${s.emailEnabled ? '' : 'Approvals and change requests still show on the Jobs dashboard and in <code>data/notifications.log</code>. To switch email on, set the SMTP_* variables — see README.'}</p>
-   <p class="small mute">Client pages: <b>${esc(location.origin + s.basePath)}/{job number}</b> · new jobs default to <b>${s.defaultAccess}</b> (set DEFAULT_ACCESS=private to require secure links).</p>
+   <p class="small mute">Clients only open a proof from the private link on the job (<b>…?k=</b>). A job number on its own does not work.</p>
    <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-save>Save</button><button class="btn btn--sm btn--ghost" data-out>Log out</button></div></div></div>`;
-  mountHarry(app);
   $('[data-save]', app).onclick = async () => { await api(B + '/api/settings', { method: 'POST', body: JSON.stringify({ notifyEmail: $('[data-email]', app).value }) }); toast('Saved'); };
   $('[data-out]', app).onclick = async () => { await api(B + '/api/logout', { method: 'POST' }); location.href = B + '/'; };
 }

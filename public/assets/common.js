@@ -42,23 +42,13 @@ export function dropzone(el, onFiles) {
 let pdfjsP;
 const pdfjs = () => pdfjsP ||= import(B + '/vendor/pdfjs/pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = B + '/vendor/pdfjs/pdf.worker.min.mjs'; return m; });
 
-const prefersReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-// Harry Hogge strip from ybicreative.com.au. Plays once per page load; later renders (dashboard poll) stay open.
-export function harryStrip() {
-  const instant = prefersReduced() || document.documentElement.dataset.harry === '1';
+// Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
+export function engineBand(inner) {
   const src = `${B}/assets/img`;
-  return `<section class="hstrip rv-strip${instant ? ' is-in' : ''}" data-hstrip>
-    <div class="hstrip__media"><img src="${src}/harry-1280.webp" srcset="${src}/harry-640.webp 640w, ${src}/harry-1280.webp 1280w, ${src}/harry-1920.webp 1920w, ${src}/harry-2560.webp 2560w" sizes="100vw" width="2560" height="958" alt="Pit crew chief in a black and yellow City Chevrolet race suit and headset on pit road, from Days of Thunder" decoding="async" style="object-position:62% 40%"></div>
-    <div class="wrap hstrip__in"><p class="hstrip__t" aria-label="We're dropping the hammer Harry..."><span class="w" aria-hidden="true"><span style="--i:0">We're</span></span> <span class="w" aria-hidden="true"><span style="--i:1">dropping</span></span> <span class="w" aria-hidden="true"><span style="--i:2">the</span></span> <span class="w" aria-hidden="true"><span style="--i:3">hammer</span></span> <span class="w" aria-hidden="true"><span class="ol" style="--i:4">Harry...</span></span></p></div>
+  return `<section class="eband">
+    <div class="eband__media" aria-hidden="true"><img class="eband__still" src="${src}/engine-1280.webp" srcset="${src}/engine-640.webp 640w, ${src}/engine-1280.webp 1280w, ${src}/engine-1920.webp 1920w" sizes="100vw" width="1280" height="720" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="metadata" poster="${src}/engine-1280.webp"><source src="${B}/assets/video/engine.mp4" type="video/mp4"></video></div>
+    <div class="wrap eband__in">${inner}</div>
   </section>`;
-}
-export function mountHarry(root = document) {
-  root.querySelectorAll('.hstrip:not(.is-in)').forEach(el => {
-    const arm = () => { el.classList.add('is-in'); document.documentElement.dataset.harry = '1'; };
-    // Two frames so the closed clip-path / word offset paints before the transition.
-    requestAnimationFrame(() => requestAnimationFrame(arm));
-  });
 }
 
 // Proof viewer. version = { kind:'pdf'|'image', url, originalName }

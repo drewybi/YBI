@@ -9,6 +9,13 @@
     "samples": "python3 scripts/make-samples.py",
     "test": "bash scripts/smoke-test.sh"
   },
-  "engines": { "node": ">=18" },
-  "optionalDependencies": { "nodemailer": "^6.9.16" }
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "nodemailer": "^6.9.16"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
 }

@@ -6,6 +6,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { buildChangesPdf } = require('./changes-pdf');
 
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
@@ -18,8 +19,8 @@ const STUDIO_PASSWORD = process.env.STUDIO_PASSWORD || 'ybi-proof';
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin only, e.g. https://www.ybicreative.com.au
 // Path prefix the app is mounted at (default /proof). Use BASE_PATH= (empty) to mount at the root.
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
-// Default access for new jobs: 'public' = /proof/{jobNumber} works for anyone with the number; 'private' = needs the secure ?k= link
-const DEFAULT_ACCESS = process.env.DEFAULT_ACCESS === 'private' ? 'private' : 'public';
+// Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
+const DEFAULT_ACCESS = 'private';
 const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'login', 'logout', 'favicon.ico', 'robots.txt']);
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
@@ -34,7 +35,7 @@ const SETTINGS_FILE = path.join(DATA, 'settings.json');
 const LOG_FILE = path.join(DATA, 'notifications.log');
 
 // ---------- helpers ----------
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.zip': 'application/zip', '.ai': 'application/postscript', '.eps': 'application/postscript' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.webm': 'video/webm', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.zip': 'application/zip', '.ai': 'application/postscript', '.eps': 'application/postscript' };
 const PROOF_TYPES = { '.pdf': 'pdf', '.jpg': 'image', '.jpeg': 'image', '.png': 'image' };
 const id = (n = 6) => crypto.randomBytes(n).toString('hex');
 const token = () => crypto.randomBytes(18).toString('base64url');
@@ -72,12 +73,21 @@ function streamToFile(req, dest, limit) {
 // ---------- storage ----------
 const jobPath = jid => path.join(JOBS, jid + '.json');
 async function loadJob(jid) { if (!/^[a-f0-9]{12}$/.test(jid)) return null; try { return JSON.parse(await fsp.readFile(jobPath(jid), 'utf8')); } catch { return null; } }
-async function saveJob(job) { job.updatedAt = now(); const t = jobPath(job.id) + '.tmp'; await fsp.writeFile(t, JSON.stringify(job, null, 2)); await fsp.rename(t, jobPath(job.id)); }
-async function allJobs() { const fsn = (await fsp.readdir(JOBS)).filter(f => f.endsWith('.json')); return (await Promise.all(fsn.map(f => loadJob(f.slice(0, -5))))).filter(Boolean); }
+async function saveJob(job) { job.access = 'private'; job.updatedAt = now(); const t = jobPath(job.id) + '.tmp'; await fsp.writeFile(t, JSON.stringify(job, null, 2)); await fsp.rename(t, jobPath(job.id)); }
+async function allJobs() { const fsn = (await fsp.readdir(JOBS)).filter(f => f.endsWith('.json')); const jobs = (await Promise.all(fsn.map(f => loadJob(f.slice(0, -5))))).filter(Boolean); await Promise.all(jobs.map(ensurePrivate)); return jobs; }
 async function jobByToken(tok) { if (!tok || tok.length < 10) return null; return (await allJobs()).find(j => j.token === tok) || null; }
 async function jobByNumber(num) { const n = norm(num); if (!n) return null; return (await allJobs()).find(j => norm(j.jobNumber) === n) || null; }
-const accessOf = job => job.access || 'public';
-const canView = (job, k) => accessOf(job) === 'public' || (k && k === job.token);
+const accessOf = () => 'private';
+const canView = (job, k) => !!(job && k && k === job.token);
+// Existing jobs may still say access:"public" on disk. Treat them as private and rewrite that flag without bumping updatedAt.
+async function ensurePrivate(job) {
+  if (!job || job.access === 'private') return job;
+  job.access = 'private';
+  const t = jobPath(job.id) + '.tmp';
+  await fsp.writeFile(t, JSON.stringify(job, null, 2));
+  await fsp.rename(t, jobPath(job.id));
+  return job;
+}
 // light brute-force guard for guessable job-number URLs: max 40 misses / 10 min per IP
 const misses = new Map();
 function tooManyMisses(req) { const ip = req.socket.remoteAddress, t = Date.now(); const a = (misses.get(ip) || []).filter(x => t - x < 600000); misses.set(ip, a); return a.length >= 40; }
@@ -240,6 +250,24 @@ async function handle(req, res) {
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
+    if ((r = p.match(/^\/api\/jobs\/([^/]+)\/changes\.pdf$/)) && (m === 'GET' || m === 'HEAD')) {
+      const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
+      if (!job) return err(res, 404, 'No job with that number.');
+      const v = job.versions.find(x => x.n === +u.searchParams.get('v'));
+      const fb = v && v.feedback.find(f => f.id === u.searchParams.get('f') && f.type === 'changes');
+      if (!v || !fb || !(fb.stickies || []).length) return err(res, 404, 'No marked-up changes on that version.');
+      let pdf;
+      try {
+        pdf = await buildChangesPdf({
+          kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
+          stickies: fb.stickies,
+          meta: { jobNumber: job.jobNumber, version: v.n, clientName: job.clientName, requester: fb.name, note: fb.note, feedbackId: fb.id }
+        });
+      } catch (e) { console.error('[changes.pdf]', e); return err(res, 500, 'Could not build the changes PDF.'); }
+      const fname = `YBI-${safeName(job.jobNumber)}-V${v.n}-changes.pdf`;
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      return m === 'HEAD' ? res.end() : res.end(pdf);
+    }
     if (p === '/api/jobs' && m === 'GET') { const js = await allJobs(); js.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); return send(res, 200, js.map(j => studioJob(req, j))); }
     if (p === '/api/jobs' && m === 'POST') {
       const b = await readJSON(req); const num = String(b.jobNumber || '').trim();
@@ -247,7 +275,7 @@ async function handle(req, res) {
       if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
       const dupe = await jobByNumber(num);
       if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
-      const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: ['public', 'private'].includes(b.access) ? b.access : DEFAULT_ACCESS, createdAt: now(), versions: [] };
+      const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', createdAt: now(), versions: [] };
       await fsp.mkdir(path.join(FILES, job.id), { recursive: true }); await saveJob(job);
       return send(res, 201, studioJob(req, job));
     }
@@ -255,7 +283,7 @@ async function handle(req, res) {
       const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
       if (!job) return err(res, 404, 'No job with that number.');
       if (!r[2]) {
-        if (m === 'GET') return send(res, 200, studioJob(req, job));
+        if (m === 'GET') { await ensurePrivate(job); return send(res, 200, studioJob(req, job)); }
         if (m === 'PATCH') {
           const b = await readJSON(req);
           if ('jobNumber' in b && norm(b.jobNumber) !== norm(job.jobNumber)) {
@@ -265,7 +293,7 @@ async function handle(req, res) {
             job.jobNumber = num;
           }
           for (const key of ['description', 'clientName', 'clientCompany', 'clientEmail', 'clientPhone']) if (key in b) job[key] = String(b[key]).trim().slice(0, 2000);
-          if (['public', 'private'].includes(b.access)) job.access = b.access;
+          job.access = 'private';
           if (b.rotateToken) job.token = token();
           if (b.markSeen) { job.unread = false; job.seenAt = now(); }
           await saveJob(job); return send(res, 200, studioJob(req, job));

@@ -10,30 +10,28 @@ with sync_playwright() as p:
     studio.on('console', lambda m: m.type == 'error' and errs.append('studio: ' + m.text))
     studio.on('pageerror', lambda e: errs.append('studio: ' + str(e)))
     studio.goto(BASE + '/studio'); studio.wait_for_selector('#pw'); studio.screenshot(path=f'{OUT}/01-entry-login.png')
+    assert studio.locator('#jn').count() == 0
     studio.fill('#pw', KEY); studio.click('#f button'); studio.wait_for_selector('table.jobs')
-    studio.wait_for_selector('.hstrip.is-in')
-    assert 'workshop-1280' not in studio.content() and 'engine-1280' not in studio.content()
-    assert 'Harry' in studio.text_content('.hstrip__t')
+    studio.wait_for_selector('.eband video')
+    assert 'harry-' not in studio.content()
+    assert 'engine.mp4' in studio.content()
     # create PDF job through the modal
     studio.click('header [data-new]'); studio.fill('#n-num', '30434'); studio.fill('#n-client', 'Jo Retailer')
     studio.fill('#n-co', 'Bendigo Auto Spares'); studio.fill('#n-email', 'jo@example.com')
     studio.fill('#n-desc', 'Spring catalogue — A4, 3pp, 150gsm satin, qty 2,000')
     studio.set_input_files('#n-drop input', f'{S}/catalogue-V1.pdf'); studio.screenshot(path=f'{OUT}/02-studio-new-job.png')
     studio.click('#n-go'); studio.wait_for_selector('[data-copy]'); studio.wait_for_selector('[data-viewer] canvas')
-    link = studio.input_value('.linkbox input'); print('client link:', link); assert link.endswith('/proof/30434'), link
-    studio.wait_for_timeout(1700); studio.screenshot(path=f'{OUT}/03-studio-job-V1.png', full_page=True)
+    link = studio.input_value('.linkbox input'); print('client link:', link); assert '/proof/30434?k=' in link, link
+    studio.screenshot(path=f'{OUT}/03-studio-job-V1.png', full_page=True)
 
     c = b.new_page(viewport={'width': 1440, 'height': 1000})
     c.on('console', lambda m: m.type == 'error' and errs.append('client: ' + m.text))
     c.on('pageerror', lambda e: errs.append('client: ' + str(e)))
     c.goto(link); c.wait_for_selector('[data-viewer] .stage canvas'); c.wait_for_selector('.thumbs canvas:nth-child(3)')
-    c.wait_for_selector('.hstrip.is-in')
-    assert 'engine-1280' not in c.content() and 'workshop-1280' not in c.content()
-    assert 'Harry' in c.text_content('.hstrip__t')
+    c.wait_for_selector('.eband video')
+    assert 'harry-' not in c.content() and 'engine.mp4' in c.content()
     assert 'Page 1 / 3' in c.text_content('[data-pg]')
     assert c.locator('a[aria-label="Download"]').count() == 1 and c.locator('a[aria-label="Open in new tab"]').count() == 1
-    dur = c.eval_on_selector('.hstrip__media', 'el => getComputedStyle(el).transitionDuration')
-    assert dur.startswith('1.6'), dur
     inline_w = c.eval_on_selector('.stage canvas', 'el => el.getBoundingClientRect().width')
     c.click('[data-expand]'); c.wait_for_selector('.viewer.is-fs')
     c.wait_for_function('''(w) => { const el = document.querySelector(".viewer.is-fs .stage canvas"); return el && el.getBoundingClientRect().width > w * 1.45; }''', arg=inline_w)
@@ -73,13 +71,20 @@ with sync_playwright() as p:
     c.wait_for_selector('.pin.on')
     c.screenshot(path=f'{OUT}/06-client-waiting.png', full_page=True)
 
-    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.wait_for_selector('.hstrip.is-in'); studio.wait_for_timeout(1700)
+    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.wait_for_selector('.eband')
     studio.screenshot(path=f'{OUT}/07-studio-dashboard.png', full_page=True)
     studio.click('tr.row:has-text("30434")'); studio.wait_for_url('**/proof/studio/30434'); studio.wait_for_selector('.fb--changes img')
     studio.wait_for_selector('.stage .pin')
     assert 'Move the logo up' in studio.inner_text('.fb--changes')
     studio.locator('.fb--changes .note__hit', has_text='Phone should').click()
     studio.wait_for_selector('.pin.on')
+    studio.wait_for_selector('.notelist--ro .note.on')
+    assert 'Page 1' in studio.text_content('.notelist--ro')
+    studio.locator('.fb--changes').screenshot(path=f'{OUT}/16-studio-stickies.png')
+    href = studio.locator('a', has_text='Download changes PDF').get_attribute('href')
+    origin = BASE[:-6] if BASE.endswith('/proof') else BASE
+    pdf = studio.context.request.get(origin + href)
+    assert pdf.status == 200 and 'pdf' in pdf.headers['content-type'] and pdf.body()[:4] == b'%PDF', (pdf.status, pdf.headers.get('content-type'))
     studio.set_input_files('[data-vdrop] input', f'{S}/catalogue-V2.pdf'); studio.fill('[data-vnote]', 'Back cover phone number corrected.')
     studio.click('[data-vgo]'); studio.wait_for_function("document.querySelector('.vtag') && document.querySelector('.vtag').textContent.startsWith('V2')")
     studio.wait_for_selector('[data-viewer] canvas'); studio.screenshot(path=f'{OUT}/08-studio-job-V2.png', full_page=True)
@@ -95,14 +100,15 @@ with sync_playwright() as p:
     c.screenshot(path=f'{OUT}/10-client-approved.png', full_page=True)
 
     m = b.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
-    m.goto(link); m.wait_for_selector('.hstrip.is-in'); m.wait_for_selector('[data-viewer] .stage canvas'); m.wait_for_timeout(1600); m.screenshot(path=f'{OUT}/11-client-mobile.png', full_page=True)
+    m.goto(link); m.wait_for_selector('.eband'); m.wait_for_selector('[data-viewer] .stage canvas'); m.screenshot(path=f'{OUT}/11-client-mobile.png', full_page=True)
     rm = b.new_page(viewport={'width': 1280, 'height': 800})
     rm.emulate_media(reduced_motion='reduce')
-    rm.goto(link); rm.wait_for_selector('.hstrip.is-in')
-    assert rm.eval_on_selector('.hstrip__media', 'el => getComputedStyle(el).clipPath') == 'none'
-    assert rm.eval_on_selector('.hstrip__t .w > span', 'el => getComputedStyle(el).transform') == 'none'
-    # client finds proof by job number from the entry page
-    e = b.new_page(viewport={'width': 1440, 'height': 1000}); e.goto(BASE); e.fill('#jn', '30434'); e.click('#find button'); e.wait_for_url('**/proof/30434'); e.wait_for_selector('[data-state=approved]')
+    rm.goto(link); rm.wait_for_selector('.eband')
+    assert rm.eval_on_selector('.eband__vid', 'el => getComputedStyle(el).display') == 'none'
+    assert rm.eval_on_selector('.eband__still', 'el => getComputedStyle(el).display') != 'none'
+    # a bare job number does not open the proof
+    e = b.new_page(viewport={'width': 1440, 'height': 1000}); e.goto(BASE + '/30434'); e.wait_for_selector('text=secure link')
+    assert e.locator('[data-viewer]').count() == 0
     # duplicate job number refused in the UI
     studio.goto(BASE + '/studio'); studio.wait_for_selector('table.jobs'); studio.click('header [data-new]'); studio.fill('#n-num', '30434'); studio.fill('#n-client', 'Someone'); studio.click('#n-go'); studio.wait_for_selector('#n-msg a'); assert 'already exists' in studio.text_content('#n-msg'); studio.screenshot(path=f'{OUT}/13-studio-duplicate-refused.png')
     studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.screenshot(path=f'{OUT}/12-studio-dashboard-final.png', full_page=True)
