@@ -78,7 +78,7 @@ The client opens `/proof/30434` (or types `30434` on `/proof`) and sees:
 - the job number, client name and job description
 - the proof itself: images inline; PDFs page by page (‹ ›, arrow keys, thumbnails), plus zoom (+ / −), a full-screen stage (⤢, Esc to leave), download and open-in-new-tab
 - **Approve**: name, an optional comment and a "checked spelling, contact details, colours, sizes" tick box, then a green confirmation
-- **Request changes**: name, a note, and **optional file attachments** (several files, up to 100 MB each). They then see "Thanks — we're on it. This same link will show the new version" and can add more notes or files while they wait.
+- **Request changes**: name, optional notes, and **optional file attachments** (several files, up to 100 MB each). They can also click the proof to drop numbered sticky notes — each sticky has its own change text, listed on the right in the same order, and selecting a list item highlights that sticky (and the other way around). Positions are saved with the feedback so the studio sees them on the artwork. They then see "Thanks — we're on it. This same link will show the new version" and can add more notes or files while they wait.
 - previous versions (view-only) and a short history
 
 An approved version is locked. A decision made on an out-of-date version is rejected with a message asking the client to refresh. Each feedback entry records whether it came via the `secure-link` or the `job-number` URL.

@@ -62,16 +62,20 @@ export function mountHarry(root = document) {
 }
 
 // Proof viewer. version = { kind:'pdf'|'image', url, originalName }
-// ⤢ opens a real viewport-sized stage. The old control only scaled the canvas inside a 78vh box.
+// ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
+// opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
-export async function mountViewer(root, version) {
+export function pinsFrom(f) {
+  return (f?.stickies || []).map(s => ({ id: `${f.id}-${s.n}`, n: s.n, page: s.page || 1, x: +s.x, y: +s.y, text: s.text || '' }));
+}
+export async function mountViewer(root, version, opts = {}) {
   if (window.__ybiViewerClean) window.__ybiViewerClean();
   const fileUrl = version.url;
   const dl = fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
   root.innerHTML = `<div class="viewer" data-viewer-root>
     <div class="viewer__bar">
       <div class="grp"><button class="ibtn" type="button" data-prev aria-label="Previous page">‹</button><span class="pg" data-pg>—</span><button class="ibtn" type="button" data-next aria-label="Next page">›</button></div>
-      <div class="grp"><span class="small dim" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(version.originalName)}</span></div>
+      <div class="grp"><span class="small dim" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(version.originalName)}</span><span class="pin-hint" data-hint hidden>Click or tap the proof to mark a change</span></div>
       <div class="grp">
         <button class="ibtn" type="button" data-zout aria-label="Zoom out" title="Zoom out">−</button>
         <button class="ibtn" type="button" data-zin aria-label="Zoom in" title="Zoom in">+</button>
@@ -81,11 +85,15 @@ export async function mountViewer(root, version) {
       </div>
     </div>
     <div class="stage" data-stage><span class="loading">Loading proof…</span></div>
+    <div class="pin-dock" data-dock hidden><span class="note__n" data-dock-n>1</span><textarea data-dock-text rows="2" placeholder="What should change here?"></textarea><button type="button" class="note__x" data-dock-del aria-label="Remove this note">✕</button></div>
     <div class="thumbs" data-thumbs hidden></div></div>`;
   const viewer = $('[data-viewer-root]', root), stage = $('[data-stage]', root), pg = $('[data-pg]', root);
   const prev = $('[data-prev]', root), next = $('[data-next]', root), thumbs = $('[data-thumbs]', root);
   const expandBtn = $('[data-expand]', root), zin = $('[data-zin]', root), zout = $('[data-zout]', root);
-  let zoomLevel = 0, expanded = false, render = null, page = 1, n = 1;
+  const hint = $('[data-hint]', root), dock = $('[data-dock]', root), dockText = $('[data-dock-text]', root), dockN = $('[data-dock-n]', root);
+  let zoomLevel = 0, expanded = false, render = null, page = 1, n = 1, lastKey = '';
+  let pins = (opts.pins || []).slice(), active = opts.active || null;
+  const placing = !!opts.place;
 
   const syncZoom = () => {
     zin.disabled = zoomLevel >= ZOOMS.length - 1;
@@ -158,6 +166,80 @@ export async function mountViewer(root, version) {
     window.__ybiViewerClean = null;
   };
 
+  const sheetOf = () => $('[data-sheet]', stage);
+  function layoutPins() {
+    const sheet = sheetOf();
+    if (!sheet) return;
+    $$('.pin', sheet).forEach(el => el.remove());
+    pins.filter(p => (p.page || 1) === page).forEach(p => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pin' + (p.id === active ? ' on' : '');
+      b.dataset.id = p.id;
+      b.style.left = (p.x * 100) + '%';
+      b.style.top = (p.y * 100) + '%';
+      b.textContent = p.n;
+      b.title = p.text ? `${p.n}. ${p.text}` : `Note ${p.n}`;
+      b.setAttribute('aria-label', b.title);
+      b.onclick = e => { e.stopPropagation(); e.preventDefault(); select(p.id); };
+      sheet.append(b);
+    });
+    if (hint) hint.hidden = !placing || pins.length > 0;
+    syncDock();
+  }
+  function focusPin(id) {
+    const el = sheetOf()?.querySelector(`.pin[data-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    const sr = stage.getBoundingClientRect(), er = el.getBoundingClientRect();
+    if (er.top < sr.top + 8 || er.bottom > sr.bottom - 8) stage.scrollTop += er.top - sr.top - sr.height / 2 + er.height / 2;
+    if (er.left < sr.left + 8 || er.right > sr.right - 8) stage.scrollLeft += er.left - sr.left - sr.width / 2 + er.width / 2;
+  }
+  function syncDock() {
+    const p = pins.find(x => x.id === active);
+    const show = !!(placing && expanded && p);
+    dock.hidden = !show;
+    if (!p) return;
+    dockN.textContent = p.n;
+    if (document.activeElement !== dockText) dockText.value = p.text || '';
+  }
+  function ensureSheet(node) {
+    const existing = node.parentElement && node.parentElement.matches?.('[data-sheet]') ? node.parentElement : null;
+    if (existing && existing.parentElement === stage) { existing.classList.toggle('is-place', placing); layoutPins(); return existing; }
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet'; sheet.dataset.sheet = '';
+    sheet.classList.toggle('is-place', placing);
+    sheet.addEventListener('click', e => {
+      if (!placing || e.target.closest('.pin')) return;
+      const r = sheet.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      if (x < 0 || y < 0 || x > 1 || y > 1) return;
+      opts.onPlace && opts.onPlace({ page, x, y });
+    });
+    sheet.append(node);
+    stage.replaceChildren(sheet);
+    layoutPins();
+    return sheet;
+  }
+  async function select(id) {
+    active = id;
+    const p = pins.find(x => x.id === id);
+    if (p && (p.page || 1) !== page && version.kind === 'pdf' && p.page >= 1 && p.page <= n) {
+      page = p.page; lastKey = ''; await render();
+    } else layoutPins();
+    focusPin(id);
+    opts.onSelect && opts.onSelect(id);
+  }
+  dockText.oninput = () => { const p = pins.find(x => x.id === active); if (p) { p.text = dockText.value; opts.onText && opts.onText(dockText.value); } };
+  $('[data-dock-del]', root).onclick = () => opts.onRemove && opts.onRemove(active);
+  const api = {
+    setPins(list) { pins = (list || []).slice(); if (active && !pins.some(p => p.id === active)) active = null; layoutPins(); },
+    select,
+    setText(id, text) { const p = pins.find(x => x.id === id); if (p) p.text = text; const el = sheetOf()?.querySelector(`.pin[data-id="${CSS.escape(id)}"]`); if (el) el.title = text ? `${p.n}. ${text}` : `Note ${p.n}`; if (id === active) syncDock(); },
+    focusDock() { if (!expanded) return; dock.hidden = false; syncDock(); dockText.focus(); }
+  };
+  // Hand the api over before the first await so a click during thumbnail load uses this viewer.
+  opts.onReady && opts.onReady(api);
+
   if (version.kind === 'image') {
     prev.hidden = next.hidden = true; stage.classList.add('is-image');
     const img = new Image(); img.alt = version.originalName || 'Proof'; img.src = version.url;
@@ -170,14 +252,14 @@ export async function mountViewer(root, version) {
       img.style.width = Math.max(1, Math.round(img.naturalWidth * fit * ZOOMS[zoomLevel])) + 'px';
       img.style.height = 'auto';
     };
-    img.onload = () => { stage.replaceChildren(img); pg.textContent = `${img.naturalWidth}×${img.naturalHeight}px`; render(); };
+    img.onload = () => { pg.textContent = `${img.naturalWidth}×${img.naturalHeight}px`; ensureSheet(img); render(); };
     img.onerror = () => { stage.innerHTML = '<span class="loading">Could not load image.</span>'; };
-    return;
+    return api;
   }
 
   const lib = await pdfjs();
   const doc = await lib.getDocument(version.url).promise;
-  n = doc.numPages; let busy = 0, lastKey = '';
+  n = doc.numPages; let busy = 0;
   render = async () => {
     const my = ++busy;
     const p = await doc.getPage(page);
@@ -197,7 +279,7 @@ export async function mountViewer(root, version) {
     await p.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
     if (my !== busy) return;
     lastKey = key;
-    stage.replaceChildren(c);
+    ensureSheet(c);
     pg.textContent = `Page ${page} / ${n}`; prev.disabled = page <= 1; next.disabled = page >= n;
     $$('canvas', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
   };
@@ -216,4 +298,5 @@ export async function mountViewer(root, version) {
     }
     if (expanded) { lastKey = ''; render(); }
   }
+  return api;
 }

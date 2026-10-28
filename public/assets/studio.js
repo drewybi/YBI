@@ -1,4 +1,4 @@
-import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, harryStrip, mountHarry, STATUS } from './common.js';
+import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, harryStrip, mountHarry, pinsFrom, STATUS } from './common.js';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
@@ -15,7 +15,7 @@ async function dashboard() {
   const acts = jobs.flatMap(j => j.versions.flatMap(v => v.feedback.map(f => ({ j, v, f })))).sort((a, b) => b.f.at.localeCompare(a.f.at)).slice(0, 8);
   app.innerHTML = band('YBI Studio · Proofs', 'Artwork <span class="ol">approvals.</span>', 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New proof ${ARROW}</button>`) +
   `<div class="wrap">
-   ${acts.length ? `<section style="margin-top:44px"><p class="eyebrow">Latest client activity</p><ul class="activity">${acts.map(({ j, v, f }) => `<li>${chip(f.type === 'approve' ? 'approved' : 'changes_requested')}<a href="${jobHref(j)}"><b class="num">${esc(j.jobNumber)}</b> · ${esc(j.clientName)} — V${v.n} · ${esc(f.name)}${f.note ? `: <span class="mute">“${esc(f.note.slice(0, 90))}${f.note.length > 90 ? '…' : ''}”</span>` : ''}${f.attachments.length ? ` <span class="dim">· ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}</span>` : ''}${j.unread && f === lastDecision(j) ? '<span class="dot" title="New"></span>' : ''}</a><span class="small dim">${fmtDate(f.at)}</span></li>`).join('')}</ul></section>` : ''}
+   ${acts.length ? `<section style="margin-top:44px"><p class="eyebrow">Latest client activity</p><ul class="activity">${acts.map(({ j, v, f }) => `<li>${chip(f.type === 'approve' ? 'approved' : 'changes_requested')}<a href="${jobHref(j)}"><b class="num">${esc(j.jobNumber)}</b> · ${esc(j.clientName)} — V${v.n} · ${esc(f.name)}${f.note ? `: <span class="mute">“${esc(f.note.slice(0, 90))}${f.note.length > 90 ? '…' : ''}”</span>` : ''}${f.stickies?.length ? ` <span class="dim">· ${f.stickies.length} on the proof</span>` : ''}${f.attachments.length ? ` <span class="dim">· ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}</span>` : ''}${j.unread && f === lastDecision(j) ? '<span class="dot" title="New"></span>' : ''}</a><span class="small dim">${fmtDate(f.at)}</span></li>`).join('')}</ul></section>` : ''}
    <div class="toolbar"><div class="tabs">${['all', 'awaiting_review', 'changes_requested', 'approved'].map(s => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${s === 'all' ? 'All' : STATUS[s]} ${counts[s] || 0}</button>`).join('')}</div>
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
    <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
@@ -39,6 +39,7 @@ function fbHtml(f) {
   const imgs = f.attachments.filter(a => /\.(png|jpe?g|webp|gif)$/i.test(a.name));
   return `<div class="fb fb--${f.type}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span><b>${t}</b> · ${esc(f.name)}</span><span class="small dim">${fmtDate(f.at)}</span></div>
    ${f.note ? `<p>${esc(f.note)}</p>` : ''}
+   ${f.stickies?.length ? `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n">${s.n}</span><span class="note__t">${esc(s.text)}</span><span class="small dim">p.${s.page}</span></button></li>`).join('')}</ol>` : ''}
    ${imgs.length ? `<div class="thumbatt">${imgs.map(a => `<a href="${a.url}" target="_blank" rel="noopener"><img src="${a.url}" alt="${esc(a.name)}"></a>`).join('')}</div>` : ''}
    ${f.attachments.length ? `<div class="att">${f.attachments.map(a => `<a href="${a.url}?download">↓ ${esc(a.name)} <span class="dim">${fmtSize(a.size)}</span></a>`).join('')}</div>` : ''}</div>`;
 }
@@ -82,7 +83,19 @@ async function jobPage(key, showV) {
   $('[data-copy]', app).onclick = () => copy($('[data-main]', app).value);
   const c2 = $('[data-copy2]', app); if (c2) c2.onclick = () => copy(j.secureUrl);
   $('[data-private]', app).onchange = async e => { await api(`${B}/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify({ access: e.target.checked ? 'private' : 'public' }) }); toast(e.target.checked ? 'Job is now private' : 'Job number link is open'); jobPage(key, showV); };
-  if (sel) mountViewer($('[data-viewer]', app), sel).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Could not render: ${esc(e.message)}</div>`);
+  if (sel) {
+    const pinFb = [...sel.feedback].reverse().find(f => f.stickies?.length);
+    mountViewer($('[data-viewer]', app), sel, {
+      pins: pinsFrom(pinFb),
+      onSelect: id => $$('.note', app).forEach(li => li.classList.toggle('on', !!li.querySelector(`[data-sid="${id}"]`)))
+    }).then(api => {
+      $$('[data-sid]', app).forEach(btn => btn.onclick = () => {
+        const fb = sel.feedback.find(f => f.id === btn.dataset.fb);
+        if (fb) api.setPins(pinsFrom(fb));
+        api.select(btn.dataset.sid);
+      });
+    }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Could not render: ${esc(e.message)}</div>`);
+  }
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => jobPage(key, vs.value);
   let file = null; const go = $('[data-vgo]', app), msg = $('[data-vmsg]', app);
   dropzone($('[data-vdrop]', app), fs => { file = fs[0]; $('[data-vname]', app).innerHTML = `<b>${esc(file.name)}</b> · ${fmtSize(file.size)}`; go.disabled = false; });
