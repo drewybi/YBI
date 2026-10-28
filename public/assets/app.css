@@ -229,6 +229,12 @@ body.viewer-open{overflow:hidden}
   .stage{min-height:46vh}
   .viewer__bar .grp:nth-child(2) .dim{display:none}
 }
+@media (max-width:640px){
+  body.studio{--hdr:96px}
+  body.studio .hdr .wrap{flex-wrap:wrap;align-content:center;row-gap:8px}
+  body.studio .hdr__r{flex:1 1 100%;justify-content:space-between;gap:8px;font-size:.62rem;letter-spacing:.1em}
+  body.studio .hdr__r .btn--sm{height:34px;padding:0 11px;letter-spacing:.1em}
+}
 .entry{display:grid;grid-template-columns:1.2fr 1fr;gap:24px;margin:clamp(40px,8vh,100px) 0 0;align-items:start}
 @media (max-width:860px){.entry{grid-template-columns:1fr}}
 .linkrow{display:grid;gap:6px;margin-top:16px}

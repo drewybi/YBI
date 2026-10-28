@@ -16,6 +16,9 @@ if [ -n "$BP" ]; then chk "$(code "$ORIGIN/")" 302 "/ redirects to $BP"; fi
 chk "$(code "$BASE")" 200 "$BP entry page (studio login)"
 entry=$(curl -sf "$BASE"); echo "$entry" | grep -q 'id="jn"' && fail "job-number finder still on the entry page" || pass "no job-number finder"
 chk "$(code "$BASE/studio")" 302 "$BP/studio redirects to login when signed out"
+chk "$(code "$BASE/studio/calendar")" 302 "$BP/studio/calendar redirects to login when signed out"
+cal_loc=$(curl -s -D - -o /dev/null "$BASE/studio/calendar" | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r')
+echo "$cal_loc" | grep -q 'studio%2Fcalendar' && pass "calendar login redirect returns to the calendar page" || fail "calendar login redirect (got '$cal_loc')"
 chk "$(code "$BASE/api/jobs")" 401 "studio API blocked without password"
 
 echo "2) Job $NA — JPG → approve via $BP/$NA"
@@ -25,6 +28,12 @@ chk "$(code "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NA\",\"clientName\":\"Dup
 chk "$(code "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"${NA,,}\",\"clientName\":\"Dupe\"}" "$BASE/api/jobs")" 409 "duplicate check is case-insensitive"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"bad number!","clientName":"x"}' "$BASE/api/jobs")" 400 "invalid job number refused"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"studio","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved job number refused"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"calendar","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved calendar job number refused"
+calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
+echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
+echo "$calhtml" | grep -qi '<iframe' && fail "calendar route must not embed an iframe" || pass "calendar route has no iframe"
+curl -sf "$BASE/assets/studio.js" | grep -Fq 'https://calendar.google.com/calendar/u/0?cid=dW8yMDF0dmNjNXBrcTcyMG5taGtrcDJvMW9AZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ' && pass "staff calendar opens the private Google Calendar URL" || fail "staff calendar URL missing"
+curl -sf "$BASE/assets/studio.js" | grep -Fq 'href="${STAFF_CALENDAR_URL}" target="_blank"' && curl -sf "$BASE/assets/studio.js" | grep -Fq 'uo201tvcc5pkq720nmhkkp2o1o@group.calendar.google.com' && pass "calendar link names the staff calendar and opens in a new tab" || fail "calendar link incomplete"
 curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NA/versions?name=poster-A2.jpg" >/dev/null && pass "V1 JPG uploaded (studio API by job number)"
 chk "$(code "$BASE/api/review/$NA")" 403 "job number alone cannot read the proof"
 chk "$(code "$BASE/$NA/file/v1")" 404 "file hidden without key"

@@ -18,6 +18,7 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 | Client (no key) | `/proof/30434` | Does not show the proof or its files. Asks for the private link |
 | Studio | `/proof/studio` | Dashboard (redirects to `/proof` to log in) |
 | Studio | `/proof/studio/30434` | Admin page for job 30434: links, versions, client feedback, upload a new version |
+| Studio | `/proof/studio/calendar` | Private staff Google Calendar. Opens in Google for a signed-in account that already has access |
 | Studio | `/proof/studio/settings` | Notification email and logout |
 | Files | `/proof/30434/file/v2`, `/proof/30434/file/a<id>` | Proof version / client attachment (same access rules as the page) |
 | Legacy | `/p/<token>` | Redirects to `/proof/{jobNumber}?k=<token>` |
@@ -52,7 +53,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 
 - The job number **is** the URL: `30434` → `/proof/30434`. Allowed characters are letters, numbers, `-`, `_` and `.` (no spaces, max 40). Matching is case-insensitive.
 - **Job numbers must be unique.** Creating a job with a number that already exists is **refused** (HTTP 409, *"Job 30434 already exists — open it and upload a new version instead."*) and the studio shows an "Open it" link. This prevents one client's proof from silently replacing another's. To revise a job, open it and use **Upload new version**.
-- Reserved words that can't be used as job numbers: `studio`, `api`, `assets`, `vendor`, `f`, `p`, `settings`, `login`, `logout`.
+- Reserved words that can't be used as job numbers: `studio`, `api`, `assets`, `vendor`, `f`, `p`, `settings`, `calendar`, `login`, `logout`.
 
 ## Studio (YBI side)
 
