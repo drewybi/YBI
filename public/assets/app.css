@@ -261,15 +261,39 @@ body.viewer-open{overflow:hidden}
 .tone-yellow{--chip:#f5d34e;--chip-ink:#241c04}
 .tone-purple{--chip:#c49bff;--chip-ink:#1a0d28}
 .tone-grey{--chip:#c5c6c8;--chip-ink:#1a1a1c}
-.calev{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;max-width:100%;min-width:0;text-align:left;border:0;border-radius:7px;padding:4px 6px;background:var(--chip,#c5c6c8);color:var(--chip-ink,#1a1a1c);font:500 .72rem/1.25 var(--sans);cursor:pointer}
+.calev{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;max-width:100%;min-width:0;text-align:left;border:0;border-radius:7px;padding:4px 6px;background:var(--chip,#c5c6c8);color:var(--chip-ink,#1a1a1c);font:500 .72rem/1.25 var(--sans);cursor:grab;touch-action:none;-webkit-user-drag:none}
 .calev__t{color:inherit;opacity:.75;font:600 .62rem/1.2 var(--sans);letter-spacing:.04em;text-transform:uppercase}
 .calev__n{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .calgrid .calev__n{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .calev:hover,.calev:focus-visible{filter:brightness(1.08)}
+.calev.is-dragging{opacity:.35}
+.calev.calev--ghost{position:fixed;z-index:240;width:168px;max-width:42vw;height:auto;margin:0;padding:4px 6px;pointer-events:none;opacity:.94;box-shadow:0 14px 34px rgba(0,0,0,.45);transform:rotate(-1.5deg);cursor:grabbing}
+body.is-cal-drag,body.is-cal-drag *{cursor:grabbing!important}
+body.is-cal-drag{user-select:none}
+body.is-cal-drag .calev{pointer-events:none}
+.calhint{margin:0 0 12px}
 .calweek{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.calweek.has-hours{display:flex;flex-direction:column;gap:0}
+.calweek__heads,.caltimesheet{display:grid;grid-template-columns:46px repeat(7,minmax(0,1fr));column-gap:8px}
+.caltimescroll{max-height:min(520px,58vh);overflow:auto}
+.calweek.has-hours .calday{min-height:0;border-radius:14px 14px 0 0;border-bottom:0}
+.calday__all{display:flex;flex-direction:column;gap:4px;min-width:0}
+.calweek.has-hours .calday__all{min-height:28px}
+.calhours{position:relative;background:var(--bg2);border:1px solid var(--line);border-top:0;border-radius:0 0 14px 14px;min-width:0}
+.calhours.is-today{border-color:var(--line2)}
+.calhours.is-sel{box-shadow:inset 0 0 0 1px var(--g)}
+.calslot,.caltick{height:22px;box-sizing:border-box}
+.calslot.is-hour{box-shadow:inset 0 1px 0 var(--line)}
+.caltick{display:flex;align-items:flex-start;justify-content:flex-end;padding:1px 6px 0 0;font:500 .56rem/1 var(--sans);color:var(--dim)}
+.calhours .calev{position:absolute;z-index:1;width:auto;margin:0;padding:1px 5px;overflow:hidden;flex-direction:row;align-items:center;gap:4px}
+.calhours .calev__n{white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.calev.calev--ghost{transform:none}}
 .calday{border:1px solid var(--line);border-radius:14px;background:var(--bg2);padding:12px;min-height:150px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
 .calday.is-today{border-color:var(--line2)}
 .calday.is-sel{box-shadow:inset 0 0 0 1px var(--g)}
+.calcell.is-drop,.calday.is-drop,.calhours.is-drop{background:rgba(167,169,172,.18);box-shadow:inset 0 0 0 2px var(--g)}
+.calday.is-drop-day,.calhours.is-drop-day{box-shadow:inset 0 0 0 1px rgba(243,241,236,.5)}
+.calslot.is-drop{background:rgba(243,241,236,.18);box-shadow:inset 0 0 0 2px var(--ink)}
 .calday__h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .calday__h button:not(.lnk){background:none;border:0;padding:0;cursor:pointer;color:var(--mute);font:500 .68rem/1.2 var(--sans);letter-spacing:.08em;text-transform:uppercase;text-align:left}
 .calday.is-today .calday__h button:not(.lnk){color:var(--ink)}
