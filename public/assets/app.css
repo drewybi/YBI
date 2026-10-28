@@ -76,7 +76,8 @@ main{flex:1;padding-top:var(--hdr)}
   .hstrip__t .w:nth-child(5)>span,.hstrip__t .w:nth-child(6)>span,.hstrip__t .ol{filter:url(#ol-s)}
 }
 @media (prefers-reduced-motion:reduce){
-  .js .hstrip .hstrip__t .w>span,.js .hstrip .hstrip__media{transform:none;clip-path:none;transition:none}
+  .js .hstrip .hstrip__t .w>span,.js .hstrip.is-in .hstrip__t .w>span,
+  .js .hstrip .hstrip__media,.js .hstrip.is-in .hstrip__media{transform:none;clip-path:none;transition:none}
 }
 
 /* buttons */

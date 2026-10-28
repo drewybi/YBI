@@ -164,8 +164,10 @@ export async function mountViewer(root, version) {
     render = () => {
       if (!img.naturalWidth || !stage.clientWidth) return;
       const box = availBox();
-      const contain = Math.min(box.w / img.naturalWidth, box.h / img.naturalHeight);
-      img.style.width = Math.max(1, Math.round(img.naturalWidth * contain * ZOOMS[zoomLevel])) + 'px';
+      const fitW = box.w / img.naturalWidth, fitH = box.h / img.naturalHeight;
+      // Inline shows the whole image. Full screen (and zoom) fit the width, same as PDFs, so a tall proof can be read large.
+      const fit = (expanded || zoomLevel > 0) ? fitW : Math.min(fitW, fitH);
+      img.style.width = Math.max(1, Math.round(img.naturalWidth * fit * ZOOMS[zoomLevel])) + 'px';
       img.style.height = 'auto';
     };
     img.onload = () => { stage.replaceChildren(img); pg.textContent = `${img.naturalWidth}×${img.naturalHeight}px`; render(); };

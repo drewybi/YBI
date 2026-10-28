@@ -21,7 +21,7 @@ with sync_playwright() as p:
     studio.set_input_files('#n-drop input', f'{S}/catalogue-V1.pdf'); studio.screenshot(path=f'{OUT}/02-studio-new-job.png')
     studio.click('#n-go'); studio.wait_for_selector('[data-copy]'); studio.wait_for_selector('[data-viewer] canvas')
     link = studio.input_value('.linkbox input'); print('client link:', link); assert link.endswith('/proof/30434'), link
-    studio.screenshot(path=f'{OUT}/03-studio-job-V1.png', full_page=True)
+    studio.wait_for_timeout(1700); studio.screenshot(path=f'{OUT}/03-studio-job-V1.png', full_page=True)
 
     c = b.new_page(viewport={'width': 1440, 'height': 1000})
     c.on('console', lambda m: m.type == 'error' and errs.append('client: ' + m.text))
@@ -52,7 +52,7 @@ with sync_playwright() as p:
     c.click('[data-go]'); c.wait_for_selector('[data-state=changes_requested]')
     c.screenshot(path=f'{OUT}/06-client-waiting.png', full_page=True)
 
-    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.wait_for_timeout(300)
+    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.wait_for_selector('.hstrip.is-in'); studio.wait_for_timeout(1700)
     studio.screenshot(path=f'{OUT}/07-studio-dashboard.png', full_page=True)
     studio.click('tr.row:has-text("30434")'); studio.wait_for_url('**/proof/studio/30434'); studio.wait_for_selector('.fb--changes img')
     studio.set_input_files('[data-vdrop] input', f'{S}/catalogue-V2.pdf'); studio.fill('[data-vnote]', 'Back cover phone number corrected.')
