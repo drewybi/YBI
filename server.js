@@ -6,6 +6,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { buildChangesPdf } = require('./changes-pdf');
 
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
@@ -249,6 +250,24 @@ async function handle(req, res) {
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
+    if ((r = p.match(/^\/api\/jobs\/([^/]+)\/changes\.pdf$/)) && (m === 'GET' || m === 'HEAD')) {
+      const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
+      if (!job) return err(res, 404, 'No job with that number.');
+      const v = job.versions.find(x => x.n === +u.searchParams.get('v'));
+      const fb = v && v.feedback.find(f => f.id === u.searchParams.get('f') && f.type === 'changes');
+      if (!v || !fb || !(fb.stickies || []).length) return err(res, 404, 'No marked-up changes on that version.');
+      let pdf;
+      try {
+        pdf = await buildChangesPdf({
+          kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
+          stickies: fb.stickies,
+          meta: { jobNumber: job.jobNumber, version: v.n, clientName: job.clientName, requester: fb.name, note: fb.note, feedbackId: fb.id }
+        });
+      } catch (e) { console.error('[changes.pdf]', e); return err(res, 500, 'Could not build the changes PDF.'); }
+      const fname = `YBI-${safeName(job.jobNumber)}-V${v.n}-changes.pdf`;
+      res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+      return m === 'HEAD' ? res.end() : res.end(pdf);
+    }
     if (p === '/api/jobs' && m === 'GET') { const js = await allJobs(); js.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); return send(res, 200, js.map(j => studioJob(req, j))); }
     if (p === '/api/jobs' && m === 'POST') {
       const b = await readJSON(req); const num = String(b.jobNumber || '').trim();

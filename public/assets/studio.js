@@ -33,12 +33,12 @@ async function dashboard() {
   bindNew();
 }
 
-function fbHtml(f) {
+function fbHtml(f, v, jobId) {
   const t = f.type === 'approve' ? 'Approved' : 'Changes requested';
   const imgs = f.attachments.filter(a => /\.(png|jpe?g|webp|gif)$/i.test(a.name));
   return `<div class="fb fb--${f.type}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span><b>${t}</b> · ${esc(f.name)}</span><span class="small dim">${fmtDate(f.at)}</span></div>
    ${f.note ? `<p>${esc(f.note)}</p>` : ''}
-   ${f.stickies?.length ? `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n" aria-hidden="true">${s.n}</span><span class="note__body"><span class="note__t">${esc(s.text)}</span><span class="note__meta">Page ${s.page}</span></span></button></li>`).join('')}</ol>` : ''}
+   ${f.stickies?.length ? `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n" aria-hidden="true">${s.n}</span><span class="note__body"><span class="note__t">${esc(s.text)}</span><span class="note__meta">Page ${s.page}</span></span></button></li>`).join('')}</ol><div class="btns" style="margin-top:14px"><a class="btn btn--sm btn--ghost" href="${B}/api/jobs/${encodeURIComponent(jobId)}/changes.pdf?v=${v.n}&f=${encodeURIComponent(f.id)}">Download changes PDF</a></div>` : ''}
    ${imgs.length ? `<div class="thumbatt">${imgs.map(a => `<a href="${a.url}" target="_blank" rel="noopener"><img src="${a.url}" alt="${esc(a.name)}"></a>`).join('')}</div>` : ''}
    ${f.attachments.length ? `<div class="att">${f.attachments.map(a => `<a href="${a.url}?download">↓ ${esc(a.name)} <span class="dim">${fmtSize(a.size)}</span></a>`).join('')}</div>` : ''}</div>`;
 }
@@ -71,7 +71,7 @@ async function jobPage(key, showV) {
      <div class="panel"><p class="eyebrow" style="margin-bottom:6px">Client feedback &amp; history</p>
       ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag">V${v.n}</span><span class="small dim">${esc(v.originalName)} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></div>
         ${v.studioNote ? `<p class="small mute" style="margin:8px 0 0">YBI note: ${esc(v.studioNote)}</p>` : ''}
-        ${v.feedback.length ? [...v.feedback].reverse().map(fbHtml).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
+        ${v.feedback.length ? [...v.feedback].reverse().map(f => fbHtml(f, v, j.id)).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
      </div>
      <div style="text-align:right"><button class="lnk" data-del>Delete job</button></div>
     </div></div></div>`;

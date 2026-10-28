@@ -46,6 +46,20 @@ chk "$(echo "$SJ" | j '.versions[0].feedback[0].attachments[0].name')" client-ma
 chk "$(echo "$SJ" | j '.versions[0].feedback[0].stickies[0].text')" "Fix the phone on page 2" "studio sees sticky text"
 chk "$(echo "$SJ" | j '.versions[0].feedback[0].stickies[0].page')" 2 "studio sees sticky page"
 chk "$(echo "$SJ" | j '.versions[0].feedback[0].stickies.length')" 2 "studio sees both stickies"
+FID=$(echo "$SJ" | j '.versions[0].feedback[0].id')
+chk "$(code "$BASE/api/jobs/$NB/changes.pdf?v=1&f=$FID")" 401 "changes pdf needs studio login"
+curl -sf "${H[@]}" -o /tmp/ybi-changes.pdf "$BASE/api/jobs/$NB/changes.pdf?v=1&f=$FID" && pass "changes pdf downloaded"
+node -e '
+const fs=require("fs"); const {PDFDocument}=require("pdf-lib");
+(async()=>{
+  const doc=await PDFDocument.load(fs.readFileSync("/tmp/ybi-changes.pdf"));
+  const {PDFCheckBox}=require("pdf-lib");
+  const n=doc.getPageCount(), boxes=doc.getForm().getFields().filter(f=>f instanceof PDFCheckBox).length;
+  if(n<4) throw new Error("expected artwork pages plus a checklist, got "+n);
+  if(boxes<3) throw new Error("expected a checkbox per sticky plus the general note, got "+boxes);
+  console.log("  ✓ changes pdf has "+n+" pages and "+boxes+" checkboxes");
+})().catch(e=>{console.error("  ✗", e.message); process.exit(1);});
+'
 chk "$(code "$ORIGIN$(echo "$SJ" | j '.versions[0].feedback[0].attachments[0].url')")" 200 "attachment downloadable"
 chk "$(code "${H[@]}" -X POST --data-binary 'x' "$BASE/api/jobs/$NB/versions?name=evil.exe")" 415 "non-proof file types rejected"
 curl -sf "${H[@]}" -H 'Content-Type: application/pdf' --data-binary @"$S/catalogue-V2.pdf" "$BASE/api/jobs/$NB/versions?name=catalogue-V2.pdf&note=Phone%20number%20fixed" >/dev/null && pass "V2 uploaded"

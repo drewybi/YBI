@@ -67,7 +67,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 2. On the job page:
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
-3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note and attachments (thumbnails and downloads) appear under *Client feedback & history*. The dashboard's *Latest client activity* lists every response.
+3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout. The dashboard's *Latest client activity* lists every response.
 4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable.
 
 ## Client side

@@ -80,7 +80,11 @@ with sync_playwright() as p:
     studio.wait_for_selector('.pin.on')
     studio.wait_for_selector('.notelist--ro .note.on')
     assert 'Page 1' in studio.text_content('.notelist--ro')
-    studio.locator('.notelist--ro').screenshot(path=f'{OUT}/16-studio-stickies.png')
+    studio.locator('.fb--changes').screenshot(path=f'{OUT}/16-studio-stickies.png')
+    href = studio.locator('a', has_text='Download changes PDF').get_attribute('href')
+    origin = BASE[:-6] if BASE.endswith('/proof') else BASE
+    pdf = studio.context.request.get(origin + href)
+    assert pdf.status == 200 and 'pdf' in pdf.headers['content-type'] and pdf.body()[:4] == b'%PDF', (pdf.status, pdf.headers.get('content-type'))
     studio.set_input_files('[data-vdrop] input', f'{S}/catalogue-V2.pdf'); studio.fill('[data-vnote]', 'Back cover phone number corrected.')
     studio.click('[data-vgo]'); studio.wait_for_function("document.querySelector('.vtag') && document.querySelector('.vtag').textContent.startsWith('V2')")
     studio.wait_for_selector('[data-viewer] canvas'); studio.screenshot(path=f'{OUT}/08-studio-job-V2.png', full_page=True)
