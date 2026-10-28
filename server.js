@@ -113,6 +113,146 @@ function status(job) {
 }
 async function loadSettings() { try { return JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8')); } catch { return { notifyEmail: process.env.NOTIFY_EMAIL || '' }; } }
 
+// Staff calendar. start/end are Australia/Melbourne wall-clock strings, not UTC:
+// all-day is YYYY-MM-DD, timed is YYYY-MM-DDTHH:mm. Stored in DATA_DIR/calendar-events.json.
+const CAL_FILE = path.join(DATA, 'calendar-events.json');
+let calChain = Promise.resolve();
+function withCalendar(fn) {
+  const run = calChain.then(fn, fn);
+  calChain = run.then(() => {}, () => {});
+  return run;
+}
+function validDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const y = +s.slice(0, 4), m = +s.slice(5, 7), d = +s.slice(8, 10);
+  if (y < 2000 || y > 2100 || m < 1 || m > 12) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+function validTime(s) {
+  if (!/^\d{2}:\d{2}$/.test(s)) return false;
+  return +s.slice(0, 2) <= 23 && +s.slice(3) <= 59;
+}
+function daySpan(a, b) {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
+function cleanEventInput(b) {
+  const title = String(b.title ?? '').trim().slice(0, 200);
+  if (!title) return { error: 'Add a title.' };
+  const notes = String(b.notes ?? '').trim().slice(0, 4000);
+  const allDay = !!b.allDay;
+  let start = String(b.start ?? '').trim();
+  let end = b.end == null || String(b.end).trim() === '' ? null : String(b.end).trim();
+  if (!start) return { error: 'Add a start date.' };
+  if (allDay) {
+    start = start.slice(0, 10);
+    if (end) end = String(end).slice(0, 10);
+    if (!validDate(start) || (end && !validDate(end))) return { error: 'That date isn’t valid.' };
+  } else {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start) || !validDate(start.slice(0, 10)) || !validTime(start.slice(11))) return { error: 'Add a start date and time, or mark it as all day.' };
+    if (end && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(end) || !validDate(end.slice(0, 10)) || !validTime(end.slice(11)))) return { error: 'That end date isn’t valid.' };
+  }
+  if (end && end < start) return { error: 'End can’t be before the start.' };
+  if (end && daySpan(start.slice(0, 10), end.slice(0, 10)) > 366) return { error: 'Events can’t run longer than a year.' };
+  return { title, allDay, start, end, notes };
+}
+function publicEvent(ev) {
+  return { id: ev.id, title: ev.title, allDay: !!ev.allDay, start: ev.start, end: ev.end || null, notes: ev.notes || '', createdAt: ev.createdAt, updatedAt: ev.updatedAt };
+}
+async function readCalendar() {
+  let raw;
+  try { raw = await fsp.readFile(CAL_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return []; throw e; }
+  let data;
+  try { data = JSON.parse(raw); }
+  catch { throw Object.assign(new Error('Calendar data could not be read'), { code: 500 }); }
+  const list = Array.isArray(data) ? data : data && Array.isArray(data.events) ? data.events : null;
+  if (!list) throw Object.assign(new Error('Calendar data could not be read'), { code: 500 });
+  return list.filter(ev => ev && typeof ev.id === 'string' && /^[a-f0-9]{16}$/.test(ev.id));
+}
+async function writeCalendar(events) {
+  const tmp = CAL_FILE + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify({ events }, null, 2));
+  await fsp.rename(tmp, CAL_FILE);
+}
+function sortEvents(events) {
+  return events.sort((a, b) => String(a.start).localeCompare(String(b.start)) || String(a.title).localeCompare(String(b.title)) || String(a.id).localeCompare(String(b.id)));
+}
+async function handleCalendar(req, res, p, m, u) {
+  const r = p.match(/^\/api\/calendar\/events(?:\/([a-f0-9]{16}))?$/);
+  if (!r) return err(res, 404, 'Not found');
+  const eid = r[1] || '';
+  if (!eid && m === 'GET') {
+    let events = await readCalendar();
+    const from = u.searchParams.get('from'), to = u.searchParams.get('to');
+    if ((from && !validDate(from)) || (to && !validDate(to))) return err(res, 400, 'That date isn’t valid.');
+    if (from || to) events = events.filter(ev => {
+      const s = String(ev.start).slice(0, 10), e = String(ev.end || ev.start).slice(0, 10);
+      if (to && s > to) return false;
+      if (from && e < from) return false;
+      return true;
+    });
+    return send(res, 200, { events: sortEvents(events).map(publicEvent) });
+  }
+  if (!eid && m === 'POST') {
+    const cleaned = cleanEventInput(await readJSON(req));
+    if (cleaned.error) return err(res, 400, cleaned.error);
+    const ev = await withCalendar(async () => {
+      const events = await readCalendar();
+      let nid = id(8);
+      while (events.some(e => e.id === nid)) nid = id(8);
+      const stamp = now();
+      const created = { id: nid, ...cleaned, createdAt: stamp, updatedAt: stamp };
+      events.push(created);
+      await writeCalendar(events);
+      return created;
+    });
+    return send(res, 201, publicEvent(ev));
+  }
+  if (eid && m === 'GET') {
+    const ev = (await readCalendar()).find(e => e.id === eid);
+    if (!ev) return err(res, 404, 'No event with that id.');
+    return send(res, 200, publicEvent(ev));
+  }
+  if (eid && m === 'PATCH') {
+    const b = await readJSON(req);
+    const result = await withCalendar(async () => {
+      const events = await readCalendar();
+      const i = events.findIndex(e => e.id === eid);
+      if (i < 0) return { status: 404, error: 'No event with that id.' };
+      const existing = events[i];
+      const cleaned = cleanEventInput({
+        title: b.title != null ? b.title : existing.title,
+        allDay: b.allDay != null ? b.allDay : existing.allDay,
+        start: b.start != null ? b.start : existing.start,
+        end: b.end !== undefined ? b.end : existing.end,
+        notes: b.notes != null ? b.notes : existing.notes
+      });
+      if (cleaned.error) return { status: 400, error: cleaned.error };
+      events[i] = { ...existing, ...cleaned, id: existing.id, createdAt: existing.createdAt, updatedAt: now() };
+      await writeCalendar(events);
+      return { event: events[i] };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, publicEvent(result.event));
+  }
+  if (eid && m === 'DELETE') {
+    const result = await withCalendar(async () => {
+      const events = await readCalendar();
+      const i = events.findIndex(e => e.id === eid);
+      if (i < 0) return { status: 404, error: 'No event with that id.' };
+      events.splice(i, 1);
+      await writeCalendar(events);
+      return { ok: true };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, { ok: true });
+  }
+  return err(res, 405, 'Method not allowed');
+}
+
 const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 const numPath = job => `${B}/${encodeURIComponent(job.jobNumber)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
@@ -250,6 +390,7 @@ async function handle(req, res) {
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
+    if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
     if ((r = p.match(/^\/api\/jobs\/([^/]+)\/changes\.pdf$/)) && (m === 'GET' || m === 'HEAD')) {
       const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
       if (!job) return err(res, 404, 'No job with that number.');

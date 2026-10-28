@@ -31,9 +31,10 @@ chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"studio","clientName":"x"}' "$
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"calendar","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved calendar job number refused"
 calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
 echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
-echo "$calhtml" | grep -qi '<iframe' && fail "calendar route must not embed an iframe" || pass "calendar route has no iframe"
-curl -sf "$BASE/assets/studio.js" | grep -Fq 'https://calendar.google.com/calendar/u/0?cid=dW8yMDF0dmNjNXBrcTcyMG5taGtrcDJvMW9AZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ' && pass "staff calendar opens the private Google Calendar URL" || fail "staff calendar URL missing"
-curl -sf "$BASE/assets/studio.js" | grep -Fq 'href="${STAFF_CALENDAR_URL}" target="_blank"' && curl -sf "$BASE/assets/studio.js" | grep -Fq 'uo201tvcc5pkq720nmhkkp2o1o@group.calendar.google.com' && pass "calendar link names the staff calendar and opens in a new tab" || fail "calendar link incomplete"
+echo "$calhtml" | grep -qi '<iframe' && fail "calendar page must not embed an iframe" || pass "calendar page has no iframe"
+caljs=$(curl -sf "$BASE/assets/studio.js")
+echo "$caljs" | grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
+echo "$caljs" | grep -q '/api/calendar/events' && pass "studio calendar calls the studio API" || fail "calendar API missing from studio.js"
 curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NA/versions?name=poster-A2.jpg" >/dev/null && pass "V1 JPG uploaded (studio API by job number)"
 chk "$(code "$BASE/api/review/$NA")" 403 "job number alone cannot read the proof"
 chk "$(code "$BASE/$NA/file/v1")" 404 "file hidden without key"
@@ -88,7 +89,29 @@ curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"access":"public"}' "$BASE/api/jobs/
 chk "$(code "$BASE/api/review/$NP")" 403 "asking for public access does not open the job number"
 chk "$(echo "$(curl -sf "${H[@]}" "$BASE/api/jobs/$NP")" | j .access)" private "stored access stays private"
 
-echo "5) Misc"
+echo "5) Staff calendar CRUD"
+chk "$(code "$BASE/api/calendar/events")" 401 "calendar API blocked without password"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"title":"","start":"2026-11-12T09:00"}' "$BASE/api/calendar/events")" 400 "calendar event needs a title"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"title":"Bad time","allDay":false,"start":"2026-11-12T15:00","end":"2026-11-12T09:00"}' "$BASE/api/calendar/events")" 400 "calendar end before start refused"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"title":"Needs a time","allDay":false,"start":"2026-11-12"}' "$BASE/api/calendar/events")" 400 "timed calendar event needs a time"
+EV=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"Smoke deadline","start":"2026-11-12T09:30","end":"2026-11-12T10:15","notes":"Bring proofs","allDay":false}' "$BASE/api/calendar/events")
+EID=$(echo "$EV" | j .id)
+chk "$(echo "$EV" | j .title)" "Smoke deadline" "calendar event created"
+chk "$(echo "$EV" | j .start)" "2026-11-12T09:30" "start stays Melbourne wall time"
+chk "$(echo "$EV" | j .notes)" "Bring proofs" "calendar notes stored"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events/$EID" | j .end)" "2026-11-12T10:15" "calendar event readable by id"
+AD=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"Install week","allDay":true,"start":"2026-11-16","end":"2026-11-18","notes":"On site"}' "$BASE/api/calendar/events")
+AID=$(echo "$AD" | j .id)
+chk "$(echo "$AD" | j .allDay)" true "all-day calendar event created"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-11-17&to=2026-11-17" | j ".events.filter(e=>e.id==='$AID').length")" 1 "multi-day event appears inside its range"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-11-19&to=2026-11-19" | j ".events.filter(e=>e.id==='$AID').length")" 0 "multi-day event is outside a later day"
+chk "$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"title":"Smoke deadline moved","allDay":true,"start":"2026-11-13","end":null,"notes":"All day now"}' "$BASE/api/calendar/events/$EID" | j .start)" "2026-11-13" "calendar event updated"
+chk "$(code "${H[@]}" -X DELETE "$BASE/api/calendar/events/$EID")" 200 "calendar event deleted"
+chk "$(code "${H[@]}" "$BASE/api/calendar/events/$EID")" 404 "deleted calendar event is gone"
+chk "$(code "${H[@]}" -X DELETE "$BASE/api/calendar/events/$AID")" 200 "all-day calendar event deleted"
+chk "$(code "${H[@]}" "$BASE/api/calendar/nope")" 404 "unknown calendar route 404"
+
+echo "6) Misc"
 grep -q "$NB" "${DATA_DIR:-$(dirname "$0")/../data}/notifications.log" && pass "logged in notifications.log"
 chk "$(code "$BASE/api/review/NOPE$RUN")" 404 "unknown job number 404"
 if [ -n "$BP" ]; then chk "$(code "$ORIGIN/api/review/$NA")" 403 "stripped prefix still refuses a bare job number"; chk "$(code "$ORIGIN/api/review/$NA?k=$ATOK")" 200 "stripped prefix accepts the secure key"; fi
