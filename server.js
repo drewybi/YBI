@@ -82,6 +82,19 @@ const canView = (job, k) => accessOf(job) === 'public' || (k && k === job.token)
 const misses = new Map();
 function tooManyMisses(req) { const ip = req.socket.remoteAddress, t = Date.now(); const a = (misses.get(ip) || []).filter(x => t - x < 600000); misses.set(ip, a); return a.length >= 40; }
 function miss(req) { const ip = req.socket.remoteAddress; (misses.get(ip) || misses.set(ip, []).get(ip)).push(Date.now()); }
+// null means the payload was rejected (empty text, bad position, or too many).
+function cleanStickies(raw) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > 40) return null;
+  const out = [];
+  for (const s of raw) {
+    const x = Number(s && s.x), y = Number(s && s.y), page = Math.round(Number(s && s.page) || 1);
+    const text = String((s && s.text) || '').trim().slice(0, 2000);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1 || page < 1 || page > 500 || !text) return null;
+    out.push({ n: out.length + 1, page, x: Math.round(x * 10000) / 10000, y: Math.round(y * 10000) / 10000, text });
+  }
+  return out;
+}
 function status(job) {
   const v = job.versions[job.versions.length - 1];
   if (!v) return 'draft';
@@ -101,7 +114,7 @@ function publicJob(job, k) {
     status: status(job), createdAt: job.createdAt,
     versions: job.versions.map(v => ({ n: v.n, kind: v.kind, originalName: v.originalName, size: v.size, uploadedAt: v.uploadedAt, studioNote: v.studioNote || '',
       url: `${numPath(job)}/file/v${v.n}${q}`,
-      feedback: v.feedback.map(f => ({ type: f.type, name: f.name, note: f.note, at: f.at, attachments: f.attachments.map(a => ({ name: a.originalName, size: a.size, url: `${numPath(job)}/file/a${a.id}${q}` })) })) }))
+      feedback: v.feedback.map(f => ({ id: f.id, type: f.type, name: f.name, note: f.note, at: f.at, stickies: (f.stickies || []).map(s => ({ n: s.n, page: s.page, x: s.x, y: s.y, text: s.text })), attachments: f.attachments.map(a => ({ name: a.originalName, size: a.size, url: `${numPath(job)}/file/a${a.id}${q}` })) })) }))
   };
 }
 function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null }; }
@@ -117,7 +130,8 @@ async function notify(req, job, fb, v) {
     `${label} — Job ${job.jobNumber} (V${v.n})`, '',
     `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
     `Job: ${job.description}`, `By: ${fb.name || '(no name)'}`, `When: ${new Date(fb.at).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
-    fb.note ? `Note:\n${fb.note}\n` : '(no note)',
+    fb.note ? `Note:\n${fb.note}\n` : '(no general note)',
+    (fb.stickies || []).length ? `Notes on the artwork:\n${fb.stickies.map(s => ` ${s.n}. page ${s.page} (${Math.round(s.x * 100)}% across, ${Math.round(s.y * 100)}% down) — ${s.text}`).join('\n')}\n` : '',
     fb.attachments.length ? `Attachments:\n${fb.attachments.map(a => ' - ' + a.originalName + ': ' + origin(req) + `${numPath(job)}/file/a${a.id}?k=${job.token}`).join('\n')}\n` : '',
     `Open in studio: ${studioLink}`
   ].join('\n');
@@ -209,12 +223,14 @@ async function handle(req, res) {
       if (b.version && +b.version !== v.n) return err(res, 409, 'A newer version has been uploaded — please refresh.');
       if (!['approve', 'changes'].includes(b.type)) return err(res, 400, 'Bad action');
       const name = String(b.name || '').trim().slice(0, 120), note = String(b.note || '').trim().slice(0, 10000);
+      const stickies = b.type === 'changes' ? cleanStickies(b.stickies) : [];
       if (!name) return err(res, 400, 'Please add your name.');
-      if (b.type === 'changes' && !note && !(b.attachments || []).length) return err(res, 400, 'Please describe the changes or attach a file.');
+      if (stickies === null) return err(res, 400, 'Add a note to each sticky.');
+      if (b.type === 'changes' && !note && !(b.attachments || []).length && !stickies.length) return err(res, 400, 'Please describe the changes, mark the proof, or attach a file.');
       if (status(job) === 'approved') return err(res, 409, 'This version is already approved.');
       const atts = (b.attachments || []).map(a => job.pendingAttachments && job.pendingAttachments[a]).filter(Boolean);
       atts.forEach(a => delete job.pendingAttachments[a.id]);
-      const fb = { id: id(6), type: b.type, name, note, attachments: atts, at: now(), ip: req.socket.remoteAddress, via: k === job.token ? 'secure-link' : 'job-number' };
+      const fb = { id: id(6), type: b.type, name, note, attachments: atts, stickies, at: now(), ip: req.socket.remoteAddress, via: k === job.token ? 'secure-link' : 'job-number' };
       v.feedback.push(fb); await notify(req, job, fb, v); job.unread = true; await saveJob(job);
       return send(res, 200, publicJob(job, k || null));
     }
