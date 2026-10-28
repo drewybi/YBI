@@ -18,7 +18,7 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 | Client (no key) | `/proof/30434` | Does not show the proof or its files. Asks for the private link |
 | Studio | `/proof/studio` | Dashboard (redirects to `/proof` to log in) |
 | Studio | `/proof/studio/30434` | Admin page for job 30434: links, versions, client feedback, upload a new version |
-| Studio | `/proof/studio/calendar` | Private staff calendar (deadlines, meetings, notes). Month and week views. Not a job-activity feed |
+| Studio | `/proof/studio/calendar` | Private staff calendar. Proof jobs appear on their own, plus deadlines and meetings. Month and week views. Each item can be coloured |
 | Studio | `/proof/studio/settings` | Notification email and logout |
 | Files | `/proof/30434/file/v2`, `/proof/30434/file/a<id>` | Proof version / client attachment (same access rules as the page) |
 | Legacy | `/p/<token>` | Redirects to `/proof/{jobNumber}?k=<token>` |
@@ -71,7 +71,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout. The dashboard's *Latest client activity* lists every response.
 4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable.
 
-**Staff calendar** (`/proof/studio/calendar`) is for deadlines, meetings and notes. It is not filled from job activity, and it does not use Google Calendar. Times are Australia/Melbourne. Add, edit or delete an event (title, start, optional end, optional notes, optional all-day). Events are stored in `data/calendar-events.json`. The API is `/proof/api/calendar/events` and uses the same studio login.
+**Staff calendar** (`/proof/studio/calendar`) shows every proof job, plus deadlines, meetings and notes. It does not use Google Calendar. Times are Australia/Melbourne. A job is placed on its due date when the job has one (`dueAt`, `dueDate`, `deadline` or `calendarDate`); otherwise it uses the day the job was created in Melbourne. New jobs show up on their own — nothing is copied in by hand. Open a job from the day list or from **Open job** on its calendar card. Changing the day or the colour does not edit the proof; those overrides live in `data/calendar-events.json` (`jobOverrides`). Staff events are in the same file (`events`): title, start, optional end, optional notes, optional all-day, and a colour. Colours are red, blue, green, yellow, purple or grey (grey if unset). The API is `/proof/api/calendar/events` for staff events and `/proof/api/calendar/jobs/{job number or id}` to set a job’s day and colour. Both use the same studio login.
 
 ## Client side
 
@@ -120,7 +120,7 @@ ybi-approval/
     jobs/<id>.json     # one file per job: details, token, versions, feedback
     files/<id>/        # proof files (v1-xxxx.pdf, v2-…) and feedback/ (client attachments)
     settings.json      # notification email
-    calendar-events.json  # staff calendar (Melbourne wall-clock times)
+    calendar-events.json  # staff events, plus each job’s calendar colour and date override
     notifications.log  # plain-text log of every approve / change request
     secret.key         # signs the studio login cookie
   samples/             # test proofs (scripts/make-samples.py)

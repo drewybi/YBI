@@ -100,10 +100,13 @@ async function jobPage(key, showV) {
   $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); location.href = B + '/studio'; };
 }
 
-// Staff calendar — deadlines, meetings and notes. Times are Australia/Melbourne wall-clock values.
+// Staff calendar — proof jobs, deadlines, meetings and notes. Times are Australia/Melbourne wall-clock values.
 const CAL_TZ = 'Australia/Melbourne';
+const CAL_COLOURS = [['red', 'Red'], ['blue', 'Blue'], ['green', 'Green'], ['yellow', 'Yellow'], ['purple', 'Purple'], ['grey', 'Grey']];
 const CAL_DOW = [0, 1, 2, 3, 4, 5, 6].map(i => new Intl.DateTimeFormat('en-AU', { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 0, 5 + i))));
-let calEvents = [], calMode = 'month', calAnchor = '', calSelected = '', editingId = null, calGen = 0;
+let calEvents = [], calMode = 'month', calAnchor = '', calSelected = '', editingId = null, editingJobId = null, calGen = 0;
+const colourOf = ev => CAL_COLOURS.some(([name]) => name === ev?.colour) ? ev.colour : 'grey';
+const colourSwatches = () => `<div class="swatches" role="radiogroup" aria-labelledby="ev-colour-label">${CAL_COLOURS.map(([name, label]) => `<label class="swatch"><input type="radio" name="ev-colour" value="${name}"${name === 'grey' ? ' checked' : ''}><span class="swatch__box tone-${name}">${label}</span></label>`).join('')}</div>`;
 
 function melbourneToday() {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: CAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -135,6 +138,7 @@ function eventsOn(iso) {
   });
 }
 function timeRange(ev) {
+  if (ev.kind === 'job') return 'Proof job';
   const { s, e } = eventSpan(ev);
   if (ev.allDay) return s === e ? 'All day' : `All day · ${shortDay(s)} – ${shortDay(e)}`;
   const st = fmtClock(String(ev.start).slice(11, 16));
@@ -156,9 +160,11 @@ function rangeLabel(days) {
   return `${shortDay(a)} ${a.slice(0, 4)} – ${shortDay(b)} ${b.slice(0, 4)}`;
 }
 function eventButton(ev, iso) {
+  const colour = colourOf(ev);
   const onStart = String(ev.start).slice(0, 10) === iso;
-  const time = !ev.allDay && onStart ? fmtClock(String(ev.start).slice(11, 16)) : '';
-  return `<button type="button" class="calev${ev.allDay ? ' calev--all' : ''}" data-ev="${esc(ev.id)}" title="${esc(timeRange(ev) + ' — ' + ev.title)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
+  const time = ev.kind === 'job' ? 'Job' : (!ev.allDay && onStart ? fmtClock(String(ev.start).slice(11, 16)) : '');
+  const kind = ev.kind === 'job' ? 'job' : 'event';
+  return `<button type="button" class="calev tone-${colour}${ev.allDay ? ' calev--all' : ''}" data-ev="${esc(ev.id)}" data-kind="${kind}" data-colour="${colour}" title="${esc(timeRange(ev) + ' — ' + ev.title + ' — ' + colour)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
 }
 function monthHtml(days) {
   const month = calAnchor.slice(0, 7), today = melbourneToday();
@@ -166,7 +172,8 @@ function monthHtml(days) {
   const cells = days.map(iso => {
     const list = eventsOn(iso);
     const cls = ['calcell', iso.slice(0, 7) !== month ? 'is-out' : '', iso === today ? 'is-today' : '', iso === calSelected ? 'is-sel' : '', list.length ? 'is-busy' : ''].filter(Boolean).join(' ');
-    return `<div class="${cls}" data-day="${iso}" aria-label="${esc(longDay(iso))}"><span class="calcell__d">${+iso.slice(8)}</span>${list.length ? '<span class="caldot" aria-hidden="true"></span>' : ''}${list.map(ev => eventButton(ev, iso)).join('')}</div>`;
+    const dots = list.slice(0, 4).map(ev => `<span class="caldot tone-${colourOf(ev)}" aria-hidden="true"></span>`).join('');
+    return `<div class="${cls}" data-day="${iso}" aria-label="${esc(longDay(iso))}"><span class="calcell__d">${+iso.slice(8)}</span>${list.length ? `<span class="caldots">${dots}</span>` : ''}${list.map(ev => eventButton(ev, iso)).join('')}</div>`;
   }).join('');
   return `<div class="calgrid" aria-label="${esc(rangeLabel(days))}">${head}${cells}</div>`;
 }
@@ -178,16 +185,21 @@ function weekHtml(days) {
     return `<section class="${cls}" data-day="${iso}"><div class="calday__h"><button type="button" data-pick="${iso}">${esc(fmtUTC(iso, { weekday: 'short', day: 'numeric', month: 'short' }))}</button><button type="button" class="lnk" data-add-day="${iso}">Add</button></div>${list.length ? list.map(ev => eventButton(ev, iso)).join('') : '<p class="small dim calday__empty">Nothing scheduled</p>'}</section>`;
   }).join('')}</div>`;
 }
+function dayRow(ev) {
+  const colour = colourOf(ev);
+  const open = ev.kind === 'job' && ev.href ? `<a class="lnk" href="${esc(ev.href)}">Open job</a>` : '';
+  return `<div class="calpick__row tone-${colour}" data-kind="${ev.kind === 'job' ? 'job' : 'event'}" data-colour="${colour}"><button type="button" class="calpick__ev" data-ev="${esc(ev.id)}"><span class="k">${esc(timeRange(ev))}</span><b>${esc(ev.title)}</b>${ev.notes ? `<p>${esc(ev.notes)}</p>` : ''}</button>${open}</div>`;
+}
 function dayPanel(iso) {
   const list = eventsOn(iso);
-  const rows = list.length ? list.map(ev => `<button type="button" class="calpick__ev" data-ev="${esc(ev.id)}"><span class="k">${esc(timeRange(ev))}</span><b>${esc(ev.title)}</b>${ev.notes ? `<p>${esc(ev.notes)}</p>` : ''}</button>`).join('') : '<p class="dim" style="margin:8px 0 0">Nothing on this day. Add a deadline, meeting or note.</p>';
+  const rows = list.length ? list.map(dayRow).join('') : '<p class="dim" style="margin:8px 0 0">Nothing on this day. Add a deadline, meeting or note.</p>';
   return `<section class="panel calpick" aria-live="polite"><div class="calpick__h"><h2 class="h3">${esc(longDay(iso))}</h2><button type="button" class="btn btn--sm" data-add-day="${iso}">Add event</button></div>${rows}</section>`;
 }
 function renderCal() {
   const days = visibleDays();
   if (!days.includes(calSelected)) calSelected = days.includes(calAnchor) ? calAnchor : days[0];
   if (!$('[data-cal-root]', app)) {
-    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Deadlines, meetings and notes for the studio. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
+    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Proof jobs show up on their own, with deadlines and meetings. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
       '<div class="wrap cal" data-cal-root><div data-cal-body></div></div>';
   }
   const root = $('[data-cal-root]', app);
@@ -228,55 +240,91 @@ function ensureEventModal() {
   modal.className = 'modal'; modal.id = 'evModal'; modal.hidden = true;
   modal.innerHTML = `<form class="panel" id="evForm" novalidate autocomplete="off">
     <div class="modal__h"><h2 class="h3" data-ev-h>New event</h2><button type="button" class="ibtn" data-ev-close aria-label="Close">✕</button></div>
+    <p class="small mute" data-ev-job hidden>This proof is on the calendar automatically. Change its day or colour here — the job stays on its studio page.</p>
+    <p class="small" data-ev-job-notes hidden></p>
     <div class="grid2">
       <div class="field field--full"><label for="ev-title">Title</label><input id="ev-title" maxlength="200" placeholder="Deadline, meeting, note…"></div>
-      <label class="check field--full"><input id="ev-allday" type="checkbox"> All day</label>
-      <div class="field"><label for="ev-sd">Start date</label><input id="ev-sd" type="date" min="2000-01-01" max="2100-12-31" required></div>
+      <label class="check field--full" data-ev-allday-row><input id="ev-allday" type="checkbox"> All day</label>
+      <div class="field"><label for="ev-sd" id="ev-sd-label">Start date</label><input id="ev-sd" type="date" min="2000-01-01" max="2100-12-31" required></div>
       <div class="field" data-ev-st><label for="ev-st">Start time <span class="opt">(Melbourne)</span></label><input id="ev-st" type="time"></div>
-      <div class="field"><label for="ev-ed">End date <span class="opt">(optional)</span></label><input id="ev-ed" type="date" min="2000-01-01" max="2100-12-31"></div>
+      <div class="field" data-ev-ed><label for="ev-ed">End date <span class="opt">(optional)</span></label><input id="ev-ed" type="date" min="2000-01-01" max="2100-12-31"></div>
       <div class="field" data-ev-et><label for="ev-et">End time <span class="opt">(optional)</span></label><input id="ev-et" type="time"></div>
-      <div class="field field--full"><label for="ev-notes">Notes <span class="opt">(optional)</span></label><textarea id="ev-notes" maxlength="4000" style="min-height:90px" placeholder="Who’s coming, where, what to bring…"></textarea></div>
+      <div class="field field--full" data-ev-notes-row><label for="ev-notes">Notes <span class="opt">(optional)</span></label><textarea id="ev-notes" maxlength="4000" style="min-height:90px" placeholder="Who’s coming, where, what to bring…"></textarea></div>
+      <div class="field field--full"><span class="k" id="ev-colour-label">Colour</span>${colourSwatches()}</div>
     </div>
-    <div class="btns" style="margin-top:30px"><button class="btn" type="submit">Save event</button><button type="button" class="btn btn--ghost" data-ev-close>Cancel</button><button type="button" class="btn btn--ghost" data-ev-del hidden>Delete</button></div>
+    <div class="btns" style="margin-top:30px"><button class="btn" type="submit" id="ev-save">Save event</button><a class="btn btn--ghost" data-ev-open href="${B}/studio" hidden>Open job</a><button type="button" class="btn btn--ghost" data-ev-close>Cancel</button><button type="button" class="btn btn--ghost" data-ev-del hidden>Delete</button></div>
     <p class="msg" data-ev-msg></p>
   </form>`;
   document.body.append(modal);
   const close = () => { modal.hidden = true; };
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
   $$('[data-ev-close]', modal).forEach(b => b.onclick = close);
-  $('#ev-allday', modal).onchange = syncAllDayFields;
+  $('#ev-allday', modal).onchange = syncEventFields;
   $('#evForm', modal).onsubmit = saveEvent;
   $('[data-ev-del]', modal).onclick = deleteEvent;
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) close(); });
   return modal;
 }
-function syncAllDayFields() {
-  const on = $('#ev-allday').checked;
-  $('[data-ev-st]').hidden = on;
-  $('[data-ev-et]').hidden = on;
+function selectedColour() {
+  const el = $('#evForm input[name="ev-colour"]:checked');
+  return CAL_COLOURS.some(([name]) => name === el?.value) ? el.value : 'grey';
+}
+function setColour(c) {
+  const want = CAL_COLOURS.some(([name]) => name === c) ? c : 'grey';
+  $$('#evForm input[name="ev-colour"]').forEach(el => { el.checked = el.value === want; });
+}
+function syncEventFields() {
+  const jobMode = !!editingJobId;
+  const allDay = $('#ev-allday').checked;
+  $('[data-ev-job]').hidden = !jobMode;
+  const jobNotes = $('[data-ev-job-notes]');
+  jobNotes.hidden = !jobMode || !jobNotes.textContent;
+  $('[data-ev-allday-row]').hidden = jobMode;
+  $('[data-ev-ed]').hidden = jobMode;
+  $('[data-ev-notes-row]').hidden = jobMode;
+  $('[data-ev-st]').hidden = jobMode || allDay;
+  $('[data-ev-et]').hidden = jobMode || allDay;
 }
 function openEvent(ev, day) {
   const modal = ensureEventModal();
-  editingId = ev ? ev.id : null;
-  $('[data-ev-h]', modal).textContent = ev ? 'Edit event' : 'New event';
-  $('[data-ev-del]', modal).hidden = !ev;
+  const jobMode = !!(ev && ev.kind === 'job');
+  editingId = ev && !jobMode ? ev.id : null;
+  editingJobId = jobMode ? ev.jobId : null;
+  $('[data-ev-h]', modal).textContent = jobMode ? 'Proof on the calendar' : (ev ? 'Edit event' : 'New event');
+  $('[data-ev-del]', modal).hidden = !editingId;
+  $('#ev-save').textContent = jobMode ? 'Save' : 'Save event';
+  const open = $('[data-ev-open]', modal);
+  open.hidden = !jobMode;
+  if (jobMode) open.href = ev.href || `${B}/studio`;
+  const jobNotes = $('[data-ev-job-notes]', modal);
+  jobNotes.textContent = jobMode ? (ev.notes || '') : '';
+  jobNotes.hidden = !jobMode || !ev.notes;
   const msg = $('[data-ev-msg]', modal); msg.className = 'msg'; msg.textContent = '';
   const dayIso = day || (ev ? String(ev.start).slice(0, 10) : melbourneToday());
-  $('#ev-title').value = ev ? ev.title : '';
-  $('#ev-allday').checked = !!(ev && ev.allDay);
+  const title = $('#ev-title');
+  title.readOnly = jobMode;
+  title.value = ev ? ev.title : '';
+  $('#ev-sd-label').textContent = jobMode ? 'Calendar date' : 'Start date';
+  $('#ev-allday').checked = jobMode ? true : !!(ev && ev.allDay);
   $('#ev-sd').value = ev ? String(ev.start).slice(0, 10) : dayIso;
   $('#ev-st').value = ev && !ev.allDay ? String(ev.start).slice(11, 16) : '09:00';
   $('#ev-ed').value = ev && ev.end ? String(ev.end).slice(0, 10) : '';
   $('#ev-et').value = ev && ev.end && !ev.allDay ? String(ev.end).slice(11, 16) : '';
-  $('#ev-notes').value = ev ? (ev.notes || '') : '';
-  syncAllDayFields();
+  $('#ev-notes').value = ev && !jobMode ? (ev.notes || '') : '';
+  setColour(ev ? ev.colour : 'grey');
+  syncEventFields();
   modal.hidden = false;
-  $('#ev-title').focus();
+  (jobMode ? $('#ev-sd') : title).focus();
 }
 function eventPayload() {
   const allDay = $('#ev-allday').checked;
   const title = $('#ev-title').value.trim();
   const sd = $('#ev-sd').value, st = $('#ev-st').value, ed = $('#ev-ed').value, et = $('#ev-et').value;
+  const colour = selectedColour();
+  if (editingJobId) {
+    if (!sd) return { error: 'Add a date.' };
+    return { body: { date: sd, colour }, day: sd };
+  }
   if (!title) return { error: 'Add a title.' };
   if (!sd) return { error: 'Add a start date.' };
   if (!allDay && !st) return { error: 'Add a start time, or mark it as all day.' };
@@ -286,20 +334,21 @@ function eventPayload() {
     if (!ed || !et) return { error: 'Add both an end date and time, or leave the end blank.' };
     end = `${ed}T${et}`;
   }
-  return { body: { title, allDay, start: allDay ? sd : `${sd}T${st}`, end, notes: $('#ev-notes').value } };
+  return { body: { title, allDay, start: allDay ? sd : `${sd}T${st}`, end, notes: $('#ev-notes').value, colour }, day: sd };
 }
 async function saveEvent(e) {
   e.preventDefault();
   const msg = $('[data-ev-msg]'), built = eventPayload();
   msg.className = 'msg'; msg.textContent = '';
   if (built.error) { msg.className = 'msg err'; msg.textContent = built.error; return; }
-  const go = $('#evForm button[type=submit]'); go.disabled = true;
+  const go = $('#ev-save'); go.disabled = true;
   try {
-    const url = editingId ? `${B}/api/calendar/events/${editingId}` : B + '/api/calendar/events';
-    await api(url, { method: editingId ? 'PATCH' : 'POST', body: JSON.stringify(built.body) });
+    const url = editingJobId ? `${B}/api/calendar/jobs/${encodeURIComponent(editingJobId)}` : (editingId ? `${B}/api/calendar/events/${editingId}` : B + '/api/calendar/events');
+    const method = editingJobId || editingId ? 'PATCH' : 'POST';
+    await api(url, { method, body: JSON.stringify(built.body) });
     $('#evModal').hidden = true;
-    toast(editingId ? 'Event updated' : 'Event added');
-    calAnchor = calSelected = built.body.start.slice(0, 10);
+    toast(editingJobId ? 'Job updated on the calendar' : (editingId ? 'Event updated' : 'Event added'));
+    calAnchor = calSelected = built.day;
     await calendar();
   } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
   finally { go.disabled = false; }
