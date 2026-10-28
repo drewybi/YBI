@@ -1,0 +1,14 @@
+{
+  "name": "ybi-approval",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YBI Creative artwork approval / proofing app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "samples": "python3 scripts/make-samples.py",
+    "test": "bash scripts/smoke-test.sh"
+  },
+  "engines": { "node": ">=18" },
+  "optionalDependencies": { "nodemailer": "^6.9.16" }
+}

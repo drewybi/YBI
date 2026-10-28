@@ -1,0 +1,25 @@
+<!doctype html><html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#09090a"><meta name="color-scheme" content="dark"><meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="{{B}}/assets/img/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="{{B}}/assets/img/favicon-32.png"><link rel="apple-touch-icon" href="{{B}}/assets/img/favicon-180.png">
+<link rel="preload" href="{{B}}/assets/fonts/archivo-wdth.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="{{B}}/assets/fonts/work-sans.woff2" as="font" type="font/woff2" crossorigin>
+<script>window.BASE="{{B}}"</script><link rel="stylesheet" href="{{B}}/assets/app.css"><title>Studio · YBI Proofs</title></head><body>
+<svg class="svgdefs" width="0" height="0" aria-hidden="true" focusable="false"><defs><filter id="ol-m" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="erode" radius="1.4" result="e"/><feComposite in="SourceGraphic" in2="e" operator="out"/></filter></defs></svg>
+<header class="hdr"><div class="wrap"><a class="logo" href="https://www.ybicreative.com.au" target="_blank" rel="noopener" aria-label="YBI Creative"><img src="{{B}}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></a><div class="hdr__r"><a href="{{B}}/studio">Jobs</a><a href="{{B}}/studio/settings">Settings</a><button class="btn btn--sm" data-new>+ New proof</button></div></div></header>
+<main id="app"></main>
+<div class="modal" id="newModal" hidden><form class="panel" id="newForm" novalidate>
+ <div class="modal__h"><h2 class="h3">New proof job</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
+ <div class="grid2">
+  <div class="field"><label for="n-num">Job number <span class="opt">(becomes the link: {{B}}/30434)</span></label><input id="n-num" name="jobNumber" required placeholder="e.g. 30434" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}"></div>
+  <div class="field"><label for="n-client">Client name</label><input id="n-client" name="clientName" required placeholder="Contact name"></div>
+  <div class="field"><label for="n-co">Business <span class="opt">(optional)</span></label><input id="n-co" name="clientCompany"></div>
+  <div class="field"><label for="n-email">Client email <span class="opt">(optional)</span></label><input id="n-email" name="clientEmail" type="email"></div>
+  <div class="field field--full"><label for="n-desc">Job description</label><textarea id="n-desc" name="description" placeholder="What's being proofed — size, stock, finish, quantity…"></textarea></div>
+  <div class="field field--full"><label>Proof file — PDF, JPG or PNG</label>
+   <div class="drop" tabindex="0" id="n-drop"><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span id="n-fname"><b>Choose a file</b> or drop it here</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></div></div>
+ </div>
+ <div class="btns" style="margin-top:30px"><button class="btn" type="submit" id="n-go">Create &amp; get link</button><button type="button" class="btn btn--ghost" data-close>Cancel</button></div>
+ <p class="msg" id="n-msg"></p>
+</form></div>
+<footer class="ftr"><div class="wrap ftr__in"><div class="ftr__logo"><img src="{{B}}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI Creative"><span>© <span data-year>2026</span> YBI Creative · Brand Engineering</span></div><span><a href="tel:+61354442127">(03) 5444 2127</a> &nbsp;·&nbsp; <a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a> &nbsp;·&nbsp; <a href="https://www.ybicreative.com.au" target="_blank" rel="noopener">ybicreative.com.au</a></span></div></footer>
+<script>document.querySelectorAll("[data-year]").forEach(e=>e.textContent=new Date().getFullYear())</script>
+<script type="module" src="{{B}}/assets/studio.js"></script></body></html>

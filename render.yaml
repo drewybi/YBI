@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: ybi-proofs
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /proof
+    disk:
+      name: ybi-proofs-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATA_DIR
+        value: /var/data
+      - key: BASE_PATH
+        value: /proof
+      - key: PUBLIC_URL
+        value: https://proofs.ybicreative.com.au
+      - key: STUDIO_PASSWORD
+        generateValue: true
+      - key: DEFAULT_ACCESS
+        value: public
