@@ -2,10 +2,10 @@
 
 A small, YBI-branded proofing tool for YBI Creative. The studio uploads a proof, sends the client a link, and the client either **approves** it or **requests changes**. They can add a note and attach files. The studio then uploads V2, V3 and so on, and the same client link always shows the newest version.
 
-- **No client accounts.** Each job has its own page at `/proof/{jobNumber}` (e.g. `/proof/30434`), plus an optional secure `?k=` link.
+- **No client accounts.** Each job is opened only with a private link, `/proof/{jobNumber}?k={token}`. The job number alone does not show the proof.
 - **Studio** is protected by one password.
 - **No build step, no framework, no database.** It runs on Node ≥ 18 and keeps everything in plain files under `data/`.
-- **Brand** comes from the ybicreative.com.au site build: the Archivo (wide) and Work Sans fonts, the white YBI logo, the near-black `#09090a` / off-white `#f3f1ec` palette with the single `#A7A9AC` (35% black) accent, outline display headings, pill buttons, and the Harry Hogge pit-lane strip (clip-path reveal and word rise, with `prefers-reduced-motion` respected).
+- **Brand** comes from the ybicreative.com.au site build: the Archivo (wide) and Work Sans fonts, the white YBI logo, the near-black `#09090a` / off-white `#f3f1ec` palette with the single `#A7A9AC` (35% black) accent, outline display headings, pill buttons, and the looping engine film in the header (the still image shows when motion is reduced).
 
 ## URLs
 
@@ -13,9 +13,9 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 
 | Who | URL | What |
 |---|---|---|
-| Everyone | `/proof` | Entry page: a client types a job number to find their proof; the studio password box is next to it |
-| Client | **`/proof/30434`** | Review page for job 30434 (view, approve, request changes and attach files) |
-| Client (secure) | `/proof/30434?k=<token>` | Same page, using the job's private token. **Email client** uses this link. |
+| Studio | `/proof` | Studio login. Clients are not asked for a job number here |
+| Client | **`/proof/30434?k=<token>`** | The only client URL. View, approve, or request changes. **Copy link** and **Email client** use this |
+| Client (no key) | `/proof/30434` | Does not show the proof or its files. Asks for the private link |
 | Studio | `/proof/studio` | Dashboard (redirects to `/proof` to log in) |
 | Studio | `/proof/studio/30434` | Admin page for job 30434: links, versions, client feedback, upload a new version |
 | Studio | `/proof/studio/settings` | Notification email and logout |
@@ -45,7 +45,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | `BASE_PATH` | `/proof` | Path prefix the app lives under (`''` = root) |
 | `PUBLIC_URL` | *(request host)* | **Origin only** (no path) used to build client links, e.g. `https://www.ybicreative.com.au`. `X-Forwarded-Host/Proto` are honoured if it isn't set. |
 | `STUDIO_PASSWORD` | `ybi-proof` | Studio password. **Change it before going online.** |
-| `DEFAULT_ACCESS` | `public` | `public`: `/proof/{jobNumber}` works for anyone. `private`: new jobs need the secure `?k=` link. Each job can be switched in the studio. |
+| `DEFAULT_ACCESS` | `private` | Kept for Render config. The app always requires the secure link; it does not honour `public`. |
 | `SMTP_*`, `NOTIFY_EMAIL` | — | Email alerts (see below) |
 
 ## Job numbers
@@ -63,17 +63,16 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | One-click login link | `/proof/studio?key=<password>` sets a 90-day cookie. Bookmark it on studio machines. |
 | Scripts/API | send the header `X-Studio-Key: <password>`. Jobs can be addressed by number: `/proof/api/jobs/30434` |
 
-1. Click **+ New proof**. Enter the job number (this becomes the link), client name, business, email and description, then drop in a PDF (single or multi-page), JPG or PNG. Click **Create & get link**.
+1. Click **+ New proof**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, then drop in a PDF (single or multi-page), JPG or PNG. Click **Create & get link**.
 2. On the job page:
-   - **Copy link** copies `/proof/30434`, or the secure link if the job is private.
-   - The secure link `…/proof/30434?k=…` is shown underneath. **Email client** opens your mail app with the secure link already in the message.
-   - The **Private job** tick box makes the bare job-number URL ask for the secure link.
+   - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
+   - **Email client** opens your mail app with that same private link already in the message.
 3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note and attachments (thumbnails and downloads) appear under *Client feedback & history*. The dashboard's *Latest client activity* lists every response.
 4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable.
 
 ## Client side
 
-The client opens `/proof/30434` (or types `30434` on `/proof`) and sees:
+The client opens the private link YBI sent (`/proof/30434?k=…`) and sees:
 
 - the job number, client name and job description
 - the proof itself: images inline; PDFs page by page (‹ ›, arrow keys, thumbnails), plus zoom (+ / −), a full-screen stage (⤢, Esc to leave), download and open-in-new-tab
@@ -83,15 +82,15 @@ The client opens `/proof/30434` (or types `30434` on `/proof`) and sees:
 
 An approved version is locked. A decision made on an out-of-date version is rejected with a message asking the client to refresh. Each feedback entry records whether it came via the `secure-link` or the `job-number` URL.
 
-## Security: job-number URLs are guessable
+## Security: job numbers are not enough
 
-`/proof/30434` is easy to guess. Anyone who tries `/proof/30435` could see that client's artwork and could **approve it**. Here is what's in place and what we recommend:
+`/proof/30434` does not show the artwork. Every job has a random token, and the client page, the review API, and the files all require `?k=<token>`. Jobs saved earlier as public are treated as private too. There is no control to turn that off.
 
-- **Secure link per job.** Every job has a random 24-character token. `…/proof/30434?k=<token>` always works. Use it in emails; **Email client** already does.
-- **Private mode.** Tick *Private job*, or start the server with `DEFAULT_ACCESS=private`, and the bare `/proof/30434` shows *"This proof is private — use the secure link YBI emailed you"*. The files are hidden too.
+- **Copy link** and **Email client** always use `/proof/{jobNumber}?k=<token>`.
+- A wrong or missing key gets the same “use the secure link” response, and the file URL 404s.
 - **Rate limiting.** An IP that gets more than 40 wrong job numbers or keys in 10 minutes is blocked (HTTP 429) for the rest of that window.
 - Pages are served with `noindex` and `same-origin` referrer, so the token isn't leaked to other sites.
-- **Recommendation:** for anything confidential, or for clients where a wrong approval would be costly, use private mode (or make it the default) and send the secure link. If a secure link gets forwarded, generate a new token with `PATCH /proof/api/jobs/30434 {"rotateToken":true}`; there's no button for this yet.
+- If a secure link gets forwarded, generate a new token with `PATCH /proof/api/jobs/30434 {"rotateToken":true}`; there's no button for this yet.
 
 ## Notifications
 
