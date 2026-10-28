@@ -1,4 +1,4 @@
-import { B, $, $$, esc, fmtDate, fmtSize, api, upload, toast, dropzone, mountViewer } from './common.js';
+import { B, $, $$, esc, fmtDate, fmtSize, api, upload, toast, dropzone, mountViewer, harryStrip, mountHarry } from './common.js';
 const app = $('#app');
 const jobNo = decodeURIComponent(location.pathname.slice(B.length).split('/').filter(Boolean)[0] || '');
 const K = new URLSearchParams(location.search).get('k') || '';
@@ -25,7 +25,7 @@ function render() {
   const v = job.versions.find(x => x.n === showN) || latest; const isLatest = v === latest;
   const head = { awaiting_review: ['Your proof is', 'ready.'], changes_requested: ['Changes', 'received.'], approved: ['Artwork', 'approved.'] }[job.status];
   document.title = `Proof ${job.jobNumber} · YBI Creative`;
-  app.innerHTML = `<section class="band"><div class="band__media"><img src="${B}/assets/img/engine-1280.webp" alt="" style="object-position:85% 50%"></div><div class="wrap">
+  app.innerHTML = harryStrip() + `<div class="wrap bandhead">
     <p class="eyebrow">Artwork proof · <span style="color:var(--ink)">Job ${esc(job.jobNumber)}</span></p>
     <h1 class="h1">${head[0]} <span class="ol">${head[1]}</span></h1>
     <div class="meta">
@@ -33,7 +33,7 @@ function render() {
      <div><span class="k">Client</span>${esc(job.clientName)}${job.clientCompany ? ' · ' + esc(job.clientCompany) : ''}</div>
      <div style="grid-column:span 2"><span class="k">Job description</span>${esc(job.description) || '—'}</div>
      <div><span class="k">Version</span>V${latest.n} <span class="dim small">· ${fmtDate(latest.uploadedAt)}</span></div>
-    </div></div></section>
+    </div></div>
    <div class="wrap"><div class="jgrid">
     <div>
      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap">
@@ -43,10 +43,11 @@ function render() {
      ${!isLatest ? `<div class="banner">You’re viewing an earlier version (V${v.n}). <button class="lnk" data-latest style="color:var(--warn)">View latest V${latest.n}</button></div>` : ''}
      ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
      <div data-viewer></div>
-     <p class="small dim" style="margin-top:12px">Tip: use ‹ › (or your arrow keys) to flip pages. Colours on screen may vary slightly from print.</p>
+     <p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. Use ‹ › or the arrow keys to flip pages, and + / − to zoom. Colours on screen may vary slightly from print.</p>
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;
+  mountHarry(app);
   mountViewer($('[data-viewer]', app), v).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Couldn’t display this file — <a href="${v.url}">download it</a> instead.</div>`);
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => { showN = +vs.value; render(); };
   const vl = $('[data-latest]', app); if (vl) vl.onclick = () => { showN = null; render(); };

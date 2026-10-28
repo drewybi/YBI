@@ -1,12 +1,11 @@
-import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, STATUS } from './common.js';
+import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, harryStrip, mountHarry, STATUS } from './common.js';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 
 function band(eyebrow, title, sub = '', right = '') {
-  return `<section class="band"><div class="band__media"><img src="${B}/assets/img/workshop-1280.webp" alt=""></div><div class="wrap">
-  <div style="display:flex;justify-content:space-between;align-items:end;gap:24px;flex-wrap:wrap"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div></div></section>`;
+  return harryStrip() + `<div class="wrap bandhead"><div class="bandhead__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div></div>`;
 }
 const lastDecision = j => { const v = j.versions.at(-1); return v && [...v.feedback].reverse().find(f => f.type !== 'note'); };
 
@@ -21,6 +20,7 @@ async function dashboard() {
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
    <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
   </div>`;
+  mountHarry(app);
   const tb = $('tbody', app);
   const draw = () => {
     const list = jobs.filter(j => (filter === 'all' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
@@ -78,6 +78,7 @@ async function jobPage(key, showV) {
      </div>
      <div style="text-align:right"><button class="lnk" data-del>Delete job</button></div>
     </div></div></div>`;
+  mountHarry(app);
   $('[data-copy]', app).onclick = () => copy($('[data-main]', app).value);
   const c2 = $('[data-copy2]', app); if (c2) c2.onclick = () => copy(j.secureUrl);
   $('[data-private]', app).onchange = async e => { await api(`${B}/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify({ access: e.target.checked ? 'private' : 'public' }) }); toast(e.target.checked ? 'Job is now private' : 'Job number link is open'); jobPage(key, showV); };
@@ -100,6 +101,7 @@ async function settings() {
    <p class="small mute">Email alerts: <b>${s.emailEnabled ? 'ON (SMTP configured)' : 'OFF'}</b>. ${s.emailEnabled ? '' : 'Approvals and change requests still show on the Jobs dashboard and in <code>data/notifications.log</code>. To switch email on, set the SMTP_* variables — see README.'}</p>
    <p class="small mute">Client pages: <b>${esc(location.origin + s.basePath)}/{job number}</b> · new jobs default to <b>${s.defaultAccess}</b> (set DEFAULT_ACCESS=private to require secure links).</p>
    <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-save>Save</button><button class="btn btn--sm btn--ghost" data-out>Log out</button></div></div></div>`;
+  mountHarry(app);
   $('[data-save]', app).onclick = async () => { await api(B + '/api/settings', { method: 'POST', body: JSON.stringify({ notifyEmail: $('[data-email]', app).value }) }); toast('Saved'); };
   $('[data-out]', app).onclick = async () => { await api(B + '/api/logout', { method: 'POST' }); location.href = B + '/'; };
 }

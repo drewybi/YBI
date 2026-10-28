@@ -5,7 +5,7 @@ A small, YBI-branded proofing tool for YBI Creative. The studio uploads a proof,
 - **No client accounts.** Each job has its own page at `/proof/{jobNumber}` (e.g. `/proof/30434`), plus an optional secure `?k=` link.
 - **Studio** is protected by one password.
 - **No build step, no framework, no database.** It runs on Node ≥ 18 and keeps everything in plain files under `data/`.
-- **Brand** comes from the ybicreative.com.au site build (`/workspace/ybi-site/dist`): the Archivo (wide) and Work Sans fonts, the white YBI logo, the near-black `#09090a` / off-white `#f3f1ec` palette with the single `#A7A9AC` (35% black) accent, outline display headings, pill buttons, and the engine/workshop hero imagery.
+- **Brand** comes from the ybicreative.com.au site build: the Archivo (wide) and Work Sans fonts, the white YBI logo, the near-black `#09090a` / off-white `#f3f1ec` palette with the single `#A7A9AC` (35% black) accent, outline display headings, pill buttons, and the Harry Hogge pit-lane strip (clip-path reveal and word rise, with `prefers-reduced-motion` respected).
 
 ## URLs
 
@@ -76,7 +76,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 The client opens `/proof/30434` (or types `30434` on `/proof`) and sees:
 
 - the job number, client name and job description
-- the proof itself: images inline; PDFs page by page (‹ ›, arrow keys, thumbnails), plus zoom, download and open-in-new-tab
+- the proof itself: images inline; PDFs page by page (‹ ›, arrow keys, thumbnails), plus zoom (+ / −), a full-screen stage (⤢, Esc to leave), download and open-in-new-tab
 - **Approve**: name, an optional comment and a "checked spelling, contact details, colours, sizes" tick box, then a green confirmation
 - **Request changes**: name, a note, and **optional file attachments** (several files, up to 100 MB each). They then see "Thanks — we're on it. This same link will show the new version" and can add more notes or files while they wait.
 - previous versions (view-only) and a short history

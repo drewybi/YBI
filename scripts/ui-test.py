@@ -11,6 +11,9 @@ with sync_playwright() as p:
     studio.on('pageerror', lambda e: errs.append('studio: ' + str(e)))
     studio.goto(BASE + '/studio'); studio.wait_for_selector('#pw'); studio.screenshot(path=f'{OUT}/01-entry-login.png')
     studio.fill('#pw', KEY); studio.click('#f button'); studio.wait_for_selector('table.jobs')
+    studio.wait_for_selector('.hstrip.is-in')
+    assert 'workshop-1280' not in studio.content() and 'engine-1280' not in studio.content()
+    assert 'Harry' in studio.text_content('.hstrip__t')
     # create PDF job through the modal
     studio.click('header [data-new]'); studio.fill('#n-num', '30434'); studio.fill('#n-client', 'Jo Retailer')
     studio.fill('#n-co', 'Bendigo Auto Spares'); studio.fill('#n-email', 'jo@example.com')
@@ -24,7 +27,23 @@ with sync_playwright() as p:
     c.on('console', lambda m: m.type == 'error' and errs.append('client: ' + m.text))
     c.on('pageerror', lambda e: errs.append('client: ' + str(e)))
     c.goto(link); c.wait_for_selector('[data-viewer] .stage canvas'); c.wait_for_selector('.thumbs canvas:nth-child(3)')
-    assert 'Page 1 / 3' in c.text_content('[data-pg]'); c.click('[data-next]'); c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 2 / 3')")
+    c.wait_for_selector('.hstrip.is-in')
+    assert 'engine-1280' not in c.content() and 'workshop-1280' not in c.content()
+    assert 'Harry' in c.text_content('.hstrip__t')
+    assert 'Page 1 / 3' in c.text_content('[data-pg]')
+    assert c.locator('a[aria-label="Download"]').count() == 1 and c.locator('a[aria-label="Open in new tab"]').count() == 1
+    dur = c.eval_on_selector('.hstrip__media', 'el => getComputedStyle(el).transitionDuration')
+    assert dur.startswith('1.6'), dur
+    inline_w = c.eval_on_selector('.stage canvas', 'el => el.getBoundingClientRect().width')
+    c.click('[data-expand]'); c.wait_for_selector('.viewer.is-fs')
+    c.wait_for_function('''(w) => { const el = document.querySelector(".viewer.is-fs .stage canvas"); return el && el.getBoundingClientRect().width > w * 1.45; }''', arg=inline_w)
+    fs = c.locator('.viewer.is-fs').bounding_box()
+    assert fs['y'] <= 1 and fs['width'] > 1300 and fs['height'] > 900, fs
+    c.screenshot(path=f'{OUT}/15-pdf-fullscreen.png')
+    c.click('[data-zin]'); c.wait_for_selector('.stage.is-zoomed')
+    c.click('[data-next]'); c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 2 / 3')")
+    c.keyboard.press('Escape'); c.wait_for_function("!document.querySelector('.viewer').classList.contains('is-fs')")
+    assert 'Page 2 / 3' in c.text_content('[data-pg]')
     assert '30434' in c.inner_text('main') and 'Spring catalogue' in c.inner_text('main') and 'Jo Retailer' in c.inner_text('main')
     c.screenshot(path=f'{OUT}/04-client-review-V1.png', full_page=True)
     c.click('.seg [data-a=changes]'); c.fill('#c-name', 'Jo Retailer'); c.fill('#c-note', 'Back cover: phone number is wrong, should be 03 5444 2127. See markup attached.')
@@ -49,7 +68,12 @@ with sync_playwright() as p:
     c.screenshot(path=f'{OUT}/10-client-approved.png', full_page=True)
 
     m = b.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
-    m.goto(link); m.wait_for_selector('[data-viewer] .stage canvas'); m.screenshot(path=f'{OUT}/11-client-mobile.png', full_page=True)
+    m.goto(link); m.wait_for_selector('.hstrip.is-in'); m.wait_for_selector('[data-viewer] .stage canvas'); m.wait_for_timeout(1600); m.screenshot(path=f'{OUT}/11-client-mobile.png', full_page=True)
+    rm = b.new_page(viewport={'width': 1280, 'height': 800})
+    rm.emulate_media(reduced_motion='reduce')
+    rm.goto(link); rm.wait_for_selector('.hstrip.is-in')
+    assert rm.eval_on_selector('.hstrip__media', 'el => getComputedStyle(el).clipPath') == 'none'
+    assert rm.eval_on_selector('.hstrip__t .w > span', 'el => getComputedStyle(el).transform') == 'none'
     # client finds proof by job number from the entry page
     e = b.new_page(viewport={'width': 1440, 'height': 1000}); e.goto(BASE); e.fill('#jn', '30434'); e.click('#find button'); e.wait_for_url('**/proof/30434'); e.wait_for_selector('[data-state=approved]')
     # duplicate job number refused in the UI
