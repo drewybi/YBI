@@ -1,4 +1,4 @@
-import { B, $, $$, esc, fmtDate, fmtSize, api, upload, toast, dropzone, mountViewer, harryStrip, mountHarry, pinsFrom } from './common.js';
+import { B, $, $$, esc, fmtDate, fmtSize, api, upload, toast, dropzone, mountViewer, engineBand, pinsFrom } from './common.js';
 const app = $('#app');
 const jobNo = decodeURIComponent(location.pathname.slice(B.length).split('/').filter(Boolean)[0] || '');
 const K = new URLSearchParams(location.search).get('k') || '';
@@ -27,16 +27,14 @@ function render() {
   const v = job.versions.find(x => x.n === showN) || latest; const isLatest = v === latest;
   const head = { awaiting_review: ['Your proof is', 'ready.'], changes_requested: ['Changes', 'received.'], approved: ['Artwork', 'approved.'] }[job.status];
   document.title = `Proof ${job.jobNumber} · YBI Creative`;
-  app.innerHTML = harryStrip() + `<div class="wrap bandhead">
-    <p class="eyebrow">Artwork proof · <span style="color:var(--ink)">Job ${esc(job.jobNumber)}</span></p>
+  app.innerHTML = engineBand(`<p class="eyebrow">Artwork proof · <span style="color:var(--ink)">Job ${esc(job.jobNumber)}</span></p>
     <h1 class="h1">${head[0]} <span class="ol">${head[1]}</span></h1>
     <div class="meta">
      <div><span class="k">Job number</span><b>${esc(job.jobNumber)}</b></div>
      <div><span class="k">Client</span>${esc(job.clientName)}${job.clientCompany ? ' · ' + esc(job.clientCompany) : ''}</div>
      <div style="grid-column:span 2"><span class="k">Job description</span>${esc(job.description) || '—'}</div>
      <div><span class="k">Version</span>V${latest.n} <span class="dim small">· ${fmtDate(latest.uploadedAt)}</span></div>
-    </div></div>
-   <div class="wrap"><div class="jgrid">
+    </div>`) + `<div class="wrap"><div class="jgrid">
     <div>
      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap">
       <span class="vtag">V${v.n} ${isLatest ? '<span class="small dim" style="font-family:var(--sans);font-weight:400;letter-spacing:.14em">LATEST</span>' : ''}</span>
@@ -49,7 +47,6 @@ function render() {
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;
-  mountHarry(app);
   const placing = mode === 'changes' && isLatest;
   const pinFb = !placing && [...v.feedback].reverse().find(f => f.stickies?.length);
   mountViewer($('[data-viewer]', app), v, {
@@ -107,7 +104,7 @@ function history() {
 
 function roNotes(f) {
   if (!f.stickies?.length) return '';
-  return `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n">${s.n}</span><span class="note__t">${esc(s.text)}</span><span class="small dim">p.${s.page}</span></button></li>`).join('')}</ol>`;
+  return `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n" aria-hidden="true">${s.n}</span><span class="note__body"><span class="note__t">${esc(s.text)}</span><span class="note__meta">Page ${s.page}</span></span></button></li>`).join('')}</ol>`;
 }
 function markNotes(id) {
   $$('.note', app).forEach(li => {
