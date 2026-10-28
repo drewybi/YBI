@@ -1,6 +1,8 @@
 import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
+// Private staff calendar. Opens in Google for a signed-in account that already has access — not an embed, and not a public share.
+const STAFF_CALENDAR_URL = 'https://calendar.google.com/calendar/u/0?cid=dW8yMDF0dmNjNXBrcTcyMG5taGtrcDJvMW9AZ3JvdXAuY2FsZW5kYXIuZ29vZ2xlLmNvbQ';
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 
@@ -100,6 +102,15 @@ async function jobPage(key, showV) {
   $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); location.href = B + '/studio'; };
 }
 
+function calendar() {
+  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'The studio calendar opens in Google Calendar.') +
+  `<div class="wrap"><div class="panel" style="margin-top:36px;max-width:760px">
+   <p style="margin:0 0 22px">Sign in to Google with an account that can see the staff calendar. It stays private inside Google.</p>
+   <div class="btns"><a class="btn" href="${STAFF_CALENDAR_URL}" target="_blank" rel="noopener noreferrer">Open staff calendar ${ARROW}</a></div>
+   <p class="small mute" style="margin:18px 0 0;overflow-wrap:anywhere">uo201tvcc5pkq720nmhkkp2o1o@group.calendar.google.com</p>
+  </div></div>`;
+}
+
 async function settings() {
   const s = await api(B + '/api/settings');
   app.innerHTML = band('YBI Studio', 'Settings') + `<div class="wrap"><div class="panel" style="margin-top:36px;max-width:760px">
@@ -138,6 +149,7 @@ async function route() {
   const rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
   try {
     if (rest === 'settings') await settings();
+    else if (rest === 'calendar') calendar();
     else if (rest) await jobPage(rest);
     else await dashboard();
   } catch (e) { if (e.status === 401) location.href = B + '/'; else app.innerHTML = `<div class="wrap" style="padding-top:80px;padding-bottom:80px"><p class="msg err">${esc(e.message)}</p><a class="lnk" href="${B}/studio">Back to jobs</a></div>`; }

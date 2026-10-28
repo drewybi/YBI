@@ -21,7 +21,7 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin 
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
-const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'login', 'logout', 'favicon.ico', 'robots.txt']);
+const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'login', 'logout', 'favicon.ico', 'robots.txt']);
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
@@ -343,7 +343,7 @@ async function handle(req, res) {
 http.createServer((req, res) => {
   handle(req, res).catch(e => { console.error(e); if (!res.headersSent) err(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, e.message || 'Server error'); else res.end(); });
 }).listen(PORT, HOST, () => {
-  console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · job pages: ${B}/{jobNumber})`);
+  console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · job pages: ${B}/{jobNumber})`);
   console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
   console.log(`  Data folder: ${DATA}`);
   console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}\n`);
