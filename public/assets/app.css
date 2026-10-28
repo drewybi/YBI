@@ -253,15 +253,19 @@ body.viewer-open{overflow:hidden}
 .calcell.is-sel{background:rgba(167,169,172,.12)}
 .calcell__d{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:500 .78rem/1 var(--sans)}
 .calcell.is-today .calcell__d{background:var(--ink);color:var(--bg)}
-.caldot{display:none}
-.calev{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;max-width:100%;min-width:0;text-align:left;border:0;border-radius:7px;padding:4px 6px;background:rgba(243,241,236,.1);color:var(--ink);font:500 .72rem/1.25 var(--sans);cursor:pointer}
-.calev__t{color:var(--mute);font:500 .62rem/1.2 var(--sans);letter-spacing:.02em}
+.caldots{display:none}
+.caldot{width:6px;height:6px;border-radius:50%;background:var(--chip,var(--g))}
+.tone-red{--chip:#ff6b63;--chip-ink:#2a0a08}
+.tone-blue{--chip:#6ea8ff;--chip-ink:#071326}
+.tone-green{--chip:#5dce84;--chip-ink:#06210f}
+.tone-yellow{--chip:#f5d34e;--chip-ink:#241c04}
+.tone-purple{--chip:#c49bff;--chip-ink:#1a0d28}
+.tone-grey{--chip:#c5c6c8;--chip-ink:#1a1a1c}
+.calev{display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;max-width:100%;min-width:0;text-align:left;border:0;border-radius:7px;padding:4px 6px;background:var(--chip,#c5c6c8);color:var(--chip-ink,#1a1a1c);font:500 .72rem/1.25 var(--sans);cursor:pointer}
+.calev__t{color:inherit;opacity:.75;font:600 .62rem/1.2 var(--sans);letter-spacing:.04em;text-transform:uppercase}
 .calev__n{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .calgrid .calev__n{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.calev:hover,.calev:focus-visible{background:var(--g);color:#09090a}
-.calev:hover .calev__t,.calev:focus-visible .calev__t{color:#09090a}
-.calev--all{background:transparent;box-shadow:inset 0 0 0 1px var(--line2)}
-.calev--all:hover,.calev--all:focus-visible{box-shadow:none}
+.calev:hover,.calev:focus-visible{filter:brightness(1.08)}
 .calweek{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
 .calday{border:1px solid var(--line);border-radius:14px;background:var(--bg2);padding:12px;min-height:150px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0}
 .calday.is-today{border-color:var(--line2)}
@@ -274,10 +278,20 @@ body.viewer-open{overflow:hidden}
 .calpick{margin-top:18px}
 .calpick__h{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:6px}
 .calpick__h .h3{font-size:clamp(1.05rem,1.6vw,1.4rem)}
-.calpick__ev{display:grid;gap:4px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:10px;color:inherit;cursor:pointer}
-.calpick__ev:hover,.calpick__ev:focus-visible{border-color:var(--g)}
-.calpick__ev b{font-weight:500}
-.calpick__ev p{margin:0;white-space:pre-wrap;color:var(--mute)}
+.calpick__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:10px;background:var(--chip,#c5c6c8);color:var(--chip-ink,#1a1a1c);border-radius:14px;padding:4px 14px 4px 4px}
+.calpick__row:hover{filter:brightness(1.06)}
+.calpick__ev{display:grid;gap:4px;flex:1;min-width:0;text-align:left;background:transparent;border:0;border-radius:10px;padding:10px 12px;color:inherit;cursor:pointer}
+.calpick__ev:hover,.calpick__ev:focus-visible{background:rgba(9,9,10,.06)}
+.calpick__ev b{font-weight:600}
+.calpick__ev .k,.calpick__ev p{color:inherit;opacity:.78}
+.calpick__ev p{margin:0;white-space:pre-wrap}
+.calpick__row .lnk{color:inherit;border-color:currentColor;margin-left:auto}
+.swatches{display:flex;flex-wrap:wrap;gap:8px}
+.swatch{position:relative;cursor:pointer}
+.swatch input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.swatch__box{display:inline-flex;align-items:center;justify-content:center;min-width:76px;height:40px;padding:0 12px;border-radius:8px;background:var(--chip);color:var(--chip-ink);font:600 .66rem/1 var(--sans);letter-spacing:.12em;text-transform:uppercase}
+.swatch input:focus-visible + .swatch__box{outline:2px solid var(--ink);outline-offset:3px}
+.swatch input:checked + .swatch__box{outline:3px solid var(--ink);outline-offset:3px;box-shadow:inset 0 0 0 2px rgba(9,9,10,.55)}
 .field input[type="date"],.field input[type="time"]{color-scheme:dark}
 @media (max-width:800px){
   .calweek{grid-template-columns:1fr}
@@ -288,7 +302,8 @@ body.viewer-open{overflow:hidden}
   .calcell__d{width:24px;height:24px;font-size:.72rem}
   .caldow{font-size:.56rem;letter-spacing:.04em;padding:8px 0}
   .calgrid .calev{display:none}
-  .caldot{display:block;width:5px;height:5px;border-radius:50%;background:var(--g);margin-top:3px}
+  .caldots{display:flex;gap:3px;margin-top:3px}
+  .caldot{display:block}
   .caltitle{font-size:1.05rem}
   .calnav .ibtn{width:34px;height:34px}
 }
