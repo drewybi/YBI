@@ -1,4 +1,5 @@
 import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
+import { addDays, hhmm, isoParts, minutesOf, movedTimes, sameSpan } from './cal-move.mjs';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
@@ -105,6 +106,10 @@ const CAL_TZ = 'Australia/Melbourne';
 const CAL_COLOURS = [['red', 'Red'], ['blue', 'Blue'], ['green', 'Green'], ['yellow', 'Yellow'], ['purple', 'Purple'], ['grey', 'Grey']];
 const CAL_DOW = [0, 1, 2, 3, 4, 5, 6].map(i => new Intl.DateTimeFormat('en-AU', { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 0, 5 + i))));
 let calEvents = [], calMode = 'month', calAnchor = '', calSelected = '', editingId = null, editingJobId = null, calGen = 0;
+let calDrag = null, calSuppressClick = false, calSaving = 0, moveQueue = Promise.resolve(), confirmedEvents = [];
+const DRAG_PX = 6;
+const SLOT_H = 22; // keep in sync with .calslot / .caltick height
+const weekGridMq = window.matchMedia('(min-width: 801px)');
 const colourOf = ev => CAL_COLOURS.some(([name]) => name === ev?.colour) ? ev.colour : 'grey';
 const colourSwatches = () => `<div class="swatches" role="radiogroup" aria-labelledby="ev-colour-label">${CAL_COLOURS.map(([name, label]) => `<label class="swatch"><input type="radio" name="ev-colour" value="${name}"${name === 'grey' ? ' checked' : ''}><span class="swatch__box tone-${name}">${label}</span></label>`).join('')}</div>`;
 
@@ -113,11 +118,9 @@ function melbourneToday() {
   const g = t => parts.find(p => p.type === t).value;
   return `${g('year')}-${g('month')}-${g('day')}`;
 }
-function isoParts(iso) { const [y, m, d] = iso.split('-').map(Number); return { y, m, d }; }
 function fmtUTC(iso, opts) { const { y, m, d } = isoParts(iso); return new Intl.DateTimeFormat('en-AU', { ...opts, timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d))); }
 const longDay = iso => fmtUTC(iso, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const shortDay = iso => fmtUTC(iso, { day: 'numeric', month: 'short' });
-function addDays(iso, n) { const { y, m, d } = isoParts(iso); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); }
 function mondayOf(iso) { const { y, m, d } = isoParts(iso); const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return addDays(iso, -((wd + 6) % 7)); }
 function shiftMonth(iso, delta) {
   const { y, m, d } = isoParts(iso);
@@ -159,12 +162,79 @@ function rangeLabel(days) {
   if (a.slice(0, 4) === b.slice(0, 4)) return `${shortDay(a)} – ${shortDay(b)} ${a.slice(0, 4)}`;
   return `${shortDay(a)} ${a.slice(0, 4)} – ${shortDay(b)} ${b.slice(0, 4)}`;
 }
-function eventButton(ev, iso) {
+function eventButton(ev, iso, pos) {
   const colour = colourOf(ev);
   const onStart = String(ev.start).slice(0, 10) === iso;
   const time = ev.kind === 'job' ? 'Job' : (!ev.allDay && onStart ? fmtClock(String(ev.start).slice(11, 16)) : '');
   const kind = ev.kind === 'job' ? 'job' : 'event';
-  return `<button type="button" class="calev tone-${colour}${ev.allDay ? ' calev--all' : ''}" data-ev="${esc(ev.id)}" data-kind="${kind}" data-colour="${colour}" title="${esc(timeRange(ev) + ' — ' + ev.title + ' — ' + colour)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
+  const style = pos ? ` style="top:${pos.top}px;height:${pos.height}px;left:calc(${pos.col} * (100% / ${pos.cols}) + 2px);width:calc(100% / ${pos.cols} - 4px)"` : '';
+  return `<button type="button" class="calev tone-${colour}${ev.allDay ? ' calev--all' : ''}"${style} data-ev="${esc(ev.id)}" data-kind="${kind}" data-colour="${colour}" title="${esc(timeRange(ev) + ' — ' + ev.title + ' — ' + colour)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
+}
+function splitDay(iso) {
+  const all = [], timed = [];
+  for (const ev of eventsOn(iso)) {
+    if (!ev.allDay && ev.kind !== 'job' && String(ev.start).slice(0, 10) === iso) timed.push(ev);
+    else all.push(ev);
+  }
+  return { all, timed };
+}
+function weekHasTimed(days) { return days.some(iso => splitDay(iso).timed.length); }
+function hourLabel(stamp) {
+  const h = +stamp.slice(0, 2);
+  return `${h % 12 || 12}${h >= 12 ? 'pm' : 'am'}`;
+}
+function weekSlots(days) {
+  let start = 8 * 60, end = 18 * 60;
+  for (const iso of days) {
+    for (const ev of splitDay(iso).timed) {
+      const st = minutesOf(String(ev.start).slice(11, 16));
+      start = Math.min(start, Math.floor(st / 30) * 30);
+      let en = st + 30;
+      if (ev.end && String(ev.end).slice(0, 10) === iso) en = minutesOf(String(ev.end).slice(11, 16));
+      else if (ev.end) en = 24 * 60;
+      if (en <= st) en = st + 30;
+      end = Math.max(end, Math.ceil(en / 30) * 30);
+    }
+  }
+  start = Math.max(0, start);
+  end = Math.min(24 * 60, Math.max(end, start + 60));
+  const out = [];
+  for (let m = start; m < end; m += 30) out.push(hhmm(m));
+  return out;
+}
+function layoutTimed(events, origin) {
+  const items = events.map(ev => {
+    const st = minutesOf(String(ev.start).slice(11, 16));
+    const startDay = String(ev.start).slice(0, 10);
+    const endDay = ev.end ? String(ev.end).slice(0, 10) : '';
+    let en;
+    if (ev.end && endDay === startDay) en = minutesOf(String(ev.end).slice(11, 16));
+    else if (ev.end) en = 24 * 60;
+    else en = st + 30;
+    if (en <= st) en = st + 30;
+    return { ev, start: st, end: en, col: 0, cols: 1 };
+  }).sort((a, b) => a.start - b.start || b.end - a.end);
+  const colEnds = [];
+  for (const it of items) {
+    let c = colEnds.findIndex(end => end <= it.start);
+    if (c < 0) { c = colEnds.length; colEnds.push(it.end); }
+    else colEnds[c] = it.end;
+    it.col = c;
+  }
+  for (const it of items) {
+    let n = it.col + 1;
+    for (const other of items) {
+      if (other.start < it.end && it.start < other.end) n = Math.max(n, other.col + 1);
+    }
+    it.cols = n;
+  }
+  return items.map(it => ({
+    ev: it.ev,
+    col: it.col,
+    cols: it.cols,
+    top: ((it.start - origin) / 30) * SLOT_H,
+    height: Math.max(18, ((it.end - it.start) / 30) * SLOT_H - 2)
+  }));
 }
 function monthHtml(days) {
   const month = calAnchor.slice(0, 7), today = melbourneToday();
@@ -177,13 +247,27 @@ function monthHtml(days) {
   }).join('');
   return `<div class="calgrid" aria-label="${esc(rangeLabel(days))}">${head}${cells}</div>`;
 }
+function weekDay(iso, today, grid) {
+  const cls = ['calday', iso === today ? 'is-today' : '', iso === calSelected ? 'is-sel' : ''].filter(Boolean).join(' ');
+  const list = grid ? splitDay(iso).all : eventsOn(iso);
+  const body = list.length ? list.map(ev => eventButton(ev, iso)).join('') : (grid ? '' : '<p class="small dim calday__empty">Nothing scheduled</p>');
+  return `<section class="${cls}" data-day="${iso}"><div class="calday__h"><button type="button" data-pick="${iso}">${esc(fmtUTC(iso, { weekday: 'short', day: 'numeric', month: 'short' }))}</button><button type="button" class="lnk" data-add-day="${iso}">Add</button></div><div class="calday__all">${body}</div></section>`;
+}
 function weekHtml(days) {
   const today = melbourneToday();
-  return `<div class="calweek">${days.map(iso => {
-    const list = eventsOn(iso);
-    const cls = ['calday', iso === today ? 'is-today' : '', iso === calSelected ? 'is-sel' : ''].filter(Boolean).join(' ');
-    return `<section class="${cls}" data-day="${iso}"><div class="calday__h"><button type="button" data-pick="${iso}">${esc(fmtUTC(iso, { weekday: 'short', day: 'numeric', month: 'short' }))}</button><button type="button" class="lnk" data-add-day="${iso}">Add</button></div>${list.length ? list.map(ev => eventButton(ev, iso)).join('') : '<p class="small dim calday__empty">Nothing scheduled</p>'}</section>`;
-  }).join('')}</div>`;
+  const grid = weekGridMq.matches && weekHasTimed(days);
+  if (!grid) return `<div class="calweek">${days.map(iso => weekDay(iso, today, false)).join('')}</div>`;
+  const slots = weekSlots(days);
+  const origin = minutesOf(slots[0]);
+  const heads = `<div class="calgutter" aria-hidden="true"></div>${days.map(iso => weekDay(iso, today, true)).join('')}`;
+  const ticks = `<div class="calgutter calgutter--times" aria-hidden="true">${slots.map(s => `<div class="caltick${s.slice(3) === '00' ? ' is-hour' : ''}">${s.slice(3) === '00' ? esc(hourLabel(s)) : ''}</div>`).join('')}</div>`;
+  const cols = days.map(iso => {
+    const mark = [iso === today ? 'is-today' : '', iso === calSelected ? 'is-sel' : ''].filter(Boolean).join(' ');
+    const slotDivs = slots.map(s => `<div class="calslot${s.slice(3) === '00' ? ' is-hour' : ''}" data-slot="${s}"></div>`).join('');
+    const chips = layoutTimed(splitDay(iso).timed, origin).map(pos => eventButton(pos.ev, iso, pos)).join('');
+    return `<div class="calhours ${mark}" data-day="${iso}">${slotDivs}${chips}</div>`;
+  }).join('');
+  return `<div class="calweek has-hours"><div class="calweek__heads">${heads}</div><div class="caltimescroll"><div class="caltimesheet">${ticks}${cols}</div></div></div>`;
 }
 function dayRow(ev) {
   const colour = colourOf(ev);
@@ -199,7 +283,7 @@ function renderCal() {
   const days = visibleDays();
   if (!days.includes(calSelected)) calSelected = days.includes(calAnchor) ? calAnchor : days[0];
   if (!$('[data-cal-root]', app)) {
-    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Proof jobs show up on their own, with deadlines and meetings. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
+    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Proof jobs show up on their own, with deadlines and meetings. Drag an event to another day. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
       '<div class="wrap cal" data-cal-root><div data-cal-body></div></div>';
   }
   const root = $('[data-cal-root]', app);
@@ -212,6 +296,7 @@ function renderCal() {
         <button type="button" class="btn btn--sm" data-cal-new>New event</button>
       </div>
     </div>
+    <p class="small dim calhint">Drag an event onto a day to reschedule it. In week view, drop a timed event on a time to change the clock.</p>
     ${calMode === 'month' ? monthHtml(days) : weekHtml(days)}
     ${dayPanel(calSelected)}`;
   const pick = iso => { calSelected = iso; if (calMode === 'month' && iso.slice(0, 7) !== calAnchor.slice(0, 7)) calAnchor = iso; renderCal(); };
@@ -220,19 +305,185 @@ function renderCal() {
   $('[data-cal-today]', root).onclick = () => { calAnchor = calSelected = melbourneToday(); renderCal(); };
   $$('[data-cal-mode]', root).forEach(b => b.onclick = () => { calMode = b.dataset.calMode; renderCal(); });
   $$('[data-cal-new]', app).forEach(b => b.onclick = () => openEvent(null, calSelected || calAnchor));
-  $$('[data-day]', root).forEach(cell => cell.onclick = e => { if (e.target.closest('[data-ev],[data-add-day],[data-pick]')) return; pick(cell.dataset.day); });
+  $$('[data-day]', root).forEach(cell => cell.onclick = e => {
+    if (calSuppressClick) return;
+    if (e.target.closest('[data-ev],[data-add-day],[data-pick]')) return;
+    pick(cell.dataset.day);
+  });
   $$('[data-pick]', root).forEach(b => b.onclick = () => pick(b.dataset.pick));
   $$('[data-add-day]', root).forEach(b => b.onclick = () => openEvent(null, b.dataset.addDay));
-  $$('[data-ev]', root).forEach(b => b.onclick = e => { e.stopPropagation(); const ev = calEvents.find(x => x.id === b.dataset.ev); if (ev) openEvent(ev); });
+  $$('[data-ev]', root).forEach(b => b.onclick = e => {
+    if (calSuppressClick) return;
+    e.stopPropagation();
+    const ev = calEvents.find(x => x.id === b.dataset.ev);
+    if (ev) openEvent(ev);
+  });
 }
 async function calendar() {
   const gen = ++calGen;
   const data = await api(B + '/api/calendar/events');
-  if (gen !== calGen) return;
+  if (gen !== calGen || (calDrag && calDrag.moved) || calSaving) return;
   calEvents = data.events || [];
+  confirmedEvents = calEvents.map(x => ({ ...x }));
   if (!calAnchor) calAnchor = melbourneToday();
   renderCal();
 }
+function spansMatch(ev, start, end) {
+  return !!ev && String(ev.start) === String(start) && String(ev.end || '') === String(end || '');
+}
+function cssEscape(s) { return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/([^a-zA-Z0-9_-])/g, '\\$1'); }
+function swallowNextClick() {
+  calSuppressClick = true;
+  setTimeout(() => { calSuppressClick = false; }, 0);
+}
+function teardownDrag() {
+  document.querySelectorAll('.calev.is-dragging').forEach(el => el.classList.remove('is-dragging'));
+  document.querySelectorAll('.is-drop, .is-drop-day').forEach(el => el.classList.remove('is-drop', 'is-drop-day'));
+  if (calDrag && calDrag.ghost) calDrag.ghost.remove();
+  document.body.classList.remove('is-cal-drag');
+  calDrag = null;
+}
+function dropTargetAt(x, y) {
+  const root = $('[data-cal-root]');
+  if (!root) return null;
+  const stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+  for (const el of stack) {
+    if (!el || !el.closest) continue;
+    const day = el.closest('[data-day]');
+    if (!day || !root.contains(day)) continue;
+    const hours = el.closest('.calhours');
+    const slotEl = el.closest('[data-slot]');
+    const slot = hours && slotEl && hours.contains(slotEl) ? slotEl.dataset.slot : null;
+    return { day: day.dataset.day, slot };
+  }
+  return null;
+}
+function paintDrop(drop) {
+  document.querySelectorAll('.is-drop, .is-drop-day').forEach(el => el.classList.remove('is-drop', 'is-drop-day'));
+  const root = $('[data-cal-root]');
+  if (!drop || !root) return;
+  $$(`[data-day="${drop.day}"]`, root).forEach(el => el.classList.add(drop.slot ? 'is-drop-day' : 'is-drop'));
+  if (drop.slot) {
+    const slot = $(`.calhours[data-day="${drop.day}"] [data-slot="${drop.slot}"]`, root);
+    if (slot) slot.classList.add('is-drop');
+  }
+}
+function beginCalDrag(e) {
+  const drag = calDrag;
+  drag.moved = true;
+  document.body.classList.add('is-cal-drag');
+  const root = $('[data-cal-root]');
+  const ev = calEvents.find(x => x.id === drag.id);
+  drag.timed = !!(ev && !ev.allDay && ev.kind !== 'job');
+  if (root) $$(`.calev[data-ev="${cssEscape(drag.id)}"]`, root).forEach(el => el.classList.add('is-dragging'));
+  const ghost = drag.chip.cloneNode(true);
+  ghost.classList.remove('is-dragging');
+  ghost.removeAttribute('style');
+  ghost.classList.add('calev--ghost');
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.tabIndex = -1;
+  document.body.append(ghost);
+  drag.ghost = ghost;
+  drag.timeLabel = ghost.querySelector('.calev__t')?.textContent || '';
+  try { drag.chip.setPointerCapture(e.pointerId); } catch { /* detached chip */ }
+}
+function moveGhost(e, drop) {
+  const drag = calDrag;
+  if (!drag || !drag.ghost) return;
+  const w = drag.ghost.offsetWidth || 168;
+  const h = drag.ghost.offsetHeight || 36;
+  let left = e.clientX + 12, top = e.clientY + 10;
+  if (left + w > window.innerWidth - 8) left = Math.max(8, e.clientX - w - 12);
+  if (top + h > window.innerHeight - 8) top = Math.max(8, e.clientY - h - 12);
+  drag.ghost.style.left = `${Math.round(left)}px`;
+  drag.ghost.style.top = `${Math.round(top)}px`;
+  const label = drag.timed && drag.ghost.querySelector('.calev__t');
+  if (label) label.textContent = drop && drop.slot ? fmtClock(drop.slot) : drag.timeLabel;
+}
+function commitMove(from, drop) {
+  const ev = calEvents.find(x => x.id === from.id);
+  if (!ev) { toast('That event is no longer on the calendar'); return; }
+  const slot = ev.allDay || ev.kind === 'job' ? null : drop.slot;
+  const next = movedTimes(ev, from.fromDay, drop.day, slot);
+  if (sameSpan(ev, next)) return;
+  const prevSelected = calSelected;
+  const kind = ev.kind, allDay = !!ev.allDay, id = ev.id;
+  const jobKey = ev.jobId || ev.jobNumber;
+  calEvents = calEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end } : x);
+  calSelected = drop.day;
+  renderCal();
+  const day = shortDay(String(next.start).slice(0, 10));
+  const label = kind === 'job' ? `Job moved to ${day}` : (allDay ? `Moved to ${day}` : `Moved to ${day} · ${fmtClock(String(next.start).slice(11, 16))}`);
+  const url = kind === 'job'
+    ? `${B}/api/calendar/jobs/${encodeURIComponent(jobKey)}`
+    : `${B}/api/calendar/events/${encodeURIComponent(id)}`;
+  const body = kind === 'job' ? { date: String(next.start).slice(0, 10) } : { start: next.start, end: next.end };
+  calSaving++;
+  moveQueue = moveQueue.then(async () => {
+    try {
+      await api(url, { method: 'PATCH', body: JSON.stringify(body) });
+      confirmedEvents = confirmedEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end } : x);
+      if (spansMatch(calEvents.find(x => x.id === id), next.start, next.end)) toast(label);
+    } catch (err) {
+      if (!spansMatch(calEvents.find(x => x.id === id), next.start, next.end)) return;
+      const prev = confirmedEvents.find(x => x.id === id);
+      if (prev) calEvents = calEvents.map(x => x.id === id ? { ...prev } : x);
+      if (calSelected === drop.day) calSelected = prevSelected;
+      renderCal();
+      toast(err.message || 'Couldn’t move that');
+    } finally { calSaving--; }
+  }).catch(() => {});
+}
+function onCalPointerDown(e) {
+  if (e.button !== 0 || calDrag) return;
+  const chip = e.target.closest && e.target.closest('.calev[data-ev]');
+  const root = $('[data-cal-root]');
+  if (!chip || !root || !root.contains(chip)) return;
+  const dayEl = chip.closest('[data-day]');
+  if (!dayEl) return;
+  calDrag = { id: chip.dataset.ev, fromDay: dayEl.dataset.day, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false, chip };
+}
+function onCalPointerMove(e) {
+  const drag = calDrag;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  if (!drag.moved) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (dx * dx + dy * dy < DRAG_PX * DRAG_PX) return;
+    beginCalDrag(e);
+  }
+  e.preventDefault();
+  const drop = dropTargetAt(e.clientX, e.clientY);
+  moveGhost(e, drop);
+  paintDrop(drop);
+}
+function onCalPointerUp(e) {
+  const drag = calDrag;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  const moved = drag.moved;
+  const drop = moved ? dropTargetAt(e.clientX, e.clientY) : null;
+  const from = { id: drag.id, fromDay: drag.fromDay };
+  teardownDrag();
+  if (!moved) return;
+  swallowNextClick();
+  if (drop) commitMove(from, drop);
+}
+function onCalPointerCancel(e) {
+  if (!calDrag || (e && e.pointerId !== calDrag.pointerId)) return;
+  const moved = calDrag.moved;
+  teardownDrag();
+  if (moved) swallowNextClick();
+}
+document.addEventListener('pointerdown', onCalPointerDown);
+document.addEventListener('pointermove', onCalPointerMove, { passive: false });
+document.addEventListener('pointerup', onCalPointerUp);
+document.addEventListener('pointercancel', onCalPointerCancel);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && calDrag) onCalPointerCancel({ pointerId: calDrag.pointerId }); });
+document.addEventListener('click', e => {
+  if (!calSuppressClick) return;
+  calSuppressClick = false;
+  e.preventDefault();
+  e.stopPropagation();
+}, true);
 function ensureEventModal() {
   let modal = $('#evModal');
   if (modal) return modal;
@@ -422,6 +673,10 @@ route();
 // light polling so new client feedback shows up on the dashboard
 const onDash = () => !location.pathname.slice(B.length).replace(/^\/studio\/?/, '');
 const onCal = () => location.pathname.replace(/\/$/, '').endsWith('/studio/calendar');
+weekGridMq.addEventListener('change', () => {
+  if (calDrag && calDrag.moved) return;
+  if (onCal() && $('[data-cal-root]')) renderCal();
+});
 setInterval(() => { const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches('input,textarea'); if (onDash() && modal.hidden && document.visibilityState === 'visible' && !typing) dashboard().catch(() => {}); }, 30000);
 document.addEventListener('visibilitychange', () => {
   const ev = $('#evModal');
