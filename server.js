@@ -111,6 +111,22 @@ function status(job) {
   const d = [...v.feedback].reverse().find(f => f.type === 'approve' || f.type === 'changes');
   return d ? (d.type === 'approve' ? 'approved' : 'changes_requested') : 'awaiting_review';
 }
+// Drop the unread dot once nothing newer than the last studio visit remains.
+function syncUnread(job) {
+  let latest = '';
+  for (const v of job.versions || []) for (const f of v.feedback || []) if (f && f.at > latest) latest = f.at;
+  if (!latest || (job.seenAt && latest <= job.seenAt)) job.unread = false;
+}
+async function removeVersionFiles(job, version) {
+  const root = path.resolve(FILES, job.id);
+  const rels = [version && version.stored];
+  for (const f of (version && version.feedback) || []) for (const a of f.attachments || []) rels.push(a && a.stored);
+  for (const rel of rels) {
+    if (!rel || typeof rel !== 'string') continue;
+    const file = path.resolve(root, rel);
+    if (file !== root && file.startsWith(root + path.sep)) await fsp.rm(file, { force: true });
+  }
+}
 async function loadSettings() { try { return JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8')); } catch { return { notifyEmail: process.env.NOTIFY_EMAIL || '' }; } }
 
 // Staff calendar. start/end are Australia/Melbourne wall-clock strings, not UTC:
@@ -662,6 +678,23 @@ async function handle(req, res) {
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
+    if ((r = p.match(/^\/api\/jobs\/([^/]+)\/versions\/(\d+)$/))) {
+      if (m !== 'DELETE') return err(res, 405, 'Method not allowed');
+      const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
+      if (!job) return err(res, 404, 'No job with that number.');
+      const n = +r[2];
+      const version = job.versions.find(v => v.n === n);
+      if (!version) return err(res, 404, `No version V${n} on this job.`);
+      await removeVersionFiles(job, version);
+      const fresh = await loadJob(job.id);
+      if (!fresh) return err(res, 404, 'No job with that number.');
+      const idx = fresh.versions.findIndex(v => v.n === n);
+      if (idx < 0) return err(res, 404, `No version V${n} on this job.`);
+      fresh.versions.splice(idx, 1);
+      syncUnread(fresh);
+      await saveJob(fresh);
+      return send(res, 200, studioJob(req, fresh));
+    }
     if ((r = p.match(/^\/api\/jobs\/([^/]+)\/changes\.pdf$/)) && (m === 'GET' || m === 'HEAD')) {
       const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
       if (!job) return err(res, 404, 'No job with that number.');
@@ -715,13 +748,21 @@ async function handle(req, res) {
         if (m === 'GET') { await ensurePrivate(job); return send(res, 200, studioJob(req, job)); }
         if (m === 'PATCH') {
           const b = await readJSON(req);
-          if ('jobNumber' in b && norm(b.jobNumber) !== norm(job.jobNumber)) {
-            const num = String(b.jobNumber).trim();
-            if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Invalid job number.');
-            if (await jobByNumber(num)) return err(res, 409, `Job ${num} already exists.`);
+          if ('jobNumber' in b) {
+            const num = String(b.jobNumber ?? '').trim();
+            if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
+            if (norm(num) !== norm(job.jobNumber) && await jobByNumber(num)) return err(res, 409, `Job ${num} already exists.`);
             job.jobNumber = num;
           }
-          for (const key of ['description', 'clientName', 'clientCompany', 'clientEmail', 'clientPhone']) if (key in b) job[key] = String(b[key]).trim().slice(0, 2000);
+          if ('clientName' in b) {
+            const name = String(b.clientName ?? '').trim().slice(0, 120);
+            if (!name) return err(res, 400, 'Client name is required.');
+            job.clientName = name;
+          }
+          if ('description' in b) job.description = String(b.description ?? '').trim().slice(0, 2000);
+          if ('clientCompany' in b) job.clientCompany = String(b.clientCompany ?? '').trim().slice(0, 120);
+          if ('clientEmail' in b) job.clientEmail = String(b.clientEmail ?? '').trim().slice(0, 200);
+          if ('clientPhone' in b) job.clientPhone = String(b.clientPhone ?? '').trim().slice(0, 60);
           job.access = 'private';
           if (b.rotateToken) job.token = token();
           if (b.markSeen) { job.unread = false; job.seenAt = now(); }
@@ -729,6 +770,7 @@ async function handle(req, res) {
         }
         if (m === 'DELETE') { await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true }); await fsp.rm(jobPath(job.id), { force: true }); await forgetJobOverride(job.id); return send(res, 200, { ok: true }); }
       }
+      if (r[2] === '/versions' && m === 'DELETE') return err(res, 404, 'Include the version number to remove.');
       if (r[2] && m === 'POST') {
         const orig = safeName(u.searchParams.get('name')); const kind = PROOF_TYPES[extOf(orig)];
         if (!kind) return err(res, 415, 'Proofs must be PDF, JPG or PNG.');
