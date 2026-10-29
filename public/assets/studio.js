@@ -13,7 +13,7 @@ async function dashboard() {
   const jobs = await api(B + '/api/jobs');
   const counts = { all: jobs.length }; jobs.forEach(j => counts[j.status] = (counts[j.status] || 0) + 1);
   const acts = jobs.flatMap(j => j.versions.flatMap(v => v.feedback.map(f => ({ j, v, f })))).sort((a, b) => b.f.at.localeCompare(a.f.at)).slice(0, 8);
-  app.innerHTML = band('YBI Studio · Proofs', 'Artwork <span class="ol">approvals.</span>', 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New proof ${ARROW}</button>`) +
+  app.innerHTML = band('YBI Studio · Proofs', 'Artwork <span class="ol">approvals.</span>', 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New job ${ARROW}</button>`) +
   `<div class="wrap">
    ${acts.length ? `<section style="margin-top:44px"><p class="eyebrow">Latest client activity</p><ul class="activity">${acts.map(({ j, v, f }) => `<li>${chip(f.type === 'approve' ? 'approved' : 'changes_requested')}<a href="${jobHref(j)}"><b class="num">${esc(j.jobNumber)}</b> · ${esc(j.clientName)} — V${v.n} · ${esc(f.name)}${f.note ? `: <span class="mute">“${esc(f.note.slice(0, 90))}${f.note.length > 90 ? '…' : ''}”</span>` : ''}${f.stickies?.length ? ` <span class="dim">· ${f.stickies.length} on the proof</span>` : ''}${f.attachments.length ? ` <span class="dim">· ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}</span>` : ''}${j.unread && f === lastDecision(j) ? '<span class="dot" title="New"></span>' : ''}</a><span class="small dim">${fmtDate(f.at)}</span></li>`).join('')}</ul></section>` : ''}
    <div class="toolbar"><div class="tabs">${['all', 'awaiting_review', 'changes_requested', 'approved'].map(s => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${s === 'all' ? 'All' : STATUS[s]} ${counts[s] || 0}</button>`).join('')}</div>
@@ -24,7 +24,7 @@ async function dashboard() {
   const draw = () => {
     const list = jobs.filter(j => (filter === 'all' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
     tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${esc(j.jobNumber)}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
-      : `<tr><td colspan="6" class="empty">${jobs.length ? 'No jobs match.' : 'No proofs yet — hit “New proof” to create the first one.'}</td></tr>`;
+      : `<tr><td colspan="6" class="empty">${jobs.length ? 'No jobs match.' : 'No proofs yet — hit “New job” to create the first one.'}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
   };
   draw();
@@ -106,7 +106,7 @@ const CAL_COLOURS = [['red', 'Red'], ['blue', 'Blue'], ['green', 'Green'], ['yel
 const CAL_DOW = [0, 1, 2, 3, 4, 5, 6].map(i => new Intl.DateTimeFormat('en-AU', { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2026, 0, 5 + i))));
 let calEvents = [], calMode = 'month', calAnchor = '', calSelected = '', editingId = null, editingJobId = null, calGen = 0;
 const colourOf = ev => CAL_COLOURS.some(([name]) => name === ev?.colour) ? ev.colour : 'grey';
-const colourSwatches = () => `<div class="swatches" role="radiogroup" aria-labelledby="ev-colour-label">${CAL_COLOURS.map(([name, label]) => `<label class="swatch"><input type="radio" name="ev-colour" value="${name}"${name === 'grey' ? ' checked' : ''}><span class="swatch__box tone-${name}">${label}</span></label>`).join('')}</div>`;
+const colourSwatches = ({ name = 'ev-colour', labelledBy = 'ev-colour-label', selected = 'grey' } = {}) => `<div class="swatches" role="radiogroup" aria-labelledby="${labelledBy}">${CAL_COLOURS.map(([cname, label]) => `<label class="swatch"><input type="radio" name="${name}" value="${cname}"${cname === selected ? ' checked' : ''}><span class="swatch__box tone-${cname}">${label}</span></label>`).join('')}</div>`;
 
 function melbourneToday() {
   const parts = new Intl.DateTimeFormat('en-AU', { timeZone: CAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -379,6 +379,12 @@ async function settings() {
 
 // ---- new job modal ----
 const modal = $('#newModal'), form = $('#newForm'); let newFile = null;
+const nSwatches = $('[data-n-swatches]', form);
+if (nSwatches) nSwatches.outerHTML = colourSwatches({ name: 'colour', labelledBy: 'n-colour-label' });
+function pickedColour() {
+  const el = $('#newForm input[name="colour"]:checked');
+  return CAL_COLOURS.some(([name]) => name === el?.value) ? el.value : 'grey';
+}
 function openNew() { form.reset(); newFile = null; $('#n-fname').innerHTML = '<b>Choose a file</b> or drop it here'; $('#n-msg').textContent = ''; modal.hidden = false; $('#n-num').focus(); }
 function bindNew() { $$('[data-new]').forEach(b => b.onclick = openNew); }
 $$('[data-close]', modal).forEach(b => b.onclick = () => modal.hidden = true);
@@ -387,6 +393,7 @@ dropzone($('#n-drop'), fs => { newFile = fs[0]; $('#n-fname').innerHTML = `<b>${
 form.onsubmit = async e => {
   e.preventDefault(); const m = $('#n-msg'), go = $('#n-go'); m.className = 'msg';
   const data = Object.fromEntries(new FormData(form));
+  data.colour = pickedColour();
   if (!data.jobNumber.trim() || !data.clientName.trim()) { m.className = 'msg err'; m.textContent = 'Job number and client name are required.'; return; }
   if (newFile && !/\.(pdf|jpe?g|png)$/i.test(newFile.name)) { m.className = 'msg err'; m.textContent = 'Proof must be a PDF, JPG or PNG.'; return; }
   go.disabled = true;

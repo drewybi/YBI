@@ -288,6 +288,26 @@ async function forgetJobOverride(jobId) {
     });
   } catch (e) { console.error('[calendar] could not drop the job override', e.message); }
 }
+// Same write as PATCH /api/calendar/jobs/:id. Grey is the default and is not stored.
+async function saveJobCalendar(job, { colourSent = false, colour = null, hasDate = false, calendarDate = null } = {}) {
+  return withCalendar(async () => {
+    const doc = await readCalendarDoc();
+    const prev = doc.jobOverrides[job.id] || {};
+    const next = { ...prev };
+    if (colourSent) {
+      if (!colour || colour === 'grey') delete next.colour;
+      else next.colour = colour;
+    }
+    if (hasDate) {
+      if (calendarDate) next.calendarDate = calendarDate;
+      else delete next.calendarDate;
+    }
+    if (!next.colour && !next.calendarDate) delete doc.jobOverrides[job.id];
+    else doc.jobOverrides[job.id] = next;
+    await writeCalendarDoc(doc);
+    return jobEvent(job, doc.jobOverrides[job.id]);
+  });
+}
 async function handleCalendarJob(req, res, key, m) {
   if (m !== 'GET' && m !== 'PATCH') return err(res, 405, 'Method not allowed');
   const job = (/^[a-f0-9]{12}$/.test(key) && await loadJob(key)) || await jobByNumber(key);
@@ -310,23 +330,7 @@ async function handleCalendarJob(req, res, key, m) {
       if (!calendarDate) return err(res, 400, 'That date isn’t valid.');
     }
   }
-  const event = await withCalendar(async () => {
-    const doc = await readCalendarDoc();
-    const prev = doc.jobOverrides[job.id] || {};
-    const next = { ...prev };
-    if (colourField.sent) {
-      if (colourField.colour === 'grey') delete next.colour;
-      else next.colour = colourField.colour;
-    }
-    if (hasDate) {
-      if (calendarDate) next.calendarDate = calendarDate;
-      else delete next.calendarDate;
-    }
-    if (!next.colour && !next.calendarDate) delete doc.jobOverrides[job.id];
-    else doc.jobOverrides[job.id] = next;
-    await writeCalendarDoc(doc);
-    return jobEvent(job, doc.jobOverrides[job.id]);
-  });
+  const event = await saveJobCalendar(job, { colourSent: colourField.sent, colour: colourField.colour, hasDate, calendarDate });
   return send(res, 200, event);
 }
 async function handleCalendar(req, res, p, m, u) {
@@ -565,10 +569,21 @@ async function handle(req, res) {
       const b = await readJSON(req); const num = String(b.jobNumber || '').trim();
       if (!String(b.clientName || '').trim() || !num) return err(res, 400, 'Client name and job number are required.');
       if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
+      const colourField = parseColourField(b);
+      if (colourField.error) return err(res, 400, colourField.error);
       const dupe = await jobByNumber(num);
       if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
       const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', createdAt: now(), versions: [] };
       await fsp.mkdir(path.join(FILES, job.id), { recursive: true }); await saveJob(job);
+      if (colourField.sent && colourField.colour !== 'grey') {
+        try { await saveJobCalendar(job, { colourSent: true, colour: colourField.colour }); }
+        catch (e) {
+          await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true });
+          await fsp.rm(jobPath(job.id), { force: true });
+          await forgetJobOverride(job.id);
+          throw e;
+        }
+      }
       return send(res, 201, studioJob(req, job));
     }
     if ((r = p.match(/^\/api\/jobs\/([^/]+)(\/versions)?$/))) {

@@ -4,7 +4,7 @@
 set -euo pipefail
 ORIGIN=${ORIGIN:-http://localhost:4321}; BP=${BASE_PATH-/proof}; BASE="$ORIGIN$BP"; KEY=${KEY:-ybi-proof}; S="$(dirname "$0")/../samples"
 H=(-H "X-Studio-Key: $KEY"); JS=(-H 'Content-Type: application/json')
-RUN=$RANDOM; NA="T${RUN}A"; NB="T${RUN}B"; NP="T${RUN}P"; NC="T${RUN}C"   # unique test job numbers
+RUN=$RANDOM; NA="T${RUN}A"; NB="T${RUN}B"; NP="T${RUN}P"; NC="T${RUN}C"; NCOL="T${RUN}R"; NGRY="T${RUN}G"   # unique test job numbers
 j() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);console.log(eval('o'+process.argv[1]))})" "$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 pass() { echo "  ✓ $*"; }; fail() { echo "  ✗ $*"; exit 1; }
@@ -155,6 +155,26 @@ TODAY=$(node -e 'const p=new Intl.DateTimeFormat("en-AU",{timeZone:"Australia/Me
 curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NC\",\"clientName\":\"New Cal\",\"description\":\"Appears without import\"}" "$BASE/api/jobs" >/dev/null
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=$TODAY&to=$TODAY" | j ".events.filter(e=>e.jobNumber==='$NC'&&e.colour==='grey'&&e.kind==='job').length")" 1 "a new job appears on the Melbourne created day without an import"
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=$TODAY&to=$TODAY" | j ".events.filter(e=>e.jobNumber==='$NA').length")" 1 "an existing job is on the calendar"
+COL=$(curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NCOL\",\"clientName\":\"Colour Co\",\"colour\":\"red\"}" "$BASE/api/jobs")
+COLID=$(echo "$COL" | j .id)
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NCOL" | j .colour)" red "new job saves the chosen calendar colour"
+node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const o=d.jobOverrides[process.argv[2]]; if(!o||o.colour!=="red") process.exit(1);' "$DATA/calendar-events.json" "$COLID" && pass "new job colour is stored as a job override" || fail "new job colour override"
+echo "$COL" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const o=JSON.parse(s); if(Object.prototype.hasOwnProperty.call(o,"colour")){console.error("colour leaked"); process.exit(1)}})' && pass "job create response does not include the calendar colour" || fail "job create response includes the calendar colour"
+GRY=$(curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NGRY\",\"clientName\":\"Grey Co\",\"colour\":\"grey\"}" "$BASE/api/jobs")
+GRYID=$(echo "$GRY" | j .id)
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NGRY" | j .colour)" grey "new job defaults to grey when grey is chosen"
+node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(d.jobOverrides[process.argv[2]]) process.exit(1);' "$DATA/calendar-events.json" "$GRYID" && pass "grey is not stored as a job override" || fail "grey job override was stored"
+chk "$(code "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"T${RUN}X\",\"clientName\":\"Bad Colour\",\"colour\":\"orange\"}" "$BASE/api/jobs")" 400 "new job refuses an unknown calendar colour"
+chk "$(code "${H[@]}" "$BASE/api/jobs/T${RUN}X")" 404 "refused colour does not create the job"
+studiohtml=$(curl -sf "${H[@]}" "$BASE/studio")
+echo "$studiohtml" | grep -q '>+ New job<' && pass "studio header says New job" || fail "studio header still says New proof"
+echo "$studiohtml" | grep -q '>New job<' && pass "new job modal title is New job" || fail "new job modal title"
+echo "$studiohtml" | grep -q 'id="n-colour-label">Calendar colour' && pass "new job form has a calendar colour field" || fail "new job calendar colour field"
+echo "$caljs" | grep -q "name: 'colour'" && pass "new job form uses the calendar colour swatches" || fail "new job colour swatches"
+echo "$caljs" | grep -q 'New proof' && fail "studio script still says New proof" || pass "studio script create label is New job"
+reviewhtml=$(curl -sf "$BASE/no-such-job-$RUN")
+echo "$reviewhtml" | grep -q 'Artwork proof' && pass "client page still says artwork proof" || fail "client page lost proof wording"
+echo "$reviewhtml" | grep -q 'New job' && fail "client page shows the staff New job label" || pass "client page does not show New job"
 node -e 'const fs=require("fs"); const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!Array.isArray(d.events)||!d.jobOverrides||typeof d.jobOverrides!=="object") process.exit(1);' "$DATA/calendar-events.json" && pass "calendar file keeps events and job overrides" || fail "calendar file shape"
 curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/DUE$RUN" >/dev/null
 curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/TZ$RUN" >/dev/null
@@ -165,5 +185,5 @@ echo "6) Misc"
 grep -q "$NB" "${DATA_DIR:-$(dirname "$0")/../data}/notifications.log" && pass "logged in notifications.log"
 chk "$(code "$BASE/api/review/NOPE$RUN")" 404 "unknown job number 404"
 if [ -n "$BP" ]; then chk "$(code "$ORIGIN/api/review/$NA")" 403 "stripped prefix still refuses a bare job number"; chk "$(code "$ORIGIN/api/review/$NA?k=$ATOK")" 200 "stripped prefix accepts the secure key"; fi
-if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
+if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC" "$NCOL" "$NGRY"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
 echo; echo "ALL GOOD. Entry: $BASE  ·  Studio: $BASE/studio  ·  Jobs: $BASE/$NA  $BASE/$NB"
