@@ -42,7 +42,7 @@ def main():
         review = post('/api/calendar/events', {'title': 'Client review', 'allDay': False, 'start': today + 'T09:30', 'end': today + 'T10:00', 'colour': 'purple'})
         half = post('/api/calendar/events', {'title': 'Half hour', 'allDay': False, 'start': today + 'T11:00', 'end': today + 'T11:30', 'colour': 'yellow'})
         revert = post('/api/calendar/events', {'title': 'Revert me', 'allDay': True, 'start': today, 'colour': 'red'})
-        job = post('/api/jobs', {'jobNumber': 'DRAG1', 'clientName': 'Drag Client'})
+        job = post('/api/jobs', {'jobNumber': 'DRAG1', 'clientName': 'Drag Client', 'description': 'Drag proof'})
         page.reload()
         page.wait_for_selector(f'.calcell[data-day="{today}"] .calev[data-ev="{press["id"]}"]')
 
@@ -53,8 +53,14 @@ def main():
             return b['x'] + b['width'] / 2, b['y'] + b['height'] / 2
 
         def drag(src, dst, shot=None):
-            sx, sy = center(src)
-            dx, dy = center(dst)
+            # Scroll the target first, then the chip, and read both boxes after that.
+            # Measuring the chip before the target scroll leaves the pointer on empty space.
+            dst.evaluate('el => el.scrollIntoView({block:"center", inline:"center"})')
+            src.evaluate('el => el.scrollIntoView({block:"center", inline:"center"})')
+            sb, db = src.bounding_box(), dst.bounding_box()
+            assert sb and db, 'missing box'
+            sx, sy = sb['x'] + sb['width'] / 2, sb['y'] + sb['height'] / 2
+            dx, dy = db['x'] + db['width'] / 2, db['y'] + db['height'] / 2
             page.mouse.move(sx, sy)
             page.mouse.down()
             page.mouse.move(dx, dy, steps=14)
@@ -105,8 +111,12 @@ def main():
         assert span_got['start'] == mid and span_got['end'] == later and span_got['allDay'] is True, span_got
 
         # Proof job uses the job PATCH and stays all-day.
-        job_chip = page.locator(f'.calcell[data-day="{today}"] .calev', has_text='DRAG1')
+        job_chip = page.locator(f'.calcell[data-day="{today}"] .calev', has_text='Drag proof')
         assert job_chip.count() == 1
+        job_text = job_chip.inner_text().strip()
+        assert job_text == 'Drag proof', job_text
+        assert 'DRAG1' not in job_text and 'Drag Client' not in job_text
+        assert job_chip.locator('.calev__t').count() == 0
         drag(job_chip, page.locator(f'.calcell[data-day="{nxt}"]'))
         page.locator('.toast.on', has_text='Job moved').wait_for()
         job_cal = get('/api/calendar/jobs/DRAG1')

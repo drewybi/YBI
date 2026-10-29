@@ -1,5 +1,5 @@
 import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
-import { addDays, hhmm, isoParts, minutesOf, movedTimes, sameSpan } from './cal-move.mjs';
+import { addDays, compareEvents, hhmm, isoParts, mergeOrder, minutesOf, movedOrder, movedTimes, sameSpan } from './cal-move.mjs';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
@@ -135,10 +135,7 @@ function fmtClock(hhmm) {
 }
 function eventSpan(ev) { return { s: String(ev.start).slice(0, 10), e: String(ev.end || ev.start).slice(0, 10) }; }
 function eventsOn(iso) {
-  return calEvents.filter(ev => { const { s, e } = eventSpan(ev); return iso >= s && iso <= e; }).sort((a, b) => {
-    if (!!a.allDay !== !!b.allDay) return a.allDay ? -1 : 1;
-    return String(a.start).localeCompare(String(b.start)) || String(a.title).localeCompare(String(b.title));
-  });
+  return calEvents.filter(ev => { const { s, e } = eventSpan(ev); return iso >= s && iso <= e; }).sort(compareEvents);
 }
 function timeRange(ev) {
   if (ev.kind === 'job') return 'Proof job';
@@ -165,10 +162,12 @@ function rangeLabel(days) {
 function eventButton(ev, iso, pos) {
   const colour = colourOf(ev);
   const onStart = String(ev.start).slice(0, 10) === iso;
-  const time = ev.kind === 'job' ? 'Job' : (!ev.allDay && onStart ? fmtClock(String(ev.start).slice(11, 16)) : '');
-  const kind = ev.kind === 'job' ? 'job' : 'event';
+  const job = ev.kind === 'job';
+  const time = job ? '' : (!ev.allDay && onStart ? fmtClock(String(ev.start).slice(11, 16)) : '');
+  const kind = job ? 'job' : 'event';
   const style = pos ? ` style="top:${pos.top}px;height:${pos.height}px;left:calc(${pos.col} * (100% / ${pos.cols}) + 2px);width:calc(100% / ${pos.cols} - 4px)"` : '';
-  return `<button type="button" class="calev tone-${colour}${ev.allDay ? ' calev--all' : ''}"${style} data-ev="${esc(ev.id)}" data-kind="${kind}" data-colour="${colour}" title="${esc(timeRange(ev) + ' — ' + ev.title + ' — ' + colour)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
+  const tip = job ? ev.title : `${timeRange(ev)} — ${ev.title} — ${colour}`;
+  return `<button type="button" class="calev tone-${colour}${ev.allDay ? ' calev--all' : ''}"${style} data-ev="${esc(ev.id)}" data-kind="${kind}" data-colour="${colour}" title="${esc(tip)}">${time ? `<span class="calev__t">${esc(time)}</span>` : ''}<span class="calev__n">${esc(ev.title)}</span></button>`;
 }
 function splitDay(iso) {
   const all = [], timed = [];
@@ -283,7 +282,7 @@ function renderCal() {
   const days = visibleDays();
   if (!days.includes(calSelected)) calSelected = days.includes(calAnchor) ? calAnchor : days[0];
   if (!$('[data-cal-root]', app)) {
-    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Proof jobs show up on their own, with deadlines and meetings. Drag an event to another day. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
+    app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a>`, 'Staff <span class="ol">calendar.</span>', 'Proof jobs show up on their own, with deadlines and meetings. Drag an event to another day, or slide it within the day to change the order. Times are Australia/Melbourne.', `<button class="btn" type="button" data-cal-new>New event ${ARROW}</button>`) +
       '<div class="wrap cal" data-cal-root><div data-cal-body></div></div>';
   }
   const root = $('[data-cal-root]', app);
@@ -296,7 +295,7 @@ function renderCal() {
         <button type="button" class="btn btn--sm" data-cal-new>New event</button>
       </div>
     </div>
-    <p class="small dim calhint">Drag an event onto a day to reschedule it. In week view, drop a timed event on a time to change the clock.</p>
+    <p class="small dim calhint">Drag an event onto a day to reschedule it. Slide a chip up or down on the same day to change the order. In week view, drop a timed event on a time to change the clock.</p>
     ${calMode === 'month' ? monthHtml(days) : weekHtml(days)}
     ${dayPanel(calSelected)}`;
   const pick = iso => { calSelected = iso; if (calMode === 'month' && iso.slice(0, 7) !== calAnchor.slice(0, 7)) calAnchor = iso; renderCal(); };
@@ -338,10 +337,52 @@ function swallowNextClick() {
 }
 function teardownDrag() {
   document.querySelectorAll('.calev.is-dragging').forEach(el => el.classList.remove('is-dragging'));
-  document.querySelectorAll('.is-drop, .is-drop-day').forEach(el => el.classList.remove('is-drop', 'is-drop-day'));
+  document.querySelectorAll('.is-drop, .is-drop-day, .is-insert-before, .is-insert-after').forEach(el => el.classList.remove('is-drop', 'is-drop-day', 'is-insert-before', 'is-insert-after'));
   if (calDrag && calDrag.ghost) calDrag.ghost.remove();
   document.body.classList.remove('is-cal-drag');
   calDrag = null;
+}
+function dayList(root, day) {
+  const cell = $(`.calcell[data-day="${day}"]`, root);
+  if (cell) return cell;
+  return $(`.calday[data-day="${day}"] .calday__all`, root);
+}
+function reorderAt(x, y, drag) {
+  const root = $('[data-cal-root]');
+  if (!root || !drag || !drag.reorderable) return null;
+  const stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+  let day = null;
+  for (const el of stack) {
+    if (!el || !el.closest || !root.contains(el)) continue;
+    if (el.closest('.calhours')) return null;
+    const host = el.closest('.calcell[data-day], .calday[data-day]');
+    if (!host || !root.contains(host)) continue;
+    day = host.dataset.day;
+    break;
+  }
+  if (day !== drag.fromDay) return null;
+  const list = dayList(root, day);
+  if (!list) return null;
+  const chips = [...list.querySelectorAll('.calev')].filter(el => !el.classList.contains('calev--ghost'));
+  const ids = chips.map(el => el.dataset.ev).filter(Boolean);
+  if (!ids.includes(drag.id)) return null;
+  const others = chips.filter(el => el.dataset.ev !== drag.id);
+  let index = others.length;
+  for (let i = 0; i < others.length; i++) {
+    const r = others[i].getBoundingClientRect();
+    if (y < r.top + Math.max(r.height, 1) / 2) { index = i; break; }
+  }
+  return { day, index, ids };
+}
+function paintInsert(reorder) {
+  document.querySelectorAll('.is-insert-before, .is-insert-after').forEach(el => el.classList.remove('is-insert-before', 'is-insert-after'));
+  if (!reorder || !calDrag) return;
+  const root = $('[data-cal-root]');
+  const list = root && dayList(root, reorder.day);
+  if (!list) return;
+  const others = [...list.querySelectorAll('.calev')].filter(el => el.dataset.ev !== calDrag.id && !el.classList.contains('calev--ghost'));
+  if (reorder.index < others.length) others[reorder.index].classList.add('is-insert-before');
+  else if (others.length) others[others.length - 1].classList.add('is-insert-after');
 }
 function dropTargetAt(x, y) {
   const root = $('[data-cal-root]');
@@ -400,6 +441,48 @@ function moveGhost(e, drop) {
   const label = drag.timed && drag.ghost.querySelector('.calev__t');
   if (label) label.textContent = drop && drop.slot ? fmtClock(drop.slot) : drag.timeLabel;
 }
+function daySpanChanged(ev, next) {
+  return String(ev.start).slice(0, 10) !== String(next.start).slice(0, 10)
+    || String(ev.end || ev.start).slice(0, 10) !== String(next.end || next.start).slice(0, 10);
+}
+function commitReorder(day, ids) {
+  if (!ids.length || ids.some(id => !calEvents.some(ev => ev.id === id))) {
+    toast('That event is no longer on the calendar');
+    return;
+  }
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  const changed = ids.some(id => (calEvents.find(ev => ev.id === id).dayOrder ?? null) !== rank.get(id));
+  if (!changed) return;
+  calEvents = calEvents.map(ev => rank.has(ev.id) ? { ...ev, dayOrder: rank.get(ev.id) } : ev);
+  renderCal();
+  calSaving++;
+  moveQueue = moveQueue.then(async () => {
+    try {
+      await api(`${B}/api/calendar/order`, { method: 'PATCH', body: JSON.stringify({ date: day, ids }) });
+      confirmedEvents = confirmedEvents.map(ev => rank.has(ev.id) ? { ...ev, dayOrder: rank.get(ev.id) } : ev);
+      const still = ids.every(id => (calEvents.find(ev => ev.id === id)?.dayOrder ?? null) === rank.get(id));
+      if (still) toast('Order saved');
+    } catch (err) {
+      const still = ids.every(id => (calEvents.find(ev => ev.id === id)?.dayOrder ?? null) === rank.get(id));
+      if (still) {
+        calEvents = calEvents.map(ev => {
+          if (!rank.has(ev.id)) return ev;
+          const prev = confirmedEvents.find(x => x.id === ev.id);
+          return prev ? { ...ev, dayOrder: prev.dayOrder ?? null } : ev;
+        });
+        renderCal();
+      }
+      toast(err.message || 'Couldn’t save that order');
+    } finally { calSaving--; }
+  }).catch(() => {});
+}
+function applyReorder(from, reorder) {
+  const nextContainer = movedOrder(reorder.ids, from.id, reorder.index);
+  if (nextContainer.every((id, i) => id === reorder.ids[i])) return false;
+  const full = eventsOn(reorder.day).map(ev => ev.id);
+  commitReorder(reorder.day, mergeOrder(full, reorder.ids, nextContainer));
+  return true;
+}
 function commitMove(from, drop) {
   const ev = calEvents.find(x => x.id === from.id);
   if (!ev) { toast('That event is no longer on the calendar'); return; }
@@ -409,7 +492,8 @@ function commitMove(from, drop) {
   const prevSelected = calSelected;
   const kind = ev.kind, allDay = !!ev.allDay, id = ev.id;
   const jobKey = ev.jobId || ev.jobNumber;
-  calEvents = calEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end } : x);
+  const dayChanged = daySpanChanged(ev, next);
+  calEvents = calEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end, ...(dayChanged ? { dayOrder: null } : {}) } : x);
   calSelected = drop.day;
   renderCal();
   const day = shortDay(String(next.start).slice(0, 10));
@@ -418,11 +502,12 @@ function commitMove(from, drop) {
     ? `${B}/api/calendar/jobs/${encodeURIComponent(jobKey)}`
     : `${B}/api/calendar/events/${encodeURIComponent(id)}`;
   const body = kind === 'job' ? { date: String(next.start).slice(0, 10) } : { start: next.start, end: next.end };
+  if (dayChanged) body.dayOrder = null;
   calSaving++;
   moveQueue = moveQueue.then(async () => {
     try {
       await api(url, { method: 'PATCH', body: JSON.stringify(body) });
-      confirmedEvents = confirmedEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end } : x);
+      confirmedEvents = confirmedEvents.map(x => x.id === id ? { ...x, start: next.start, end: next.end, ...(dayChanged ? { dayOrder: null } : {}) } : x);
       if (spansMatch(calEvents.find(x => x.id === id), next.start, next.end)) toast(label);
     } catch (err) {
       if (!spansMatch(calEvents.find(x => x.id === id), next.start, next.end)) return;
@@ -441,7 +526,7 @@ function onCalPointerDown(e) {
   if (!chip || !root || !root.contains(chip)) return;
   const dayEl = chip.closest('[data-day]');
   if (!dayEl) return;
-  calDrag = { id: chip.dataset.ev, fromDay: dayEl.dataset.day, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false, chip };
+  calDrag = { id: chip.dataset.ev, fromDay: dayEl.dataset.day, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false, chip, reorderable: !chip.closest('.calhours') };
 }
 function onCalPointerMove(e) {
   const drag = calDrag;
@@ -453,18 +538,22 @@ function onCalPointerMove(e) {
   }
   e.preventDefault();
   const drop = dropTargetAt(e.clientX, e.clientY);
-  moveGhost(e, drop);
-  paintDrop(drop);
+  const reorder = reorderAt(e.clientX, e.clientY, drag);
+  if (reorder) { paintDrop(null); paintInsert(reorder); }
+  else { paintInsert(null); paintDrop(drop); }
+  moveGhost(e, reorder ? null : drop);
 }
 function onCalPointerUp(e) {
   const drag = calDrag;
   if (!drag || e.pointerId !== drag.pointerId) return;
   const moved = drag.moved;
+  const reorder = moved ? reorderAt(e.clientX, e.clientY, drag) : null;
   const drop = moved ? dropTargetAt(e.clientX, e.clientY) : null;
   const from = { id: drag.id, fromDay: drag.fromDay };
   teardownDrag();
   if (!moved) return;
   swallowNextClick();
+  if (reorder && applyReorder(from, reorder)) return;
   if (drop) commitMove(from, drop);
 }
 function onCalPointerCancel(e) {
@@ -636,7 +725,22 @@ function pickedColour() {
   const el = $('#newForm input[name="colour"]:checked');
   return CAL_COLOURS.some(([name]) => name === el?.value) ? el.value : 'grey';
 }
-function openNew() { form.reset(); newFile = null; $('#n-fname').innerHTML = '<b>Choose a file</b> or drop it here'; $('#n-msg').textContent = ''; modal.hidden = false; $('#n-num').focus(); }
+function defaultCalendarDay() {
+  const due = form.querySelector('#n-due, [name="dueAt"], [name="dueDate"], [name="deadline"], [name="due"]');
+  const value = due && due.id !== 'n-caldate' ? String(due.value || '').slice(0, 10) : '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  return melbourneToday();
+}
+function openNew() {
+  form.reset();
+  newFile = null;
+  $('#n-fname').innerHTML = '<b>Choose a file</b> or drop it here';
+  $('#n-msg').textContent = '';
+  const date = $('#n-caldate');
+  if (date) date.value = defaultCalendarDay();
+  modal.hidden = false;
+  $('#n-num').focus();
+}
 function bindNew() { $$('[data-new]').forEach(b => b.onclick = openNew); }
 $$('[data-close]', modal).forEach(b => b.onclick = () => modal.hidden = true);
 modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });

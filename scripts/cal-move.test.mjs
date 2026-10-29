@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { movedTimes, sameSpan } from '../public/assets/cal-move.mjs';
+import { compareEvents, mergeOrder, movedOrder, movedTimes, sameSpan } from '../public/assets/cal-move.mjs';
 
 const timed = { kind: 'event', allDay: false, start: '2026-11-12T09:15', end: '2026-11-12T10:45' };
 const overnight = { kind: 'event', allDay: false, start: '2026-11-12T22:00', end: '2026-11-13T01:00' };
@@ -54,6 +54,31 @@ const job = { kind: 'job', allDay: true, start: '2026-11-12', end: null };
   assert.deepEqual(movedTimes(job, '2026-11-12', '2026-11-13', '14:00'), { start: '2026-11-13', end: null });
   assert.deepEqual(movedTimes({ ...oneDay, start: '2026-01-31' }, '2026-01-31', '2026-02-01', null), { start: '2026-02-01', end: null });
   assert.deepEqual(movedTimes({ ...oneDay, start: '2026-02-28' }, '2026-02-28', '2026-03-01', null), { start: '2026-03-01', end: null });
+}
+
+// Sliding a chip among its siblings. Same slot is a no-op. Unknown ids are left alone.
+{
+  assert.deepEqual(movedOrder(['a', 'b', 'c'], 'c', 0), ['c', 'a', 'b']);
+  assert.deepEqual(movedOrder(['a', 'b', 'c'], 'a', 2), ['b', 'c', 'a']);
+  assert.deepEqual(movedOrder(['a', 'b', 'c'], 'b', 1), ['a', 'b', 'c']);
+  assert.deepEqual(movedOrder(['a', 'b', 'c'], 'b', 0), ['b', 'a', 'c']);
+  assert.deepEqual(movedOrder(['a', 'b'], 'missing', 0), ['a', 'b']);
+}
+
+// A timed chip that is not in the dragged stack keeps its place between the ones that moved.
+{
+  assert.deepEqual(mergeOrder(['all1', 'timed', 'all2'], ['all1', 'all2'], ['all2', 'all1']), ['all2', 'timed', 'all1']);
+}
+
+// dayOrder beats the clock. Unset items keep all-day-then-time and sort after a set order.
+{
+  const all = { id: 'a', title: 'All', allDay: true, start: '2026-11-12' };
+  const early = { id: 'e', title: 'Early', allDay: false, start: '2026-11-12T09:00' };
+  const late = { id: 'l', title: 'Late', allDay: false, start: '2026-11-12T15:00', dayOrder: 0 };
+  assert.ok(compareEvents(all, early) < 0);
+  assert.ok(compareEvents(late, all) < 0);
+  assert.ok(compareEvents({ ...early, dayOrder: 2 }, { ...all, dayOrder: 1 }) > 0);
+  assert.equal(compareEvents({ ...all, dayOrder: 0 }, { ...early, dayOrder: 0 }) < 0, true);
 }
 
 console.log('cal-move: ok');
