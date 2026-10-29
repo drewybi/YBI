@@ -4,7 +4,7 @@
 set -euo pipefail
 ORIGIN=${ORIGIN:-http://localhost:4321}; BP=${BASE_PATH-/proof}; BASE="$ORIGIN$BP"; KEY=${KEY:-ybi-proof}; S="$(dirname "$0")/../samples"
 H=(-H "X-Studio-Key: $KEY"); JS=(-H 'Content-Type: application/json')
-RUN=$RANDOM; NA="T${RUN}A"; NB="T${RUN}B"; NP="T${RUN}P"; NC="T${RUN}C"; NCOL="T${RUN}R"; NGRY="T${RUN}G"   # unique test job numbers
+RUN=$RANDOM; NA="T${RUN}A"; NB="T${RUN}B"; NP="T${RUN}P"; NC="T${RUN}C"; NCOL="T${RUN}R"; NGRY="T${RUN}G"; NDATE="T${RUN}D"; NDAYG="T${RUN}E"   # unique test job numbers
 j() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);console.log(eval('o'+process.argv[1]))})" "$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 pass() { echo "  ✓ $*"; }; fail() { echo "  ✗ $*"; exit 1; }
@@ -33,8 +33,8 @@ calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
 echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
 echo "$calhtml" | grep -qi '<iframe' && fail "calendar page must not embed an iframe" || pass "calendar page has no iframe"
 caljs=$(curl -sf "$BASE/assets/studio.js")
-echo "$caljs" | grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
-echo "$caljs" | grep -q '/api/calendar/events' && pass "studio calendar calls the studio API" || fail "calendar API missing from studio.js"
+grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' <<<"$caljs" && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
+grep -q '/api/calendar/events' <<<"$caljs" && pass "studio calendar calls the studio API" || fail "calendar API missing from studio.js"
 curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NA/versions?name=poster-A2.jpg" >/dev/null && pass "V1 JPG uploaded (studio API by job number)"
 chk "$(code "$BASE/api/review/$NA")" 403 "job number alone cannot read the proof"
 chk "$(code "$BASE/$NA/file/v1")" 404 "file hidden without key"
@@ -130,7 +130,9 @@ cat > "$DATA/jobs/$TZID.json" <<EOF
 EOF
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-12-20&to=2026-12-20" | j ".events.filter(e=>e.jobNumber==='DUE$RUN').length")" 1 "job with dueAt is on that day"
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2020-01-15&to=2020-01-15" | j ".events.filter(e=>e.jobNumber==='DUE$RUN').length")" 0 "dueAt wins over createdAt"
-chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/DUE$RUN" | j .title)" "DUE$RUN · Due Client" "job calendar title is number and client"
+DUE_TITLE=$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/DUE$RUN" | j .title)
+chk "$DUE_TITLE" "Due fixture" "job calendar chip label is the job description"
+echo "$DUE_TITLE" | grep -q "DUE$RUN\|Due Client" && fail "calendar chip label includes the job number or client" || pass "calendar chip label omits job number and client"
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/DUE$RUN" | j .colour)" grey "job calendar colour defaults to grey"
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/DUE$RUN" | j .kind)" job "job calendar entry is linked as a job"
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/DUE$RUN" | j .href)" "$BP/studio/DUE$RUN" "job calendar entry links to the studio job"
@@ -170,8 +172,11 @@ studiohtml=$(curl -sf "${H[@]}" "$BASE/studio")
 echo "$studiohtml" | grep -q '>+ New job<' && pass "studio header says New job" || fail "studio header still says New proof"
 echo "$studiohtml" | grep -q '>New job<' && pass "new job modal title is New job" || fail "new job modal title"
 echo "$studiohtml" | grep -q 'id="n-colour-label">Calendar colour' && pass "new job form has a calendar colour field" || fail "new job calendar colour field"
-echo "$caljs" | grep -q "name: 'colour'" && pass "new job form uses the calendar colour swatches" || fail "new job colour swatches"
-echo "$caljs" | grep -q 'New proof' && fail "studio script still says New proof" || pass "studio script create label is New job"
+grep -q "name: 'colour'" <<<"$caljs" && pass "new job form uses the calendar colour swatches" || fail "new job colour swatches"
+echo "$studiohtml" | grep -q '>Date on Calendar<' && pass "new job form labels Date on Calendar" || fail "new job Date on Calendar label"
+grep -q 'n-caldate' <<<"$caljs" && pass "new job form fills the calendar date" || fail "new job calendar date script"
+grep -q '/api/calendar/order' <<<"$caljs" && pass "studio calendar saves within-day order" || fail "calendar order API missing from studio.js"
+grep -q 'New proof' <<<"$caljs" && fail "studio script still says New proof" || pass "studio script create label is New job"
 reviewhtml=$(curl -sf "$BASE/no-such-job-$RUN")
 echo "$reviewhtml" | grep -q 'Artwork proof' && pass "client page still says artwork proof" || fail "client page lost proof wording"
 echo "$reviewhtml" | grep -q 'New job' && fail "client page shows the staff New job label" || pass "client page does not show New job"
@@ -181,9 +186,80 @@ curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/TZ$RUN" >/dev/null
 chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-12-22&to=2026-12-22" | j ".events.filter(e=>e.jobNumber==='DUE$RUN').length")" 0 "deleted job leaves the calendar"
 node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(d.jobOverrides[process.argv[2]]) process.exit(1);' "$DATA/calendar-events.json" "$DUEID" && pass "deleted job drops its calendar override" || fail "deleted job calendar override still stored"
 
+echo "5b) Day order and Date on Calendar"
+OA=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"Order A","allDay":true,"start":"2026-11-20","colour":"red"}' "$BASE/api/calendar/events")
+OB=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"Order B","allDay":true,"start":"2026-11-20","colour":"blue"}' "$BASE/api/calendar/events")
+OC=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"Order C","allDay":true,"start":"2026-11-20","colour":"green","dayOrder":4}' "$BASE/api/calendar/events")
+IDA=$(echo "$OA" | j .id); IDB=$(echo "$OB" | j .id); IDC=$(echo "$OC" | j .id)
+chk "$(echo "$OA" | j .dayOrder)" null "new event has no day order"
+chk "$(echo "$OC" | j .dayOrder)" 4 "event can be created with a day order"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-11-20&to=2026-11-20" | j ".events.filter(e=>['$IDA','$IDB','$IDC'].includes(e.id)).map(e=>e.title).join(',')")" "Order C,Order A,Order B" "a set day order sorts before unset titles"
+chk "$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":1}' "$BASE/api/calendar/events/$IDB" | j .dayOrder)" 1 "event day order can be patched on its own"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events/$IDB" | j .colour)" blue "day-order patch keeps the event colour"
+chk "$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"colour":"yellow"}' "$BASE/api/calendar/events/$IDB" | j .dayOrder)" 1 "colour patch keeps the event day order"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":-1}' "$BASE/api/calendar/events/$IDA")" 400 "negative event day order refused"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":1.5}' "$BASE/api/calendar/events/$IDA")" 400 "fractional event day order refused"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events/$IDA" | j .dayOrder)" null "refused day order is not stored"
+ORD=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d "{\"date\":\"2026-11-20\",\"ids\":[\"$IDC\",\"$IDB\",\"$IDA\"]}" "$BASE/api/calendar/order")
+chk "$(echo "$ORD" | j ".events.map(e=>e.title).join(',')")" "Order C,Order B,Order A" "order endpoint returns the day in the new order"
+chk "$(echo "$ORD" | j ".events.map(e=>e.dayOrder).join(',')")" "0,1,2" "order endpoint stores 0, 1, 2"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=2026-11-20&to=2026-11-20" | j ".events.filter(e=>['$IDA','$IDB','$IDC'].includes(e.id)).map(e=>e.title).join(',')")" "Order C,Order B,Order A" "reloading the day keeps the saved order"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d "{\"date\":\"2026-11-21\",\"ids\":[\"$IDA\"]}" "$BASE/api/calendar/order")" 400 "order refuses an event that is not on that day"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events/$IDA" | j .dayOrder)" 2 "rejected order does not change the saved place"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d "{\"date\":\"2026-11-20\",\"ids\":[\"$IDA\",\"$IDA\"]}" "$BASE/api/calendar/order")" 400 "order refuses a repeated id"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"date":"2026-11-20","ids":["nope"]}' "$BASE/api/calendar/order")" 400 "order refuses an unknown id shape"
+chk "$(code "${H[@]}" "$BASE/api/calendar/order")" 405 "reading the order route is not allowed"
+CLEARED=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":null}' "$BASE/api/calendar/events/$IDC")
+chk "$(echo "$CLEARED" | j .dayOrder)" null "event day order can be cleared"
+chk "$(echo "$CLEARED" | j .colour)" green "clearing day order keeps the colour"
+MOVEDAY=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"start":"2026-11-22","end":null,"dayOrder":null}' "$BASE/api/calendar/events/$IDB")
+chk "$(echo "$MOVEDAY" | j .start)" "2026-11-22" "moving an event can clear its day order in the same save"
+chk "$(echo "$MOVEDAY" | j .dayOrder)" null "moved event no longer has a day order"
+chk "$(echo "$MOVEDAY" | j .colour)" yellow "moved event keeps its colour"
+JDATE=$(curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NDATE\",\"clientName\":\"Date Co\",\"description\":\"Window vinyl\",\"colour\":\"blue\",\"calendarDate\":\"2026-09-14\"}" "$BASE/api/jobs")
+JDATEID=$(echo "$JDATE" | j .id)
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .start)" "2026-09-14" "Date on Calendar places the new job"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .title)" "Window vinyl" "new job calendar label is the description"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NCOL" | j .title)" "" "job with no description has a blank calendar label"
+curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"T${RUN}L\",\"clientName\":\"Lines\",\"description\":\"Line one\nLine two\"}" "$BASE/api/jobs" >/dev/null
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/T${RUN}L" | j .title)" "Line one Line two" "calendar label uses the description on one line"
+curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/T${RUN}L" >/dev/null
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .colour)" blue "new job keeps its colour when a calendar date is set"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/events?from=$TODAY&to=$TODAY" | j ".events.filter(e=>e.jobNumber==='$NDATE').length")" 0 "calendar date wins over the created day"
+echo "$JDATE" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const o=JSON.parse(s); if(Object.prototype.hasOwnProperty.call(o,"calendarDate")||Object.prototype.hasOwnProperty.call(o,"colour")){console.error("leaked"); process.exit(1)}})' && pass "job create response does not include calendar date or colour" || fail "job create response leaked calendar fields"
+node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const o=d.jobOverrides[process.argv[2]]; if(!o||o.calendarDate!=="2026-09-14"||o.colour!=="blue") process.exit(1);' "$DATA/calendar-events.json" "$JDATEID" && pass "calendar date and colour are stored on the job override" || fail "calendar date override"
+node -e 'const fs=require("fs"); const p=process.argv[1]; const j=JSON.parse(fs.readFileSync(p,"utf8")); j.dueAt="2026-01-02"; fs.writeFileSync(p, JSON.stringify(j,null,2));' "$DATA/jobs/$JDATEID.json"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .start)" "2026-09-14" "Date on Calendar wins over a due date on the job"
+chk "$(code "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"T${RUN}Z\",\"clientName\":\"Bad Date\",\"colour\":\"red\",\"calendarDate\":\"2026-02-31\"}" "$BASE/api/jobs")" 400 "new job refuses an invalid calendar date"
+chk "$(code "${H[@]}" "$BASE/api/jobs/T${RUN}Z")" 404 "refused calendar date does not create the job"
+JGREY=$(curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NDAYG\",\"clientName\":\"Grey Date\",\"colour\":\"grey\",\"calendarDate\":\"2026-09-15\"}" "$BASE/api/jobs")
+JGREYID=$(echo "$JGREY" | j .id)
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDAYG" | j .start)" "2026-09-15" "grey new job still saves Date on Calendar"
+node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const o=d.jobOverrides[process.argv[2]]; if(!o||o.calendarDate!=="2026-09-15"||o.colour) process.exit(1);' "$DATA/calendar-events.json" "$JGREYID" && pass "grey is still not stored when a calendar date is" || fail "grey stored with calendar date"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d "{\"date\":\"2026-09-14\",\"ids\":[\"job-$JDATEID\",\"$IDA\"]}" "$BASE/api/calendar/order")" 400 "order refuses a mix of days"
+SAME=$(curl -sf "${H[@]}" "${JS[@]}" -d '{"title":"With the job","allDay":true,"start":"2026-09-14","colour":"purple"}' "$BASE/api/calendar/events")
+SID=$(echo "$SAME" | j .id)
+MIXOK=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d "{\"date\":\"2026-09-14\",\"ids\":[\"job-$JDATEID\",\"$SID\"]}" "$BASE/api/calendar/order")
+chk "$(echo "$MIXOK" | j ".events.map(e=>e.kind).join(',')")" "job,event" "one save orders a job and a staff event"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .dayOrder)" 0 "job day order is stored on the override"
+ORDJOB=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":3}' "$BASE/api/calendar/jobs/$NDATE")
+chk "$(echo "$ORDJOB" | j .dayOrder)" 3 "job day order can be patched on its own"
+chk "$(echo "$ORDJOB" | j .start)" "2026-09-14" "job day-order patch keeps the calendar date"
+chk "$(echo "$ORDJOB" | j .colour)" blue "job day-order patch keeps the colour"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":"nope"}' "$BASE/api/calendar/jobs/$NDATE")" 400 "job day order must be a whole number"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NDATE" | j .dayOrder)" 3 "refused job day order is not stored"
+HELD=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"date":"2026-09-16","dayOrder":null}' "$BASE/api/calendar/jobs/$NDATE")
+chk "$(echo "$HELD" | j .start)" "2026-09-16" "moving a job can clear its day order"
+chk "$(echo "$HELD" | j .dayOrder)" null "moved job has no day order"
+chk "$(echo "$HELD" | j .colour)" blue "moved job keeps its colour"
+curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$IDA" >/dev/null
+curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$IDB" >/dev/null
+curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$IDC" >/dev/null
+curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$SID" >/dev/null
+
 echo "6) Misc"
 grep -q "$NB" "${DATA_DIR:-$(dirname "$0")/../data}/notifications.log" && pass "logged in notifications.log"
 chk "$(code "$BASE/api/review/NOPE$RUN")" 404 "unknown job number 404"
 if [ -n "$BP" ]; then chk "$(code "$ORIGIN/api/review/$NA")" 403 "stripped prefix still refuses a bare job number"; chk "$(code "$ORIGIN/api/review/$NA?k=$ATOK")" 200 "stripped prefix accepts the secure key"; fi
-if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC" "$NCOL" "$NGRY"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
+if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC" "$NCOL" "$NGRY" "$NDATE" "$NDAYG"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
 echo; echo "ALL GOOD. Entry: $BASE  ·  Studio: $BASE/studio  ·  Jobs: $BASE/$NA  $BASE/$NB"

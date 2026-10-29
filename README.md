@@ -18,7 +18,7 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 | Client (no key) | `/proof/30434` | Does not show the proof or its files. Asks for the private link |
 | Studio | `/proof/studio` | Dashboard (redirects to `/proof` to log in) |
 | Studio | `/proof/studio/30434` | Admin page for job 30434: links, versions, client feedback, upload a new version |
-| Studio | `/proof/studio/calendar` | Private staff calendar. Proof jobs appear on their own, plus deadlines and meetings. Month and week views. Each item can be coloured |
+| Studio | `/proof/studio/calendar` | Private staff calendar. Proof jobs appear on their own, plus deadlines and meetings. Month and week views. Each item can be coloured and reordered within a day |
 | Studio | `/proof/studio/settings` | Notification email and logout |
 | Files | `/proof/30434/file/v2`, `/proof/30434/file/a<id>` | Proof version / client attachment (same access rules as the page) |
 | Legacy | `/p/<token>` | Redirects to `/proof/{jobNumber}?k=<token>` |
@@ -64,14 +64,14 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | One-click login link | `/proof/studio?key=<password>` sets a 90-day cookie. Bookmark it on studio machines. |
 | Scripts/API | send the header `X-Studio-Key: <password>`. Jobs can be addressed by number: `/proof/api/jobs/30434` |
 
-1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), then drop in a PDF (single or multi-page), JPG or PNG. Click **Create & get link**.
+1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), and set **Date on Calendar** (it starts as today, or as a due date if that field is already on the form). Then drop in a PDF (single or multi-page), JPG or PNG. Click **Create & get link**.
 2. On the job page:
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
 3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout. The dashboard's *Latest client activity* lists every response.
 4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable.
 
-**Staff calendar** (`/proof/studio/calendar`) shows every proof job, plus deadlines, meetings and notes. It does not use Google Calendar. Times are Australia/Melbourne. A job is placed on its due date when the job has one (`dueAt`, `dueDate`, `deadline` or `calendarDate`); otherwise it uses the day the job was created in Melbourne. New jobs show up on their own — nothing is copied in by hand. Open a job from the day list or from **Open job** on its calendar card. Changing the day or the colour does not edit the proof; those overrides live in `data/calendar-events.json` (`jobOverrides`). The colour chosen on **New job** is saved the same way. Staff events are in the same file (`events`): title, start, optional end, optional notes, optional all-day, and a colour. Colours are red, blue, green, yellow, purple or grey (grey if unset). The API is `/proof/api/calendar/events` for staff events and `/proof/api/calendar/jobs/{job number or id}` to set a job’s day and colour. Both use the same studio login.
+**Staff calendar** (`/proof/studio/calendar`) shows every proof job, plus deadlines, meetings and notes. It does not use Google Calendar. Times are Australia/Melbourne. A job is placed on the **Date on Calendar** chosen when it is created. If that was left blank, it uses a due date on the job (`dueAt`, `dueDate`, `deadline` or `calendarDate`) and otherwise the day the job was created in Melbourne. New jobs show up on their own — nothing is copied in by hand. The chip’s only text is the job description from **New job** (no job number, client name, or “Job” label). A blank description leaves a colour-only chip. Open a job from the day list or from **Open job** on its calendar card. Changing the day or the colour does not edit the proof; those overrides live in `data/calendar-events.json` (`jobOverrides`). The colour and the date chosen on **New job** are saved the same way. Staff events are in the same file (`events`): title, start, optional end, optional notes, optional all-day, a colour, and an optional `dayOrder`. Colours are red, blue, green, yellow, purple or grey (grey if unset). Drag a chip to another day to reschedule it. In week view, drop a timed event on a time to change the clock. Slide a chip up or down between the others on the same day to change that day’s order — month view and the week-day list both do this, and a reload keeps it. `dayOrder` is a whole number, lower first; chips with no order keep the previous all-day-then-time order and sit after anything that has been placed. Moving a chip to a different day clears its order so it doesn’t jump the queue. The API is `/proof/api/calendar/events` for staff events and `/proof/api/calendar/jobs/{job number or id}` to set a job’s day, colour and `dayOrder`. `PATCH /proof/api/calendar/order` with `{ "date", "ids" }` saves one day’s order in a single write. Creating a job accepts `colour` and `calendarDate`. Both use the same studio login.
 
 ## Client side
 
@@ -120,7 +120,7 @@ ybi-approval/
     jobs/<id>.json     # one file per job: details, token, versions, feedback
     files/<id>/        # proof files (v1-xxxx.pdf, v2-…) and feedback/ (client attachments)
     settings.json      # notification email
-    calendar-events.json  # staff events, plus each job’s calendar colour and date override
+    calendar-events.json  # staff events, plus each job’s calendar colour, date and day order
     notifications.log  # plain-text log of every approve / change request
     secret.key         # signs the studio login cookie
   samples/             # test proofs (scripts/make-samples.py)

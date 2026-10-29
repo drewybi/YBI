@@ -116,7 +116,8 @@ async function loadSettings() { try { return JSON.parse(await fsp.readFile(SETTI
 // Staff calendar. start/end are Australia/Melbourne wall-clock strings, not UTC:
 // all-day is YYYY-MM-DD, timed is YYYY-MM-DDTHH:mm. Stored in DATA_DIR/calendar-events.json
 // as { events, jobOverrides }. Proof jobs are not copied into events: the list is derived
-// from the job files, with per-job colour and calendarDate kept in jobOverrides.
+// from the job files, with per-job colour, calendarDate and dayOrder kept in jobOverrides.
+// dayOrder is a whole number (lower first) for chips that share a calendar day.
 const CAL_FILE = path.join(DATA, 'calendar-events.json');
 const CAL_COLOURS = ['red', 'blue', 'green', 'yellow', 'purple', 'grey'];
 const CAL_COLOUR_SET = new Set(CAL_COLOURS);
@@ -139,6 +140,27 @@ function parseColourField(b) {
   const colour = normalColour(raw);
   if (!colour) return { error: COLOUR_ERR };
   return { sent: true, colour };
+}
+function storedDayOrder(v) {
+  return Number.isInteger(v) && v >= 0 && v <= 1000000 ? v : null;
+}
+function parseDayOrderField(b) {
+  if (!b || !Object.prototype.hasOwnProperty.call(b, 'dayOrder')) return { sent: false };
+  const raw = b.dayOrder;
+  if (raw == null || raw === '') return { sent: true, dayOrder: null };
+  const n = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN);
+  if (!Number.isInteger(n) || n < 0 || n > 1000000) return { error: 'Order must be a whole number from 0 up.' };
+  return { sent: true, dayOrder: n };
+}
+function withDayOrder(ev) {
+  const dayOrder = storedDayOrder(ev && ev.dayOrder);
+  if (dayOrder == null) {
+    if (!ev || !Object.prototype.hasOwnProperty.call(ev, 'dayOrder')) return ev;
+    const copy = { ...ev };
+    delete copy.dayOrder;
+    return copy;
+  }
+  return ev.dayOrder === dayOrder ? ev : { ...ev, dayOrder };
 }
 function melbourneDay(input) {
   const dt = input instanceof Date ? input : new Date(input);
@@ -198,7 +220,8 @@ function cleanEventInput(b) {
   return { title, allDay, start, end, notes };
 }
 function publicEvent(ev) {
-  return { id: ev.id, kind: 'event', title: ev.title, allDay: !!ev.allDay, start: ev.start, end: ev.end || null, notes: ev.notes || '', colour: normalColour(ev.colour) || 'grey', createdAt: ev.createdAt, updatedAt: ev.updatedAt };
+  const clean = withDayOrder(ev);
+  return { id: clean.id, kind: 'event', title: clean.title, allDay: !!clean.allDay, start: clean.start, end: clean.end || null, notes: clean.notes || '', colour: normalColour(clean.colour) || 'grey', dayOrder: storedDayOrder(clean.dayOrder), createdAt: clean.createdAt, updatedAt: clean.updatedAt };
 }
 function eventInRange(ev, from, to) {
   const s = String(ev.start).slice(0, 10), e = String(ev.end || ev.start).slice(0, 10);
@@ -214,21 +237,24 @@ function jobCalendarDay(job, override) {
   }
   return melbourneDay(job.createdAt) || melbourneDay(new Date());
 }
+// The month/week chip shows this string and nothing else — the New job description, not the job number or client.
+function jobChipLabel(job) {
+  return String(job.description || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
 function jobEvent(job, override) {
-  const client = String(job.clientName || '').trim();
-  const title = (client ? `${job.jobNumber} · ${client}` : String(job.jobNumber || 'Job')).slice(0, 200);
   const start = jobCalendarDay(job, override);
   return {
     id: `job-${job.id}`,
     kind: 'job',
     jobId: job.id,
     jobNumber: job.jobNumber,
-    title,
+    title: jobChipLabel(job),
     allDay: true,
     start,
     end: null,
-    notes: String(job.description || '').trim().slice(0, 500),
+    notes: '',
     colour: (override && normalColour(override.colour)) || 'grey',
+    dayOrder: override ? storedDayOrder(override.dayOrder) : null,
     href: `${B}/studio/${encodeURIComponent(job.jobNumber)}`,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
@@ -251,9 +277,11 @@ async function readCalendarDoc() {
     const entry = {};
     const colour = normalColour(v.colour);
     const calendarDate = dayFromValue(v.calendarDate != null ? v.calendarDate : v.date);
+    const dayOrder = storedDayOrder(v.dayOrder);
     if (colour && colour !== 'grey') entry.colour = colour;
     if (calendarDate) entry.calendarDate = calendarDate;
-    if (entry.colour || entry.calendarDate) jobOverrides[k] = entry;
+    if (dayOrder != null) entry.dayOrder = dayOrder;
+    if (entry.colour || entry.calendarDate || entry.dayOrder != null) jobOverrides[k] = entry;
   }
   return { events, jobOverrides };
 }
@@ -269,8 +297,16 @@ async function calendarEntries(from, to) {
   if (from || to) events = events.filter(ev => eventInRange(ev, from, to));
   return events;
 }
+function compareCalEvents(a, b) {
+  const ao = storedDayOrder(a.dayOrder), bo = storedDayOrder(b.dayOrder);
+  if (ao != null && bo != null && ao !== bo) return ao - bo;
+  if (ao != null && bo == null) return -1;
+  if (ao == null && bo != null) return 1;
+  if (!!a.allDay !== !!b.allDay) return a.allDay ? -1 : 1;
+  return String(a.start).localeCompare(String(b.start)) || String(a.title).localeCompare(String(b.title)) || String(a.id).localeCompare(String(b.id));
+}
 function sortEvents(events) {
-  return events.sort((a, b) => String(a.start).localeCompare(String(b.start)) || String(a.title).localeCompare(String(b.title)) || String(a.id).localeCompare(String(b.id)));
+  return events.sort((a, b) => String(a.start).slice(0, 10).localeCompare(String(b.start).slice(0, 10)) || compareCalEvents(a, b));
 }
 function jobDateField(b) {
   if (Object.prototype.hasOwnProperty.call(b, 'date')) return b.date;
@@ -288,8 +324,11 @@ async function forgetJobOverride(jobId) {
     });
   } catch (e) { console.error('[calendar] could not drop the job override', e.message); }
 }
+function overrideEmpty(entry) {
+  return !entry.colour && !entry.calendarDate && entry.dayOrder == null;
+}
 // Same write as PATCH /api/calendar/jobs/:id. Grey is the default and is not stored.
-async function saveJobCalendar(job, { colourSent = false, colour = null, hasDate = false, calendarDate = null } = {}) {
+async function saveJobCalendar(job, { colourSent = false, colour = null, hasDate = false, calendarDate = null, dayOrderSent = false, dayOrder = null } = {}) {
   return withCalendar(async () => {
     const doc = await readCalendarDoc();
     const prev = doc.jobOverrides[job.id] || {};
@@ -302,11 +341,30 @@ async function saveJobCalendar(job, { colourSent = false, colour = null, hasDate
       if (calendarDate) next.calendarDate = calendarDate;
       else delete next.calendarDate;
     }
-    if (!next.colour && !next.calendarDate) delete doc.jobOverrides[job.id];
+    if (dayOrderSent) {
+      if (dayOrder == null) delete next.dayOrder;
+      else next.dayOrder = dayOrder;
+    }
+    if (overrideEmpty(next)) delete doc.jobOverrides[job.id];
     else doc.jobOverrides[job.id] = next;
     await writeCalendarDoc(doc);
     return jobEvent(job, doc.jobOverrides[job.id]);
   });
+}
+function parseCreateCalendarDate(b) {
+  if (!b || !Object.prototype.hasOwnProperty.call(b, 'calendarDate')) return { sent: false };
+  const raw = b.calendarDate;
+  if (raw == null || String(raw).trim() === '') return { sent: false };
+  const calendarDate = dayFromValue(raw);
+  if (!calendarDate) return { error: 'That date isn’t valid.' };
+  return { sent: true, calendarDate };
+}
+function calendarRef(cid) {
+  if (typeof cid !== 'string') return null;
+  if (/^[a-f0-9]{16}$/.test(cid)) return { kind: 'event', id: cid };
+  const job = /^job-([a-f0-9]{12})$/.exec(cid);
+  if (job) return { kind: 'job', id: job[1] };
+  return null;
 }
 async function handleCalendarJob(req, res, key, m) {
   if (m !== 'GET' && m !== 'PATCH') return err(res, 405, 'Method not allowed');
@@ -319,9 +377,11 @@ async function handleCalendarJob(req, res, key, m) {
   const b = await readJSON(req);
   const colourField = parseColourField(b);
   if (colourField.error) return err(res, 400, colourField.error);
+  const dayOrderField = parseDayOrderField(b);
+  if (dayOrderField.error) return err(res, 400, dayOrderField.error);
   const rawDate = jobDateField(b);
   const hasDate = rawDate !== undefined;
-  if (!colourField.sent && !hasDate) return err(res, 400, 'Nothing to update.');
+  if (!colourField.sent && !hasDate && !dayOrderField.sent) return err(res, 400, 'Nothing to update.');
   let calendarDate;
   if (hasDate) {
     if (rawDate == null || String(rawDate).trim() === '') calendarDate = null;
@@ -330,10 +390,56 @@ async function handleCalendarJob(req, res, key, m) {
       if (!calendarDate) return err(res, 400, 'That date isn’t valid.');
     }
   }
-  const event = await saveJobCalendar(job, { colourSent: colourField.sent, colour: colourField.colour, hasDate, calendarDate });
+  const event = await saveJobCalendar(job, { colourSent: colourField.sent, colour: colourField.colour, hasDate, calendarDate, dayOrderSent: dayOrderField.sent, dayOrder: dayOrderField.dayOrder });
   return send(res, 200, event);
 }
+async function handleCalendarOrder(req, res, m) {
+  if (m !== 'PATCH') return err(res, 405, 'Method not allowed');
+  const b = await readJSON(req);
+  const date = b && typeof b.date === 'string' ? b.date.trim() : '';
+  if (!validDate(date)) return err(res, 400, 'That date isn’t valid.');
+  const ids = b.ids;
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 200) return err(res, 400, 'List the events in the order you want.');
+  if (ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length) return err(res, 400, 'List each event once.');
+  const refs = ids.map(calendarRef);
+  if (refs.some(ref => !ref)) return err(res, 400, 'That event id isn’t valid.');
+  const result = await withCalendar(async () => {
+    const doc = await readCalendarDoc();
+    const jobs = await allJobs();
+    const jobById = new Map(jobs.map(job => [job.id, job]));
+    const resolved = [];
+    for (const ref of refs) {
+      if (ref.kind === 'job') {
+        const job = jobById.get(ref.id);
+        if (!job) return { status: 404, error: 'No event with that id.' };
+        const ev = jobEvent(job, doc.jobOverrides[job.id]);
+        if (!eventInRange(ev, date, date)) return { status: 400, error: 'That event isn’t on this day.' };
+        resolved.push({ kind: 'job', job });
+      } else {
+        const ev = doc.events.find(e => e.id === ref.id);
+        if (!ev) return { status: 404, error: 'No event with that id.' };
+        if (!eventInRange(ev, date, date)) return { status: 400, error: 'That event isn’t on this day.' };
+        resolved.push({ kind: 'event', ev });
+      }
+    }
+    const stamp = now();
+    resolved.forEach((item, index) => {
+      if (item.kind === 'job') {
+        const prev = doc.jobOverrides[item.job.id] || {};
+        doc.jobOverrides[item.job.id] = { ...prev, dayOrder: index };
+      } else {
+        item.ev.dayOrder = index;
+        item.ev.updatedAt = stamp;
+      }
+    });
+    await writeCalendarDoc(doc);
+    return { events: resolved.map(item => item.kind === 'job' ? jobEvent(item.job, doc.jobOverrides[item.job.id]) : publicEvent(item.ev)) };
+  });
+  if (result.error) return err(res, result.status, result.error);
+  return send(res, 200, { ok: true, events: result.events });
+}
 async function handleCalendar(req, res, p, m, u) {
+  if (p === '/api/calendar/order') return handleCalendarOrder(req, res, m);
   const jobRoute = p.match(/^\/api\/calendar\/jobs\/([^/]+)$/);
   if (jobRoute) return handleCalendarJob(req, res, jobRoute[1], m);
   const r = p.match(/^\/api\/calendar\/events(?:\/([a-f0-9]{16}))?$/);
@@ -350,6 +456,8 @@ async function handleCalendar(req, res, p, m, u) {
     if (cleaned.error) return err(res, 400, cleaned.error);
     const colourField = parseColourField(b);
     if (colourField.error) return err(res, 400, colourField.error);
+    const dayOrderField = parseDayOrderField(b);
+    if (dayOrderField.error) return err(res, 400, dayOrderField.error);
     const colour = colourField.sent ? colourField.colour : 'grey';
     const ev = await withCalendar(async () => {
       const doc = await readCalendarDoc();
@@ -357,6 +465,7 @@ async function handleCalendar(req, res, p, m, u) {
       while (doc.events.some(e => e.id === nid)) nid = id(8);
       const stamp = now();
       const created = { id: nid, ...cleaned, colour, createdAt: stamp, updatedAt: stamp };
+      if (dayOrderField.sent && dayOrderField.dayOrder != null) created.dayOrder = dayOrderField.dayOrder;
       doc.events.push(created);
       await writeCalendarDoc(doc);
       return created;
@@ -372,6 +481,8 @@ async function handleCalendar(req, res, p, m, u) {
     const b = await readJSON(req);
     const colourField = parseColourField(b);
     if (colourField.error) return err(res, 400, colourField.error);
+    const dayOrderField = parseDayOrderField(b);
+    if (dayOrderField.error) return err(res, 400, dayOrderField.error);
     const result = await withCalendar(async () => {
       const doc = await readCalendarDoc();
       const i = doc.events.findIndex(e => e.id === eid);
@@ -386,7 +497,12 @@ async function handleCalendar(req, res, p, m, u) {
       });
       if (cleaned.error) return { status: 400, error: cleaned.error };
       const colour = colourField.sent ? colourField.colour : (normalColour(existing.colour) || 'grey');
-      doc.events[i] = { ...existing, ...cleaned, colour, id: existing.id, createdAt: existing.createdAt, updatedAt: now() };
+      const next = withDayOrder({ ...existing, ...cleaned, colour, id: existing.id, createdAt: existing.createdAt, updatedAt: now() });
+      if (dayOrderField.sent) {
+        if (dayOrderField.dayOrder == null) delete next.dayOrder;
+        else next.dayOrder = dayOrderField.dayOrder;
+      }
+      doc.events[i] = next;
       await writeCalendarDoc(doc);
       return { event: doc.events[i] };
     });
@@ -571,13 +687,19 @@ async function handle(req, res) {
       if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
       const colourField = parseColourField(b);
       if (colourField.error) return err(res, 400, colourField.error);
+      const dateField = parseCreateCalendarDate(b);
+      if (dateField.error) return err(res, 400, dateField.error);
       const dupe = await jobByNumber(num);
       if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
       const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', createdAt: now(), versions: [] };
       await fsp.mkdir(path.join(FILES, job.id), { recursive: true }); await saveJob(job);
-      if (colourField.sent && colourField.colour !== 'grey') {
-        try { await saveJobCalendar(job, { colourSent: true, colour: colourField.colour }); }
-        catch (e) {
+      if ((colourField.sent && colourField.colour !== 'grey') || dateField.sent) {
+        try {
+          await saveJobCalendar(job, {
+            colourSent: colourField.sent, colour: colourField.colour,
+            hasDate: dateField.sent, calendarDate: dateField.sent ? dateField.calendarDate : null
+          });
+        } catch (e) {
           await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true });
           await fsp.rm(jobPath(job.id), { force: true });
           await forgetJobOverride(job.id);

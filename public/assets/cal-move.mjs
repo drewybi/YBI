@@ -63,3 +63,36 @@ export function movedTimes(ev, fromDay, toDay, slot) {
 export function sameSpan(ev, next) {
   return String(ev.start) === String(next.start) && String(ev.end || '') === String(next.end || '');
 }
+
+// Lower dayOrder wins. An item with no dayOrder keeps the old order and sits after
+// anything that has been given a place: all-day first, then start, title, id.
+export function compareEvents(a, b) {
+  const ao = Number.isInteger(a?.dayOrder) ? a.dayOrder : null;
+  const bo = Number.isInteger(b?.dayOrder) ? b.dayOrder : null;
+  if (ao != null && bo != null && ao !== bo) return ao - bo;
+  if (ao != null && bo == null) return -1;
+  if (ao == null && bo != null) return 1;
+  if (!!a.allDay !== !!b.allDay) return a.allDay ? -1 : 1;
+  return String(a.start).localeCompare(String(b.start))
+    || String(a.title).localeCompare(String(b.title))
+    || String(a.id).localeCompare(String(b.id));
+}
+
+// toIndex is the slot among the chips that are not `id` (0 = before the first).
+export function movedOrder(ids, id, toIndex) {
+  const from = ids.indexOf(id);
+  if (from < 0) return ids.slice();
+  const without = ids.filter(x => x !== id);
+  const index = Math.max(0, Math.min(without.length, Number.isFinite(toIndex) ? toIndex : without.length));
+  if (index === from) return ids.slice();
+  const next = without.slice();
+  next.splice(index, 0, id);
+  return next;
+}
+
+// Permute the chips that were in the dragged list and leave every other id where it was.
+export function mergeOrder(fullIds, containerIds, nextContainerIds) {
+  const set = new Set(containerIds);
+  let k = 0;
+  return fullIds.map(id => (set.has(id) ? nextContainerIds[k++] : id));
+}
