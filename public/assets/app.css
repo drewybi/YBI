@@ -138,6 +138,8 @@ main{flex:1;padding-top:var(--hdr)}
 .linkbox input:focus{outline:0}
 .ver{border-top:1px solid var(--line);padding:22px 0}
 .ver__h{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.ver__id{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+.ver__h .lnk{margin-left:auto;flex:none}
 .vtag{font-family:var(--display);font-stretch:125%;font-weight:800;font-size:1.3rem;letter-spacing:-.01em}
 .fb{margin-top:14px;padding:16px 18px;border-radius:14px;background:var(--bg3);border-left:3px solid var(--g)}
 .fb--approve{border-left-color:var(--ok)}.fb--changes{border-left-color:var(--warn)}

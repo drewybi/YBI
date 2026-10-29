@@ -44,19 +44,32 @@ function fbHtml(f, v, jobId) {
    ${f.attachments.length ? `<div class="att">${f.attachments.map(a => `<a href="${a.url}?download">↓ ${esc(a.name)} <span class="dim">${fmtSize(a.size)}</span></a>`).join('')}</div>` : ''}</div>`;
 }
 
+function removeProofCopy(j, v) {
+  const latest = j.versions.at(-1);
+  const only = j.versions.length === 1;
+  const had = v.feedback.length > 0;
+  const keep = only
+    ? 'The job and client link stay, with no proof until you upload a new one.'
+    : 'The job, client link and other versions stay.';
+  const sees = !only && v === latest ? ' The client will see the previous version.' : '';
+  const extra = had ? ' Client notes, stickies and files on this version will be removed too.' : '';
+  return `Remove proof V${v.n} (${v.originalName}) from job ${j.jobNumber}? ${keep}${sees}${extra}`;
+}
+
 async function jobPage(key, showV) {
   let j = await api(`${B}/api/jobs/${encodeURIComponent(key)}`); const id = j.id;
   if (j.unread) api(`${B}/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify({ markSeen: true }) }).catch(() => {});
   const latest = j.versions.at(-1); const sel = j.versions.find(v => v.n === +showV) || latest;
   const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\nYBI Creative`)}` : '';
+  const phone = j.clientPhone ? `<br><a href="tel:${esc(j.clientPhone)}" class="mute">${esc(j.clientPhone)}</a>` : '';
   app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(j.jobNumber), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div>${chip(j.status)}</div>`) +
   `<div class="wrap">
-   <div class="panel" style="margin-top:36px"><span class="k">Client page — send this to ${esc(j.clientName)}</span>
+   <div class="panel" style="margin-top:36px"><div class="ver__h"><span class="k" style="margin:0">Client page — send this to ${esc(j.clientName)}</span><button type="button" class="btn btn--sm btn--ghost" data-edit>Edit job</button></div>
     <div class="linkbox"><input readonly value="${esc(j.secureUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
     <p class="small mute" style="margin:10px 0 0">Private link only. The job number alone won’t open this proof — send this link.</p>
     <div class="meta">
      <div><span class="k">Description</span>${esc(j.description) || '<span class="dim">—</span>'}</div>
-     <div><span class="k">Client contact</span>${esc(j.clientName)}${j.clientEmail ? `<br><a href="mailto:${esc(j.clientEmail)}" class="mute">${esc(j.clientEmail)}</a>` : ''}</div>
+     <div><span class="k">Client contact</span>${esc(j.clientName)}${phone}${j.clientEmail ? `<br><a href="mailto:${esc(j.clientEmail)}" class="mute">${esc(j.clientEmail)}</a>` : ''}</div>
      <div><span class="k">Versions</span>${j.versions.length || 0}</div>
      <div><span class="k">Created</span>${fmtDate(j.createdAt)}</div>
     </div></div>
@@ -70,7 +83,7 @@ async function jobPage(key, showV) {
       <div class="field" style="margin-top:18px"><label>Note to client <span class="opt">(optional — shown on their page)</span></label><textarea data-vnote style="min-height:70px" placeholder="e.g. Logo enlarged, phone number fixed."></textarea></div>
       <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>
      <div class="panel"><p class="eyebrow" style="margin-bottom:6px">Client feedback &amp; history</p>
-      ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag">V${v.n}</span><span class="small dim">${esc(v.originalName)} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></div>
+      ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="ver__id"><span class="vtag">V${v.n}</span><span class="small dim">${esc(v.originalName)} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></span><button type="button" class="lnk" data-rmv="${v.n}">Remove proof</button></div>
         ${v.studioNote ? `<p class="small mute" style="margin:8px 0 0">YBI note: ${esc(v.studioNote)}</p>` : ''}
         ${v.feedback.length ? [...v.feedback].reverse().map(f => fbHtml(f, v, j.id)).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
      </div>
@@ -99,6 +112,18 @@ async function jobPage(key, showV) {
     catch (e) { msg.className = 'msg err'; msg.textContent = e.message; go.disabled = false; }
   };
   $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); location.href = B + '/studio'; };
+  $('[data-edit]', app).onclick = () => openEdit(j);
+  $$('[data-rmv]', app).forEach(btn => btn.onclick = async () => {
+    const n = +btn.dataset.rmv;
+    const v = j.versions.find(x => x.n === n);
+    if (!v || !confirm(removeProofCopy(j, v))) return;
+    btn.disabled = true;
+    try {
+      await api(`${B}/api/jobs/${encodeURIComponent(id)}/versions/${n}`, { method: 'DELETE' });
+      toast(`V${n} removed`);
+      await jobPage(key, sel && sel.n !== n ? sel.n : undefined);
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  });
 }
 
 // Staff calendar — proof jobs, deadlines, meetings and notes. Times are Australia/Melbourne wall-clock values.
@@ -721,6 +746,10 @@ async function settings() {
 const modal = $('#newModal'), form = $('#newForm'); let newFile = null;
 const nSwatches = $('[data-n-swatches]', form);
 if (nSwatches) nSwatches.outerHTML = colourSwatches({ name: 'colour', labelledBy: 'n-colour-label' });
+const editModal = $('#editModal'), editForm = $('#editForm');
+const eSwatches = editForm && $('[data-e-swatches]', editForm);
+if (eSwatches) eSwatches.outerHTML = colourSwatches({ name: 'colour', labelledBy: 'e-colour-label' });
+let editingDetails = null;
 function pickedColour() {
   const el = $('#newForm input[name="colour"]:checked');
   return CAL_COLOURS.some(([name]) => name === el?.value) ? el.value : 'grey';
@@ -761,6 +790,95 @@ form.onsubmit = async e => {
   } catch (er) { m.className = 'msg err'; m.textContent = er.message; } finally { go.disabled = false; }
 };
 bindNew();
+
+function setEditColour(value) {
+  const want = CAL_COLOURS.some(([name]) => name === value) ? value : 'grey';
+  $$('#editForm input[name="colour"]').forEach(el => { el.checked = el.value === want; });
+}
+async function openEdit(j) {
+  editingDetails = { id: j.id, jobNumber: j.jobNumber, cal: null, calOk: false };
+  editForm.reset();
+  $('#e-num').value = j.jobNumber || '';
+  $('#e-client').value = j.clientName || '';
+  $('#e-co').value = j.clientCompany || '';
+  $('#e-email').value = j.clientEmail || '';
+  $('#e-phone').value = j.clientPhone || '';
+  $('#e-desc').value = j.description || '';
+  const msg = $('#e-msg'); msg.className = 'msg'; msg.textContent = '';
+  const note = $('#e-calnote'); note.hidden = true; note.textContent = '';
+  const date = $('#e-caldate');
+  const goBtn = $('#e-go');
+  date.disabled = true;
+  goBtn.disabled = true;
+  $$('#editForm input[name="colour"]').forEach(el => { el.disabled = true; });
+  editModal.hidden = false;
+  $('#e-num').focus();
+  try {
+    const cal = await api(`${B}/api/calendar/jobs/${encodeURIComponent(j.id)}`);
+    if (!editingDetails || editingDetails.id !== j.id) return;
+    editingDetails.cal = cal;
+    editingDetails.calOk = true;
+    date.disabled = false;
+    date.value = String(cal.start || '').slice(0, 10);
+    $$('#editForm input[name="colour"]').forEach(el => { el.disabled = false; });
+    setEditColour(cal.colour || 'grey');
+  } catch (err) {
+    if (!editingDetails || editingDetails.id !== j.id) return;
+    date.value = '';
+    note.hidden = false;
+    note.textContent = 'Calendar date and colour could not be loaded, so saving will leave them as they are.';
+  } finally {
+    if (editingDetails && editingDetails.id === j.id) goBtn.disabled = false;
+  }
+}
+$$('[data-close]', editModal).forEach(b => b.onclick = () => { editModal.hidden = true; });
+editModal.addEventListener('click', e => { if (e.target === editModal) editModal.hidden = true; });
+editForm.onsubmit = async e => {
+  e.preventDefault();
+  const ctx = editingDetails;
+  if (!ctx) return;
+  const m = $('#e-msg'), go = $('#e-go');
+  if (go.disabled) return;
+  m.className = 'msg'; m.textContent = '';
+  const data = {
+    jobNumber: $('#e-num').value.trim(),
+    clientName: $('#e-client').value.trim(),
+    clientCompany: $('#e-co').value.trim(),
+    clientEmail: $('#e-email').value.trim(),
+    clientPhone: $('#e-phone').value.trim(),
+    description: $('#e-desc').value.trim()
+  };
+  if (!data.jobNumber || !data.clientName) { m.className = 'msg err'; m.textContent = 'Job number and client name are required.'; return; }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(data.jobNumber)) { m.className = 'msg err'; m.textContent = 'Job number can only use letters, numbers, - _ or . (no spaces).'; return; }
+  let colour = 'grey', dateVal = '';
+  if (ctx.calOk) {
+    const picked = $('#editForm input[name="colour"]:checked');
+    colour = CAL_COLOURS.some(([name]) => name === picked?.value) ? picked.value : 'grey';
+    dateVal = $('#e-caldate').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) { m.className = 'msg err'; m.textContent = 'Pick a date on the calendar.'; return; }
+  }
+  if (data.jobNumber.toLowerCase() !== ctx.jobNumber.toLowerCase()) {
+    if (!confirm(`Change the job number from ${ctx.jobNumber} to ${data.jobNumber}? The client link will use the new number. The secure key stays the same — send the updated link.`)) return;
+  }
+  go.disabled = true;
+  try {
+    const updated = await api(`${B}/api/jobs/${encodeURIComponent(ctx.id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+    if (ctx.calOk) {
+      const prevDate = String(ctx.cal.start || '').slice(0, 10);
+      const prevColour = ctx.cal.colour || 'grey';
+      const patch = {};
+      if (colour !== prevColour) patch.colour = colour;
+      if (dateVal !== prevDate) { patch.date = dateVal; patch.dayOrder = null; }
+      if (patch.colour || patch.date) await api(`${B}/api/calendar/jobs/${encodeURIComponent(ctx.id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    }
+    editModal.hidden = true;
+    toast('Job details saved');
+    const next = jobHref(updated);
+    if (location.pathname !== next) history.replaceState(null, '', next);
+    await jobPage(updated.jobNumber);
+  } catch (err) { m.className = 'msg err'; m.textContent = err.message; }
+  finally { go.disabled = false; }
+};
 
 function markNav() {
   const here = location.pathname.replace(/\/$/, '');

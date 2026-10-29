@@ -257,9 +257,102 @@ curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$IDB" >/dev/null
 curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$IDC" >/dev/null
 curl -sf "${H[@]}" -X DELETE "$BASE/api/calendar/events/$SID" >/dev/null
 
+echo "5c) Remove one proof and edit the job without deleting it"
+NE="T${RUN}H"; NI="T${RUN}I"
+JE=$(curl -sf "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"$NE\",\"clientName\":\"Edit Client\",\"clientCompany\":\"Old Co\",\"clientEmail\":\"old@example.com\",\"clientPhone\":\"0354442127\",\"description\":\"Before edit\",\"colour\":\"purple\",\"calendarDate\":\"2026-10-02\"}" "$BASE/api/jobs")
+JEID=$(echo "$JE" | j .id); JETOK=$(echo "$JE" | j .token)
+curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d '{"dayOrder":4}' "$BASE/api/calendar/jobs/$JEID" >/dev/null
+curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NE/versions?name=wrong.jpg" >/dev/null
+ATT=$(curl -sf -H 'Content-Type: image/png' --data-binary @"$S/client-markup.png" "$BASE/api/review/$NE/attachments?name=note.png&k=$JETOK" | j .id)
+curl -sf "${JS[@]}" -d "{\"type\":\"changes\",\"name\":\"Edit Client\",\"note\":\"Wrong art\",\"attachments\":[\"$ATT\"],\"stickies\":[{\"page\":1,\"x\":0.3,\"y\":0.4,\"text\":\"Not this logo\"}],\"version\":1}" "$BASE/api/review/$NE/decision?k=$JETOK" >/dev/null
+curl -sf "${H[@]}" -H 'Content-Type: application/pdf' --data-binary @"$S/catalogue-V2.pdf" "$BASE/api/jobs/$NE/versions?name=right.pdf&note=Correct%20file" >/dev/null
+chk "$(code -X DELETE "$BASE/api/jobs/$NE/versions/1")" 401 "removing a proof version needs studio login"
+chk "$(code -X DELETE "$BASE/api/jobs/$NE/versions/1?k=$JETOK")" 401 "client key cannot remove a proof version"
+chk "$(code -X DELETE "$BASE/api/review/$NE/versions/1?k=$JETOK")" 401 "client review route cannot remove a proof version"
+chk "$(code "${H[@]}" -X POST --data 'x' "$BASE/api/jobs/$NE/versions/1")" 405 "a version address does not accept an upload"
+node -e '
+const fs=require("fs"), path=require("path");
+const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const root=process.argv[2];
+const v1=j.versions.find(v=>v.n===1), v2=j.versions.find(v=>v.n===2);
+if (!v1 || !v2 || !v1.feedback[0].stickies.length || !v1.feedback[0].attachments.length) process.exit(2);
+const gone=[v1.stored, ...v1.feedback.flatMap(f=>(f.attachments||[]).map(a=>a.stored))];
+const keep=[v2.stored];
+fs.writeFileSync("/tmp/ybi-vfiles.json", JSON.stringify({gone, keep, root, token:j.token}));
+for (const f of [...gone, ...keep]) if (!fs.existsSync(path.join(root, f))) { console.error("missing before delete "+f); process.exit(1); }
+' "$DATA/jobs/$JEID.json" "$DATA/files/$JEID" && pass "V1, its client files and V2 are on disk"
+RM=$(curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$NE/versions/1")
+chk "$(echo "$RM" | j '.versions.length')" 1 "removing V1 leaves the other version"
+chk "$(echo "$RM" | j '.versions[0].n')" 2 "the remaining version is still V2"
+chk "$(echo "$RM" | j .token)" "$JETOK" "removing a proof keeps the secure key"
+chk "$(echo "$RM" | j .clientName)" "Edit Client" "removing a proof keeps the client name"
+chk "$(echo "$RM" | j .jobNumber)" "$NE" "removing a proof keeps the job number"
+chk "$(echo "$RM" | j '.versions[0].studioNote')" "Correct file" "the other version's note stays"
+chk "$(code "${H[@]}" -X DELETE "$BASE/api/jobs/$NE/versions/1")" 404 "removing a version that is already gone is refused"
+node -e '
+const fs=require("fs"), path=require("path");
+const snap=JSON.parse(fs.readFileSync("/tmp/ybi-vfiles.json","utf8"));
+const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+if (j.versions.some(v=>v.n===1) || j.versions.length!==1 || j.versions[0].n!==2) process.exit(2);
+if (j.token!==snap.token) process.exit(3);
+for (const f of snap.gone) if (fs.existsSync(path.join(snap.root, f))) { console.error("still on disk "+f); process.exit(4); }
+for (const f of snap.keep) if (!fs.existsSync(path.join(snap.root, f))) { console.error("lost "+f); process.exit(5); }
+' "$DATA/jobs/$JEID.json" && pass "V1 file and its client notes are gone; V2 stays on disk"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .colour)" purple "removing a proof keeps the calendar colour"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .start)" "2026-10-02" "removing a proof keeps the calendar date"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .dayOrder)" 4 "removing a proof keeps the day order"
+chk "$(curl -sf "$BASE/api/review/$NE?k=$JETOK" | j '.versions[0].n')" 2 "client still sees the remaining version"
+chk "$(code "$BASE/$NE/file/v1?k=$JETOK")" 404 "removed proof is not served"
+chk "$(code "$BASE/$NE/file/v2?k=$JETOK")" 200 "remaining proof is still served"
+ED=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d "{\"clientName\":\"New Client\",\"clientCompany\":\"New Co\",\"clientEmail\":\"new@example.com\",\"clientPhone\":\"0400000000\",\"description\":\"After edit\",\"colour\":\"red\",\"calendarDate\":\"2026-01-01\"}" "$BASE/api/jobs/$JEID")
+chk "$(echo "$ED" | j .clientName)" "New Client" "client name can be edited"
+chk "$(echo "$ED" | j .clientCompany)" "New Co" "business can be edited"
+chk "$(echo "$ED" | j .clientEmail)" "new@example.com" "client email can be edited"
+chk "$(echo "$ED" | j .clientPhone)" "0400000000" "client phone can be edited"
+chk "$(echo "$ED" | j .description)" "After edit" "description can be edited"
+chk "$(echo "$ED" | j .token)" "$JETOK" "editing a job keeps the secure key"
+chk "$(echo "$ED" | j '.versions.length')" 1 "editing a job keeps its proofs"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .colour)" purple "a job edit does not change the calendar colour"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .start)" "2026-10-02" "a job edit does not change the calendar date"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .dayOrder)" 4 "a job edit keeps the day order"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .title)" "After edit" "calendar chip follows the edited description"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d "{\"jobNumber\":\"$NA\",\"clientName\":\"New Client\"}" "$BASE/api/jobs/$NE")" 409 "editing onto another job's number is refused"
+chk "$(curl -sf "${H[@]}" "$BASE/api/jobs/$NE" | j .jobNumber)" "$NE" "a refused rename leaves the job number"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"clientName":"  "}' "$BASE/api/jobs/$NE")" 400 "a blank client name is refused"
+chk "$(code "${H[@]}" "${JS[@]}" -X PATCH -d '{"jobNumber":"bad number"}' "$BASE/api/jobs/$NE")" 400 "an invalid job number is refused on edit"
+chk "$(curl -sf "${H[@]}" "$BASE/api/jobs/$NE" | j .clientName)" "New Client" "a refused edit leaves the client name"
+REN=$(curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d "{\"jobNumber\":\"$NI\"}" "$BASE/api/jobs/$NE")
+chk "$(echo "$REN" | j .token)" "$JETOK" "renaming a job keeps the secure key"
+chk "$(echo "$REN" | j .secureUrl)" "$BASE/$NI?k=$JETOK" "the client link uses the new number and the same key"
+chk "$(code "${H[@]}" "$BASE/api/jobs/$NE")" 404 "the old job number no longer opens the job"
+chk "$(curl -sf "$BASE/api/review/$NI?k=$JETOK" | j .clientName)" "New Client" "the renamed job keeps the edited client"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$NI" | j .dayOrder)" 4 "renaming a job keeps the calendar override"
+curl -sf "${H[@]}" "${JS[@]}" -X PATCH -d "{\"jobNumber\":\"$NE\"}" "$BASE/api/jobs/$JEID" >/dev/null
+LAST=$(curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$NE/versions/2")
+chk "$(echo "$LAST" | j '.versions.length')" 0 "removing the only remaining proof leaves an empty list"
+chk "$(echo "$LAST" | j .status)" draft "a job with no proofs stays a draft"
+chk "$(echo "$LAST" | j .token)" "$JETOK" "removing the last proof keeps the secure key"
+chk "$(curl -sf "$BASE/api/review/$NE?k=$JETOK" | j '.versions.length')" 0 "the client API has no proof left to open"
+chk "$(code "$BASE/$NE/file/v2?k=$JETOK")" 404 "the removed proof is not served"
+chk "$(curl -sf "${H[@]}" "$BASE/api/calendar/jobs/$JEID" | j .colour)" purple "an empty job keeps its calendar colour"
+node -e '
+const fs=require("fs"), path=require("path");
+const snap=JSON.parse(fs.readFileSync("/tmp/ybi-vfiles.json","utf8"));
+for (const f of snap.keep) if (fs.existsSync(path.join(snap.root, f))) process.exit(1);
+' && pass "the last proof file is deleted from disk"
+NEWV=$(curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NE/versions?name=correct.jpg")
+chk "$(echo "$NEWV" | j '.versions.length')/$(echo "$NEWV" | j '.versions[0].n')" "1/1" "a replacement proof can be uploaded onto the empty job"
+chk "$(code "$BASE/$NE/file/v1?k=$JETOK")" 200 "the replacement proof is served to the client"
+grep -q 'data-rmv' <<<"$caljs" && pass "studio can remove a proof version" || fail "remove proof control missing"
+grep -q 'Remove proof' <<<"$caljs" && pass "the control is labelled Remove proof" || fail "remove proof label"
+grep -q 'data-edit' <<<"$caljs" && pass "studio can edit a job" || fail "edit job control missing"
+echo "$studiohtml" | grep -q '>Edit job<' && pass "edit job dialog is on the studio page" || fail "edit job dialog"
+echo "$reviewhtml" | grep -q 'Remove proof' && fail "client page offers Remove proof" || pass "client page has no Remove proof control"
+echo "$reviewhtml" | grep -q 'Edit job' && fail "client page offers Edit job" || pass "client page has no Edit job control"
+
 echo "6) Misc"
 grep -q "$NB" "${DATA_DIR:-$(dirname "$0")/../data}/notifications.log" && pass "logged in notifications.log"
 chk "$(code "$BASE/api/review/NOPE$RUN")" 404 "unknown job number 404"
 if [ -n "$BP" ]; then chk "$(code "$ORIGIN/api/review/$NA")" 403 "stripped prefix still refuses a bare job number"; chk "$(code "$ORIGIN/api/review/$NA?k=$ATOK")" 200 "stripped prefix accepts the secure key"; fi
-if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC" "$NCOL" "$NGRY" "$NDATE" "$NDAYG"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
+if [ -z "${KEEP:-}" ]; then for n in "$NA" "$NB" "$NP" "$NC" "$NCOL" "$NGRY" "$NDATE" "$NDAYG" "$NE" "$NI"; do curl -sf "${H[@]}" -X DELETE "$BASE/api/jobs/$n" >/dev/null || true; done; pass "test jobs cleaned up (KEEP=1 to keep them)"; fi
 echo; echo "ALL GOOD. Entry: $BASE  ·  Studio: $BASE/studio  ·  Jobs: $BASE/$NA  $BASE/$NB"
