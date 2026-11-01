@@ -127,7 +127,59 @@ async function removeVersionFiles(job, version) {
     if (file !== root && file.startsWith(root + path.sep)) await fsp.rm(file, { force: true });
   }
 }
-async function loadSettings() { try { return JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8')); } catch { return { notifyEmail: process.env.NOTIFY_EMAIL || '' }; } }
+// Staff alerts. Studio Settings (or NOTIFY_EMAIL) overrides this. Commas or semicolons.
+const DEFAULT_NOTIFY_EMAILS = Object.freeze([
+  'drew@ybicreative.com.au',
+  'nicola@ybicreative.com.au',
+  'rob@ybicreative.com.au',
+]);
+const DEFAULT_NOTIFY_EMAIL = DEFAULT_NOTIFY_EMAILS.join(', ');
+const EMAIL_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/;
+
+function parseNotifyAddresses(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw || '').split(/[,;]+/)) {
+    const addr = part.trim();
+    if (!EMAIL_RE.test(addr)) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+  }
+  return out;
+}
+
+function fallbackNotifyEmail() {
+  const env = String(process.env.NOTIFY_EMAIL || '').trim();
+  if (parseNotifyAddresses(env).length) return env;
+  return DEFAULT_NOTIFY_EMAIL;
+}
+
+async function readSettingsFile() {
+  try {
+    const s = JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8'));
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+// Empty or missing settings use NOTIFY_EMAIL when that has at least one valid
+// address, otherwise the three YBI addresses. A saved list replaces both.
+async function loadSettings() {
+  const s = await readSettingsFile();
+  const saved = s ? String(s.notifyEmail || '').trim() : '';
+  return { ...(s || {}), notifyEmail: saved || fallbackNotifyEmail() };
+}
+
+async function notifyRecipients() {
+  const s = await readSettingsFile();
+  const saved = s ? String(s.notifyEmail || '').trim() : '';
+  const raw = saved || fallbackNotifyEmail();
+  return { raw, list: parseNotifyAddresses(raw) };
+}
 
 // Staff calendar. start/end are Australia/Melbourne wall-clock strings, not UTC:
 // all-day is YYYY-MM-DD, timed is YYYY-MM-DDTHH:mm. Stored in DATA_DIR/calendar-events.json
@@ -558,7 +610,22 @@ function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id
 
 // ---------- notifications ----------
 let mailer = null;
+function setMailerForTests(next) { mailer = next || null; }
 try { if (process.env.SMTP_HOST) { const nm = require('nodemailer'); mailer = nm.createTransport({ host: process.env.SMTP_HOST, port: +(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined }); } } catch (e) { console.warn('[mail] nodemailer not installed — run `npm install` to enable email. Falling back to dashboard + log only.'); }
+
+async function deliverStaffMail({ subject, text, replyTo }) {
+  const { raw, list } = await notifyRecipients();
+  const to = list.join(', ');
+  if (!mailer) return;
+  if (!to) {
+    await fsp.appendFile(LOG_FILE, `[mail] skipped — no valid addresses in ${JSON.stringify(raw)}\n`);
+    return;
+  }
+  // fire-and-forget so the client never waits on SMTP
+  mailer.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || 'proofs@ybicreative.com.au', to, replyTo: replyTo || undefined, subject, text })
+    .then(() => fsp.appendFile(LOG_FILE, `[mail] sent to ${to}\n`))
+    .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(LOG_FILE, `[mail] FAILED to ${to}: ${e.message}\n`); });
+}
 
 async function notify(req, job, fb, v) {
   const label = fb.type === 'approve' ? 'APPROVED' : 'CHANGES REQUESTED';
@@ -573,13 +640,24 @@ async function notify(req, job, fb, v) {
     `Open in studio: ${studioLink}`
   ].join('\n');
   await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
-  const { notifyEmail } = await loadSettings();
-  if (mailer && notifyEmail) {
-    // fire-and-forget so the client never waits on SMTP
-    mailer.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || 'proofs@ybicreative.com.au', to: notifyEmail, replyTo: job.clientEmail || undefined, subject: `[YBI Proof] ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines })
-      .then(() => fsp.appendFile(LOG_FILE, `[mail] sent to ${notifyEmail}\n`))
-      .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(LOG_FILE, `[mail] FAILED to ${notifyEmail}: ${e.message}\n`); });
-  }
+  await deliverStaffMail({ subject: `[YBI Proof] ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines, replyTo: job.clientEmail || undefined });
+}
+
+// New proof on a job that already has one. The first file (create + V1, or the
+// first upload onto an empty job) is not mailed — that would fire for every new job.
+async function notifyVersionUploaded(req, job, v) {
+  const studioLink = origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`;
+  const lines = [
+    `UPDATED — Job ${job.jobNumber} (V${v.n})`, '',
+    `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
+    `Job: ${job.description}`,
+    `File: ${v.originalName}`,
+    `When: ${new Date(v.uploadedAt).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
+    v.studioNote ? `Note to client:\n${v.studioNote}\n` : '(no note to the client)',
+    `Open in studio: ${studioLink}`
+  ].join('\n');
+  await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
+  await deliverStaffMail({ subject: `[YBI Proof] UPDATED: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines });
 }
 
 // ---------- auth ----------
@@ -778,13 +856,23 @@ async function handle(req, res) {
         const stored = `v${n}-${id(4)}${extOf(orig)}`;
         const size = await streamToFile(req, path.join(FILES, job.id, stored), MAX_PROOF);
         const fresh = await loadJob(job.id);
-        fresh.versions.push({ n, kind, originalName: orig, stored, size, uploadedAt: now(), studioNote: String(u.searchParams.get('note') || '').slice(0, 2000), feedback: [] });
-        await saveJob(fresh); return send(res, 201, studioJob(req, fresh));
+        const priorCount = fresh.versions.length;
+        const version = { n, kind, originalName: orig, stored, size, uploadedAt: now(), studioNote: String(u.searchParams.get('note') || '').slice(0, 2000), feedback: [] };
+        fresh.versions.push(version);
+        await saveJob(fresh);
+        if (priorCount > 0) await notifyVersionUploaded(req, fresh, version);
+        return send(res, 201, studioJob(req, fresh));
       }
     }
     if (p === '/api/settings') {
       if (m === 'GET') { const s = await loadSettings(); return send(res, 200, { ...s, emailEnabled: !!mailer, publicUrl: PUBLIC_URL, basePath: B, defaultAccess: DEFAULT_ACCESS }); }
-      if (m === 'POST') { const b = await readJSON(req); const s = { notifyEmail: String(b.notifyEmail || '').trim() }; await fsp.writeFile(SETTINGS_FILE, JSON.stringify(s, null, 2)); return send(res, 200, { ...s, emailEnabled: !!mailer }); }
+      if (m === 'POST') {
+        const b = await readJSON(req);
+        const notifyEmail = String(b.notifyEmail || '').trim();
+        await fsp.writeFile(SETTINGS_FILE, JSON.stringify({ notifyEmail }, null, 2));
+        const s = await loadSettings();
+        return send(res, 200, { ...s, emailEnabled: !!mailer });
+      }
     }
     return err(res, 404, 'Not found');
   }
@@ -811,11 +899,26 @@ async function handle(req, res) {
   return err(res, 404, 'Not found');
 }
 
-http.createServer((req, res) => {
-  handle(req, res).catch(e => { console.error(e); if (!res.headersSent) err(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, e.message || 'Server error'); else res.end(); });
-}).listen(PORT, HOST, () => {
-  console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · job pages: ${B}/{jobNumber})`);
-  console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
-  console.log(`  Data folder: ${DATA}`);
-  console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}\n`);
-});
+function createAppServer() {
+  return http.createServer((req, res) => {
+    handle(req, res).catch(e => { console.error(e); if (!res.headersSent) err(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, e.message || 'Server error'); else res.end(); });
+  });
+}
+
+if (require.main === module) {
+  createAppServer().listen(PORT, HOST, () => {
+    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · job pages: ${B}/{jobNumber})`);
+    console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
+    console.log(`  Data folder: ${DATA}`);
+    console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}`);
+    loadSettings().then(s => {
+      const list = parseNotifyAddresses(s.notifyEmail);
+      console.log(`  Notify: ${list.join(', ') || '(no valid addresses)'}\n`);
+    }).catch(e => console.error('[mail] could not read recipients:', e.message));
+  });
+}
+
+module.exports = {
+  handle, createAppServer, parseNotifyAddresses, DEFAULT_NOTIFY_EMAIL, DEFAULT_NOTIFY_EMAILS,
+  loadSettings, notifyRecipients, setMailerForTests,
+};
