@@ -19,7 +19,7 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 | Studio | `/proof/studio` | Dashboard (redirects to `/proof` to log in) |
 | Studio | `/proof/studio/30434` | Admin page for job 30434: links, versions, client feedback, upload a new version |
 | Studio | `/proof/studio/calendar` | Private staff calendar. Proof jobs appear on their own, plus deadlines and meetings. Month and week views. Each item can be coloured and reordered within a day |
-| Studio | `/proof/studio/settings` | Notification email and logout |
+| Studio | `/proof/studio/settings` | Notification emails and logout |
 | Files | `/proof/30434/file/v2`, `/proof/30434/file/a<id>` | Proof version / client attachment (same access rules as the page) |
 | Legacy | `/p/<token>` | Redirects to `/proof/{jobNumber}?k=<token>` |
 
@@ -47,7 +47,8 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | `PUBLIC_URL` | *(request host)* | **Origin only** (no path) used to build client links, e.g. `https://www.ybicreative.com.au`. `X-Forwarded-Host/Proto` are honoured if it isn't set. |
 | `STUDIO_PASSWORD` | `ybi-proof` | Studio password. **Change it before going online.** |
 | `DEFAULT_ACCESS` | `private` | Kept for Render config. The app always requires the secure link; it does not honour `public`. |
-| `SMTP_*`, `NOTIFY_EMAIL` | — | Email alerts (see below) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_SECURE` | — | Outbound mail. Alerts stay off until `SMTP_HOST` is set. |
+| `NOTIFY_EMAIL` | drew@, nicola@ and rob@ybicreative.com.au | Default recipient list until Studio → Settings saves one. Commas or semicolons. |
 
 ## Job numbers
 
@@ -69,7 +70,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
 3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout. The dashboard's *Latest client activity* lists every response.
-4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable.
+4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable. Staff on the notification list are emailed about that new version. The first proof on a job does not send that email.
 5. **Edit job** updates the job number, description, client name, business, email and phone, plus the calendar colour and date. Proof files, the secure key, and the order within a day stay. The calendar chip text is the description, so editing that updates the chip. Changing the date clears that day’s order. Changing the job number changes the client link (the key stays the same) — copy the new link and send it. A job number that already belongs to another job is refused.
 6. **Remove proof**, next to a version under *Client feedback & history*, deletes that PDF/JPG/PNG and any client notes, stickies or files that were on it. The job, client link, calendar entry and the other versions stay. Confirm before it goes. If that was the only proof, the job remains ready for a new upload and the client page says the proof is still being prepared. `DELETE /proof/api/jobs/{job number or id}/versions/{n}` is studio-only.
 
@@ -102,7 +103,7 @@ An approved version is locked. A decision made on an out-of-date version is reje
 Every approval or change request:
 1. shows on the **studio dashboard** (activity feed, status, unread dot; the dashboard refreshes every 30 s)
 2. is added to **`data/notifications.log`**
-3. is **emailed** to the address in **Studio → Settings**, *if* SMTP is configured:
+3. is **emailed** to every address in **Studio → Settings**, *if* SMTP is configured:
 
 ```bash
 npm install            # installs nodemailer (the only, optional, dependency)
@@ -110,7 +111,17 @@ SMTP_HOST=smtp.office365.com SMTP_PORT=587 SMTP_USER=proofs@ybicreative.com.au S
 SMTP_FROM='YBI Proofs <proofs@ybicreative.com.au>' node server.js
 ```
 
-You can also set `SMTP_SECURE=true` for port 465, and `NOTIFY_EMAIL` as the default recipient before one is saved in Settings. The email includes the client's note, links to their attachments and a link to the job in the studio. Its reply-to is the client's email.
+You can also set `SMTP_SECURE=true` for port 465. The notification field is a list: separate addresses with commas or semicolons. Invalid addresses are skipped. When Settings has nothing saved, `NOTIFY_EMAIL` is the list (same separators). When that is unset too, alerts go to:
+
+- drew@ybicreative.com.au
+- nicola@ybicreative.com.au
+- rob@ybicreative.com.au
+
+A list saved in Studio → Settings replaces both the built-in addresses and `NOTIFY_EMAIL`. Clear the field and save to go back to that default.
+
+The client email includes the job number, client, the client's note, sticky positions, links to their attachments and a link to the job in the studio. Times are Australia/Melbourne. Its reply-to is the client's email.
+
+Uploading a **new proof version** emails the same people, with the subject `[YBI Proof] UPDATED: {jobNumber} — {client} (V{n})`, only when the job already had a proof. Creating a job and uploading its first file does not send one, and neither does the first upload onto a job that has no versions left. That alert is also written to `data/notifications.log`. It includes the job number, client, file name, studio note, Melbourne time and the studio link.
 
 ## Where things live
 
@@ -121,9 +132,9 @@ ybi-approval/
   data/                # created on first run. Back this folder up.
     jobs/<id>.json     # one file per job: details, token, versions, feedback
     files/<id>/        # proof files (v1-xxxx.pdf, v2-…) and feedback/ (client attachments)
-    settings.json      # notification email
+    settings.json      # notification emails (comma- or semicolon-separated; blank uses the default list)
     calendar-events.json  # staff events, plus each job’s calendar colour, date and day order
-    notifications.log  # plain-text log of every approve / change request
+    notifications.log  # plain-text log of every approve / change request, plus new-version alerts
     secret.key         # signs the studio login cookie
   samples/             # test proofs (scripts/make-samples.py)
   scripts/smoke-test.sh  # API end-to-end test (curl): routes, duplicates, private jobs, full flow
@@ -138,6 +149,7 @@ To start fresh, stop the server and delete `data/`. To remove one job, use **Del
 ```bash
 node server.js &                         # in one terminal
 bash scripts/smoke-test.sh               # API: routes, duplicate refusal, private jobs, JPG approve, PDF changes+file → V2 → approve
+node scripts/notify-recipients.test.js   # default recipient list, comma/semicolon settings, approve + V2 mail
 rm -rf data && node server.js &          # ui-test creates job 30434, so start from empty data
 python3 scripts/ui-test.py               # same flow in a real browser, saves screenshots/
 ```

@@ -733,12 +733,19 @@ async function deleteEvent() {
 
 async function settings() {
   const s = await api(B + '/api/settings');
+  const placeholder = 'drew@ybicreative.com.au, nicola@ybicreative.com.au, rob@ybicreative.com.au';
   app.innerHTML = band('YBI Studio', 'Settings') + `<div class="wrap"><div class="panel" style="margin-top:36px;max-width:760px">
-   <div class="field"><label>Notification email</label><input data-email type="email" value="${esc(s.notifyEmail)}" placeholder="e.g. drew@ybicreative.com.au"></div>
+   <div class="field"><label>Notification emails</label><input data-email type="text" value="${esc(s.notifyEmail)}" placeholder="${placeholder}" autocomplete="off" spellcheck="false"></div>
+   <p class="small mute">Alerts go to these addresses when a client approves or requests changes. Separate more than one with a comma or a semicolon. Addresses that are not valid emails are skipped. The same list is used when a new proof version is uploaded to a job that already has one. Clear the field and save to use the default list.</p>
    <p class="small mute">Email alerts: <b>${s.emailEnabled ? 'ON (SMTP configured)' : 'OFF'}</b>. ${s.emailEnabled ? '' : 'Approvals and change requests still show on the Jobs dashboard and in <code>data/notifications.log</code>. To switch email on, set the SMTP_* variables — see README.'}</p>
    <p class="small mute">Clients only open a proof from the private link on the job (<b>…?k=</b>). A job number on its own does not work.</p>
    <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-save>Save</button><button class="btn btn--sm btn--ghost" data-out>Log out</button></div></div></div>`;
-  $('[data-save]', app).onclick = async () => { await api(B + '/api/settings', { method: 'POST', body: JSON.stringify({ notifyEmail: $('[data-email]', app).value }) }); toast('Saved'); };
+  $('[data-save]', app).onclick = async () => {
+    const saved = await api(B + '/api/settings', { method: 'POST', body: JSON.stringify({ notifyEmail: $('[data-email]', app).value }) });
+    const input = $('[data-email]', app);
+    if (saved && saved.notifyEmail != null) input.value = saved.notifyEmail;
+    toast('Saved');
+  };
   $('[data-out]', app).onclick = async () => { await api(B + '/api/logout', { method: 'POST' }); location.href = B + '/'; };
 }
 
