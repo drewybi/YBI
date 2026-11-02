@@ -1014,8 +1014,6 @@ async function quotePage(rawId) {
             <div class="logo"><img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></div>
             <p class="q-brand__title">Quote<span class="ol">.</span></p>
           </div>
-          <p class="eyebrow">YBI Creative · Bendigo · Australia-wide</p>
-          <p class="q-brand__meta">51 Pratts Park Road, Bendigo VIC 3551 · (03) 5444 2127 · website@ybicreative.com.au</p>
         </div>
       </header>
       <div class="q-body">
