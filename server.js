@@ -951,12 +951,14 @@ async function readQuotesDoc() {
     if (!ok || lines.length !== math.QUOTE_LINES) continue;
     quotes.push({
       id: q.id,
+      token: validQuoteToken(q.token),
       client,
       contactName: String(q.contactName || '').trim().slice(0, 160),
       date: String(q.date),
       description: String(q.description || '').trim().slice(0, 4000),
       validity: q.validity,
       lines,
+      responses: cleanQuoteResponses(q.responses),
       createdAt: typeof q.createdAt === 'string' ? q.createdAt : now(),
       updatedAt: typeof q.updatedAt === 'string' ? q.updatedAt : now()
     });
@@ -1016,6 +1018,50 @@ function publicQuote(q, math) {
     updatedAt: q.updatedAt
   };
 }
+function validQuoteToken(v) {
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{20,80}$/.test(v) ? v : '';
+}
+function cleanQuoteResponses(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const r of list) {
+    if (!r || (r.type !== 'accept' && r.type !== 'changes')) continue;
+    const name = String(r.name || '').trim().slice(0, 120);
+    if (!name) continue;
+    const rid = typeof r.id === 'string' && /^[a-f0-9]{12}$/.test(r.id) ? r.id : id(6);
+    out.push({ id: rid, type: r.type, name, note: String(r.note || '').trim().slice(0, 10000), at: typeof r.at === 'string' ? r.at : now() });
+  }
+  return out.slice(-40);
+}
+function quoteStatus(q) {
+  const list = q.responses || [];
+  if (list.some(r => r.type === 'accept')) return 'accepted';
+  if (list.some(r => r.type === 'changes')) return 'changes';
+  return 'open';
+}
+function publicResponses(q) {
+  return (q.responses || []).map(r => ({ type: r.type, name: r.name, note: r.note || '', at: r.at }));
+}
+function clientQuote(q, math) {
+  const pub = publicQuote(q, math);
+  return {
+    client: pub.client,
+    contactName: pub.contactName,
+    date: pub.date,
+    description: pub.description,
+    validity: pub.validity,
+    lines: pub.lines.filter(line => String(line.description || '').trim() || String(line.qty || '').trim() || String(line.price || '').trim()),
+    subtotal: pub.subtotal,
+    gst: pub.gst,
+    total: pub.total,
+    status: quoteStatus(q),
+    responses: publicResponses(q)
+  };
+}
+function studioQuote(req, q, math) {
+  const pub = publicQuote(q, math);
+  return { ...pub, status: quoteStatus(q), responses: publicResponses(q), clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}` };
+}
 function quoteSummary(full) {
   return {
     id: full.id,
@@ -1024,6 +1070,7 @@ function quoteSummary(full) {
     date: full.date,
     validity: full.validity,
     description: full.description.slice(0, 180),
+    status: full.status,
     subtotal: full.subtotal,
     gst: full.gst,
     total: full.total,
@@ -1031,14 +1078,26 @@ function quoteSummary(full) {
     updatedAt: full.updatedAt
   };
 }
+async function repairQuoteSecrets(doc) {
+  let dirty = false;
+  for (const q of doc.quotes) {
+    if (!q.token) { q.token = token(); dirty = true; }
+    if (!Array.isArray(q.responses)) { q.responses = []; dirty = true; }
+  }
+  if (dirty) await writeQuotesDoc(doc);
+  return doc;
+}
+async function loadQuotes() {
+  return withQuotes(async () => repairQuoteSecrets(await readQuotesDoc()));
+}
 async function handleQuotes(req, res, p, m) {
   const math = await quoteMathReady;
   const r = p.match(/^\/api\/quotes(?:\/([a-f0-9]{16}))?$/);
   if (!r) return err(res, 404, 'Not found');
   const qid = r[1] || '';
   if (!qid && m === 'GET') {
-    const doc = await readQuotesDoc();
-    const quotes = doc.quotes.map(q => quoteSummary(publicQuote(q, math)));
+    const doc = await loadQuotes();
+    const quotes = doc.quotes.map(q => quoteSummary(studioQuote(req, q, math)));
     quotes.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.id).localeCompare(String(a.id)));
     return send(res, 200, { quotes });
   }
@@ -1051,17 +1110,17 @@ async function handleQuotes(req, res, p, m) {
       let nid = id(8);
       while (doc.quotes.some(q => q.id === nid)) nid = id(8);
       const stamp = now();
-      const quote = { id: nid, ...cleaned, createdAt: stamp, updatedAt: stamp };
+      const quote = { id: nid, token: token(), responses: [], ...cleaned, createdAt: stamp, updatedAt: stamp };
       doc.quotes.push(quote);
       await writeQuotesDoc(doc);
       return quote;
     });
-    return send(res, 201, publicQuote(created, math));
+    return send(res, 201, studioQuote(req, created, math));
   }
   if (qid && m === 'GET') {
-    const quote = (await readQuotesDoc()).quotes.find(q => q.id === qid);
+    const quote = (await loadQuotes()).quotes.find(q => q.id === qid);
     if (!quote) return err(res, 404, 'No quote with that id.');
-    return send(res, 200, publicQuote(quote, math));
+    return send(res, 200, studioQuote(req, quote, math));
   }
   if (qid && m === 'PUT') {
     const b = await readJSON(req);
@@ -1078,7 +1137,7 @@ async function handleQuotes(req, res, p, m) {
       return { quote: next };
     });
     if (result.error) return err(res, result.status, result.error);
-    return send(res, 200, publicQuote(result.quote, math));
+    return send(res, 200, studioQuote(req, result.quote, math));
   }
   if (qid && m === 'DELETE') {
     const result = await withQuotes(async () => {
@@ -1091,6 +1150,41 @@ async function handleQuotes(req, res, p, m) {
     });
     if (result.error) return err(res, result.status, result.error);
     return send(res, 200, { ok: true });
+  }
+  return err(res, 405, 'Method not allowed');
+}
+
+async function handlePublicQuote(req, res, qid, action, m, k) {
+  if (tooManyMisses(req)) return err(res, 429, 'Too many attempts — please try again later.');
+  const math = await quoteMathReady;
+  const doc = await loadQuotes();
+  const quote = doc.quotes.find(q => q.id === qid);
+  if (!quote) { miss(req); return err(res, 404, 'We couldn’t find that quote.'); }
+  if (k !== quote.token) { miss(req); return err(res, 403, 'This quote is private — please use the secure link YBI sent you.'); }
+  if (!action && m === 'GET') return send(res, 200, clientQuote(quote, math));
+  if (action === '/decision' && m === 'POST') {
+    const b = await readJSON(req);
+    if (!b || !['accept', 'changes'].includes(b.type)) return err(res, 400, 'Bad action');
+    const name = String(b.name || '').trim().slice(0, 120);
+    const note = String(b.note || '').trim().slice(0, 10000);
+    if (!name) return err(res, 400, 'Please add your name.');
+    if (b.type === 'changes' && !note) return err(res, 400, 'Please describe the changes.');
+    const result = await withQuotes(async () => {
+      const fresh = await readQuotesDoc();
+      const i = fresh.quotes.findIndex(q => q.id === qid);
+      if (i < 0) return { status: 404, error: 'We couldn’t find that quote.' };
+      const current = fresh.quotes[i];
+      if (k !== current.token) return { status: 403, error: 'This quote is private — please use the secure link YBI sent you.' };
+      if (quoteStatus(current) === 'accepted') return { status: 409, error: 'This quote is already confirmed.' };
+      const response = { id: id(6), type: b.type, name, note, at: now() };
+      current.responses = [...(current.responses || []), response];
+      current.updatedAt = response.at;
+      await writeQuotesDoc(fresh);
+      return { quote: current, response };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    await notifyQuote(req, result.quote, result.response);
+    return send(res, 200, clientQuote(result.quote, math));
   }
   return err(res, 405, 'Method not allowed');
 }
@@ -1138,6 +1232,34 @@ async function deliverStaffMail({ subject, text, replyTo }) {
   mailer.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || 'proofs@ybicreative.com.au', to, replyTo: replyTo || undefined, subject, text })
     .then(() => fsp.appendFile(LOG_FILE, `[mail] sent to ${to}\n`))
     .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(LOG_FILE, `[mail] FAILED to ${to}: ${e.message}\n`); });
+}
+
+function audMail(cents) {
+  return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100);
+}
+async function notifyQuote(req, quote, response) {
+  const math = await quoteMathReady;
+  const pub = publicQuote(quote, math);
+  const jobLine = String(quote.description || '').split('\n')[0].trim();
+  const label = response.type === 'accept' ? 'CONFIRMED' : 'CHANGES REQUESTED';
+  const studioLink = origin(req) + `${B}/studio/quote/${quote.id}`;
+  const lines = [
+    `${label} — Quote for ${quote.client}`, '',
+    `Contact: ${quote.contactName || '(none)'}`,
+    `Date: ${quote.date}`,
+    `Job: ${quote.description || '(no description)'}`,
+    `Total (inc GST): ${audMail(pub.total)}`,
+    `By: ${response.name}`,
+    `When: ${new Date(response.at).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
+    response.note ? `Note:\n${response.note}\n` : '(no note)',
+    `Open in studio: ${studioLink}`
+  ].join('\n');
+  await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
+  const subjectJob = jobLine || quote.client;
+  await deliverStaffMail({
+    subject: response.type === 'accept' ? `[YBI Quote] CONFIRMED: ${subjectJob}` : `[YBI Quote] CHANGES: ${subjectJob}`,
+    text: lines
+  });
 }
 
 async function notify(req, job, fb, v) {
@@ -1225,6 +1347,7 @@ async function handle(req, res) {
     if (!isStudio(req)) return back(res, `${B}/?next=${encodeURIComponent(B + p)}`);
     return servePage(req, res, 'studio.html');
   }
+  if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
 
   // auth
   if (p === '/api/login' && m === 'POST') { const b = await readJSON(req); if (b.password === STUDIO_PASSWORD) return send(res, 200, { ok: true }, { 'Set-Cookie': setCookie() }); await new Promise(r => setTimeout(r, 600)); return err(res, 401, 'Wrong password'); }
@@ -1264,6 +1387,8 @@ async function handle(req, res) {
     }
     return err(res, 405, 'Method not allowed');
   }
+
+  if ((r = p.match(/^\/api\/quote\/([a-f0-9]{16})(\/decision)?$/))) return handlePublicQuote(req, res, r[1], r[2] || '', m, k);
 
   // studio API
   if (p.startsWith('/api/')) {

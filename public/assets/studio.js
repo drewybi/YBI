@@ -984,6 +984,11 @@ function paintQuoteTotals(root) {
   $('[data-q-grand]', root).textContent = aud(totals.total);
   return totals;
 }
+function quoteShare(quote) {
+  if (!quote || !quote.clientUrl) return '';
+  const notes = (quote.responses || []).map(r => `<div class="fb fb--${r.type === 'accept' ? 'approve' : 'changes'}"><div class="small dim">${r.type === 'accept' ? 'Accepted' : 'Changes requested'} · ${esc(r.name)} · ${fmtDate(r.at)}</div>${r.note ? `<p>${esc(r.note)}</p>` : ''}</div>`).join('');
+  return `<section class="q-share panel" style="margin-top:28px"><span class="k">Client link</span><p class="small mute" style="margin:6px 0 12px">Send this private link. The client can accept the quote or request changes. Without the key, the page stays closed.</p><div class="linkbox"><input readonly value="${esc(quote.clientUrl)}" aria-label="Client quote link"><button type="button" class="btn btn--sm" data-q-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(quote.clientUrl)}" target="_blank" rel="noopener">Open</a></div>${notes}</section>`;
+}
 async function quotePage(rawId) {
   const id = rawId || '';
   const badId = !!(id && !/^[a-f0-9]{16}$/.test(id));
@@ -1003,9 +1008,10 @@ async function quotePage(rawId) {
     <section class="q-recent">
       <div class="toolbar"><p class="eyebrow" style="margin:0">Recent quotes</p></div>
       <table class="jobs"><thead><tr><th>Client</th><th class="hide-m">Contact</th><th>Date</th><th class="hide-m">Valid</th><th>Total</th><th class="hide-m">Updated</th></tr></thead>
-      <tbody>${quotes.length ? quotes.map(q => `<tr class="row${quote && q.id === quote.id ? ' on' : ''}" data-href="${B}/studio/quote/${q.id}"><td><b>${esc(q.client)}</b>${q.description ? `<div class="small dim">${esc(q.description.slice(0, 80))}${q.description.length > 80 ? '…' : ''}</div>` : ''}</td><td class="hide-m">${esc(q.contactName || '—')}</td><td>${esc(fmtUTC(q.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</td><td class="hide-m">${esc(q.validity)}</td><td class="num">${aud(q.total)}</td><td class="hide-m small dim">${fmtDate(q.updatedAt)}</td></tr>`).join('') : `<tr><td colspan="6" class="empty">No quotes yet. Save one here and the rest of the studio can reopen it.</td></tr>`}</tbody></table>
+      <tbody>${quotes.length ? quotes.map(q => `<tr class="row${quote && q.id === quote.id ? ' on' : ''}" data-href="${B}/studio/quote/${q.id}"><td><b>${esc(q.client)}</b>${q.description ? `<div class="small dim">${esc(q.description.slice(0, 80))}${q.description.length > 80 ? '…' : ''}</div>` : ''}</td><td class="hide-m">${esc(q.contactName || '—')}</td><td>${esc(fmtUTC(q.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</td><td class="hide-m">${esc(q.validity)}</td><td class="num">${aud(q.total)}${q.status && q.status !== 'open' ? `<div class="small dim">${esc(q.status === 'accepted' ? 'Accepted' : 'Changes requested')}</div>` : ''}</td><td class="hide-m small dim">${fmtDate(q.updatedAt)}</td></tr>`).join('') : `<tr><td colspan="6" class="empty">No quotes yet. Save one here and the rest of the studio can reopen it.</td></tr>`}</tbody></table>
     </section>
     ${missing ? '<p class="msg err">No quote with that id.</p>' : ''}
+    ${quoteShare(quote)}
     <form class="panel q-sheet" id="quoteForm" novalidate>
       <header class="q-brand">
         <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
@@ -1045,6 +1051,8 @@ async function quotePage(rawId) {
     </form>
   </div>`;
   const form = $('#quoteForm', app);
+  const copyBtn = $('[data-q-copy]', app);
+  if (copyBtn && quote && quote.clientUrl) copyBtn.onclick = () => copy(quote.clientUrl);
   paintQuoteTotals(form);
   const snapshot = () => JSON.stringify(readQuoteForm(form));
   const savedSnap = snapshot();
