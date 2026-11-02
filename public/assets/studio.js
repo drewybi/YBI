@@ -1007,7 +1007,18 @@ async function quotePage(rawId) {
     </section>
     ${missing ? '<p class="msg err">No quote with that id.</p>' : ''}
     <form class="panel q-sheet" id="quoteForm" novalidate>
-      <div class="q-printhead"><img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI Creative"><p class="h3">Quote</p></div>
+      <header class="q-brand">
+        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
+        <div class="q-brand__in">
+          <div class="q-brand__row">
+            <div class="logo"><img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></div>
+            <p class="q-brand__title">Quote<span class="ol">.</span></p>
+          </div>
+          <p class="eyebrow">YBI Creative · Bendigo · Australia-wide</p>
+          <p class="q-brand__meta">51 Pratts Park Road, Bendigo VIC 3551 · (03) 5444 2127 · website@ybicreative.com.au</p>
+        </div>
+      </header>
+      <div class="q-body">
       <div class="grid2">
         <div class="field"><label for="q-client">Client</label><input id="q-client" name="client" required maxlength="160" autocomplete="organization" value="${esc(quote ? quote.client : '')}" placeholder="Business name"></div>
         <div class="field"><label for="q-contact">Contact name</label><input id="q-contact" name="contactName" maxlength="160" autocomplete="name" value="${esc(quote ? quote.contactName : '')}" placeholder="Who the quote is for"></div>
@@ -1024,6 +1035,15 @@ async function quotePage(rawId) {
       </div>
       <div class="btns q-actions" style="margin-top:26px"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div>
       <p class="msg" id="q-msg"></p>
+      </div>
+      <footer class="q-brandfoot">
+        <div class="q-brandfoot__cols">
+          <div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
+          <div><span class="k">YBI SA</span><address>PO Box 188<br>Williamstown SA 5351<br><a href="tel:+61885246345">(08) 8524 6345</a></address></div>
+          <div><span class="k">Get in touch</span><a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a><a href="https://www.ybicreative.com.au">ybicreative.com.au</a></div>
+        </div>
+        <p class="q-brandfoot__base">Brand Engineering · Bendigo VIC · Williamstown SA</p>
+      </footer>
     </form>
   </div>`;
   const form = $('#quoteForm', app);
