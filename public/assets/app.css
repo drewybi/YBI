@@ -341,6 +341,11 @@ body.is-cal-drag .calev{pointer-events:none}
 
 /* staff quotes */
 .q-sheet{margin:8px 0 48px;scroll-margin-top:calc(var(--hdr) + 12px)}
+.q-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px 28px}
+.q-fields .field--full{grid-column:1/-1}
+.q-fields .field label{margin-bottom:4px;letter-spacing:.14em;font-size:.6rem}
+.q-fields .field input,.q-fields .field textarea,.q-fields .field select{padding:4px 0 6px;font-size:.98rem}
+.q-fields .field textarea{min-height:68px}
 .q-scroll{overflow-x:auto;margin-top:28px}
 .qlines{width:100%;min-width:680px;border-collapse:collapse}
 .qlines th{font:500 .62rem/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--dim);text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
@@ -364,7 +369,11 @@ body.is-cal-drag .calev{pointer-events:none}
   body.is-quote .q-body{padding:6px 8px 0}
   body.is-quote .qlines input,body.is-quote .field input,body.is-quote .field textarea,body.is-quote .field select{background:#fff!important;color:#111!important;-webkit-text-fill-color:#111!important}
   body.is-quote .field label,body.is-quote .qlines th,body.is-quote .q-body .small,body.is-quote .q-body .dim{color:#444!important}
-  body.is-quote .q-scroll{overflow:visible}
+  body.is-quote .q-fields{grid-template-columns:1fr 1fr!important;gap:4px 20px}
+  body.is-quote .q-fields .field label{margin-bottom:1px;letter-spacing:.1em;font-size:.55rem}
+  body.is-quote .q-fields .field input,body.is-quote .q-fields .field textarea,body.is-quote .q-fields .field select{padding:0 0 2px;font-size:.88rem}
+  body.is-quote .q-fields .field textarea{min-height:2.2em}
+  body.is-quote .q-scroll{overflow:visible;margin-top:12px}
   body.is-quote .qlines{min-width:0}
   body.is-quote .q-note,body.is-quote .qlines tr.is-empty{display:none!important}
   body.is-quote .qlines input::placeholder,body.is-quote .field input::placeholder,body.is-quote .field textarea::placeholder{color:transparent!important}

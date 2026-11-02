@@ -1023,7 +1023,7 @@ async function quotePage(rawId) {
         </div>
       </header>
       <div class="q-body">
-      <div class="grid2">
+      <div class="q-fields">
         <div class="field"><label for="q-client">Client</label><input id="q-client" name="client" required maxlength="160" autocomplete="organization" value="${esc(quote ? quote.client : '')}" placeholder="Business name"></div>
         <div class="field"><label for="q-contact">Contact name</label><input id="q-contact" name="contactName" maxlength="160" autocomplete="name" value="${esc(quote ? quote.contactName : '')}" placeholder="Who the quote is for"></div>
         <div class="field"><label for="q-date">Date</label><input id="q-date" name="date" type="date" required min="2000-01-01" max="2100-12-31" value="${esc(dateValue)}"></div>

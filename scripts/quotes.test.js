@@ -109,6 +109,8 @@ const lines = (extra = []) => extra;
     const css = fs.readFileSync(path.join(__dirname, '../public/assets/app.css'), 'utf8');
     assert.ok(/\.q-brand\{[^}]*min-height:0/.test(css));
     assert.ok(/\.q-brand \.logo img\{width:78px/.test(css));
+    assert.ok(css.includes('.q-fields{display:grid;grid-template-columns:1fr 1fr'));
+    assert.ok(css.includes('body.is-quote .q-fields{grid-template-columns:1fr 1fr!important'));
     const noted = await req(server, 'POST', `/api/quote/${q.id}/decision?k=${encodeURIComponent(key)}`, { studio: false, body: { type: 'changes', name: 'Nicola', note: 'Please drop the gloss.' } });
     assert.strictEqual(noted.status, 200);
     assert.strictEqual(noted.json.status, 'changes');
