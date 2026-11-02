@@ -87,7 +87,8 @@ main{flex:1;padding-top:var(--hdr)}
 .field label .opt{color:var(--dim);letter-spacing:.12em}
 .field input,.field textarea,.field select{background:transparent;border:0;border-bottom:1px solid var(--line2);padding:10px 0 12px;font-size:1.04rem;color:var(--ink);border-radius:0}
 .field textarea{min-height:120px;resize:vertical;line-height:1.5}
-.field input:focus,.field textarea:focus{outline:0;border-color:var(--g)}
+.field input:focus,.field textarea:focus,.field select:focus{outline:0;border-color:var(--g)}
+.field select{color-scheme:dark;cursor:pointer}
 .field input::placeholder,.field textarea::placeholder{color:var(--dim)}
 .drop{display:flex;align-items:center;gap:16px;flex-wrap:wrap;border:1px dashed var(--line2);border-radius:14px;padding:18px 20px;cursor:pointer;transition:border-color .3s,background .3s;color:var(--mute)}
 .drop:hover,.drop.is-over{border-color:var(--g);background:rgba(167,169,172,.06)}
@@ -122,7 +123,7 @@ main{flex:1;padding-top:var(--hdr)}
 .jobs{width:100%;border-collapse:collapse}
 .jobs th{font:500 .62rem/1 var(--sans);letter-spacing:.24em;text-transform:uppercase;color:var(--dim);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line)}
 .jobs td{padding:18px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
-.jobs tr.row{cursor:pointer;transition:background .2s}.jobs tr.row:hover{background:var(--bg2)}
+.jobs tr.row{cursor:pointer;transition:background .2s}.jobs tr.row:hover,.jobs tr.row.on{background:var(--bg2)}
 .jobs .num{font-family:var(--display);font-stretch:112%;font-weight:700;letter-spacing:.02em}
 .empty{padding:60px 0;text-align:center;color:var(--dim)}
 .activity{list-style:none;margin:0;padding:0;display:grid;gap:0}
@@ -336,6 +337,38 @@ body.is-cal-drag .calev{pointer-events:none}
   .caldot{display:block}
   .caltitle{font-size:1.05rem}
   .calnav .ibtn{width:34px;height:34px}
+}
+
+/* staff quotes */
+.q-sheet{margin:8px 0 48px;scroll-margin-top:calc(var(--hdr) + 12px)}
+.q-scroll{overflow-x:auto;margin-top:28px}
+.qlines{width:100%;min-width:680px;border-collapse:collapse}
+.qlines th{font:500 .62rem/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--dim);text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
+.qlines td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+.qlines .num{width:2.2rem;color:var(--dim);font:500 .72rem/1 var(--sans)}
+.qlines .qty{width:6.5rem}.qlines .price{width:8rem}.qlines .amt,.qlines th.amt{width:8rem;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.qlines input{width:100%;background:transparent;border:0;border-bottom:1px solid transparent;color:var(--ink);padding:8px 0;border-radius:0}
+.qlines input:focus{outline:0;border-bottom-color:var(--g)}
+.qlines input::placeholder{color:var(--dim)}
+.q-note{margin:14px 0 0;max-width:46em}
+.qtotals{margin-top:18px;margin-left:auto;width:min(380px,100%);display:grid;gap:0}
+.qtotals div{display:flex;justify-content:space-between;gap:18px;align-items:baseline;padding:10px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+.qtotals .grand{border-top-color:var(--line2);font-family:var(--display);font-stretch:112%;font-weight:700;font-size:1.35rem;letter-spacing:.02em;text-transform:uppercase}
+.q-printhead{display:none}
+@media print{
+  body.is-quote{background:#fff!important;color:#111!important}
+  body.is-quote main{padding-top:0}
+  body.is-quote .hdr,body.is-quote .ftr,body.is-quote .eband,body.is-quote .q-recent,body.is-quote .q-actions,body.is-quote .toast,body.is-quote .modal{display:none!important}
+  body.is-quote .q-printhead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
+  body.is-quote .q-printhead img{width:140px;filter:invert(1)}
+  body.is-quote .q-printhead .h3{color:#111}
+  body.is-quote .panel,body.is-quote .qlines input,body.is-quote .field input,body.is-quote .field textarea,body.is-quote .field select{background:#fff!important;color:#111!important;-webkit-text-fill-color:#111!important}
+  body.is-quote .field label,body.is-quote .qlines th,body.is-quote .small,body.is-quote .dim{color:#444!important}
+  body.is-quote .q-scroll{overflow:visible}
+  body.is-quote .qlines{min-width:0}
+  body.is-quote .q-note,body.is-quote .qlines tr.is-empty{display:none!important}
+  body.is-quote .qlines input::placeholder,body.is-quote .field input::placeholder,body.is-quote .field textarea::placeholder{color:transparent!important}
+  body.is-quote .qlines th,body.is-quote .qlines td,body.is-quote .qtotals div{border-color:#ccc}
 }
 
 .entry{display:grid;grid-template-columns:1.2fr 1fr;gap:24px;margin:clamp(40px,8vh,100px) 0 0;align-items:start}
