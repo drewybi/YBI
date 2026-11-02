@@ -25,6 +25,7 @@ const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settin
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
+const MAX_VERSION_FILES = 40;
 
 for (const d of [DATA, JOBS, FILES]) fs.mkdirSync(d, { recursive: true });
 const SECRET_FILE = path.join(DATA, 'secret.key');
@@ -68,6 +69,309 @@ function streamToFile(req, dest, limit) {
     out.on('finish', () => resolve(n));
     out.on('error', reject); req.on('error', reject);
   });
+}
+const httpError = (code, msg) => Object.assign(new Error(msg), { code });
+
+// Old versions are one file: { originalName, stored, kind, size }. A JPG/PNG set
+// keeps those fields for the first image and adds files[] for the whole version.
+function versionPages(v) {
+  if (v && Array.isArray(v.files) && v.files.length) {
+    return v.files.filter(f => f && typeof f.stored === 'string' && f.stored).map(f => ({
+      originalName: f.originalName || v.originalName || 'image',
+      stored: f.stored,
+      size: Number(f.size) || 0
+    }));
+  }
+  if (v && typeof v.stored === 'string' && v.stored) return [{ originalName: v.originalName || 'file', stored: v.stored, size: Number(v.size) || 0 }];
+  return [];
+}
+function versionFileLine(v) {
+  const pages = versionPages(v);
+  if (pages.length <= 1) return `File: ${v.originalName}`;
+  return `Files (${pages.length}): ${pages.map(f => f.originalName).join(', ')}`;
+}
+function checkProofSet(files) {
+  if (!files.length) return { error: 'Choose a PDF, or one or more JPG or PNG files.', status: 400 };
+  if (files.length > MAX_VERSION_FILES) return { error: `A version can include up to ${MAX_VERSION_FILES} images.`, status: 400 };
+  const kinds = files.map(f => PROOF_TYPES[extOf(f.originalName)] || null);
+  if (kinds.some(k => !k)) return { error: 'Proofs must be PDF, JPG or PNG.', status: 415 };
+  if (kinds.some(k => k === 'pdf') && files.length > 1) return { error: 'A PDF is one file per version. Upload it on its own, or upload JPG and PNG files together.', status: 400 };
+  const total = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
+  if (files.some(f => f.size > MAX_PROOF) || total > MAX_PROOF) return { error: 'A version can be up to 300 MB.', status: 413 };
+  return { kind: kinds[0] };
+}
+function filenameFromHeaders(headerText) {
+  const cd = headerText.split(/\r\n/).find(l => /^content-disposition:/i.test(l)) || '';
+  const star = /filename\*\s*=\s*UTF-8''([^;\r\n]+)/i.exec(cd);
+  if (star) { try { return decodeURIComponent(star[1].trim().replace(/^"|"$/g, '')); } catch { /* quoted filename */ } }
+  const quoted = /filename\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(cd);
+  if (quoted) return quoted[1].replace(/\\"/g, '"');
+  const plain = /filename\s*=\s*([^;\r\n]+)/i.exec(cd);
+  return plain ? plain[1].trim().replace(/^"|"$/g, '') : '';
+}
+// One request, several files, streamed to disk. Parts without a filename are ignored.
+function readMultipartFiles(req, destDir, { maxFiles, maxEach, maxTotal }) {
+  const bm = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(req.headers['content-type'] || ''));
+  const boundary = bm && (bm[1] || bm[2] || '').trim();
+  if (!boundary || boundary.length > 200) return Promise.reject(httpError(400, 'Upload was not a valid form.'));
+  const opener = Buffer.from('--' + boundary);
+  const delim = Buffer.from('\r\n--' + boundary);
+  return new Promise((resolve, reject) => {
+    let buf = Buffer.alloc(0), mode = 'seek', current = null, out = null, fileBytes = 0, total = 0, received = 0, paused = false, settled = false, ended = false;
+    const files = [];
+    const drop = async () => {
+      const paths = files.map(f => f.storedPath);
+      if (current) paths.push(current.storedPath);
+      await Promise.all(paths.map(p => fsp.rm(p, { force: true })));
+    };
+    const fail = err => {
+      if (settled) return;
+      settled = true;
+      if (out) out.destroy();
+      try { req.destroy(); } catch { /* already closed */ }
+      drop().then(() => reject(err.code ? err : httpError(400, err.message || 'Upload failed')), () => reject(err));
+    };
+    const finish = () => { if (settled) return; settled = true; req.resume(); resolve(files); };
+    const writeChunk = chunk => {
+      if (!chunk.length || !out) return;
+      fileBytes += chunk.length; total += chunk.length;
+      if (fileBytes > maxEach || total > maxTotal) throw httpError(413, 'A version can be up to 300 MB.');
+      if (!out.write(Buffer.from(chunk)) && !paused) {
+        paused = true; req.pause();
+        out.once('drain', () => { paused = false; if (!settled) req.resume(); });
+      }
+    };
+    const openFile = name => {
+      if (files.length >= maxFiles) throw httpError(400, `A version can include up to ${maxFiles} images.`);
+      const originalName = safeName(name);
+      const storedPath = path.join(destDir, `incoming-${id(6)}${extOf(originalName)}`);
+      current = { originalName, storedPath };
+      fileBytes = 0;
+      out = fs.createWriteStream(storedPath);
+      out.on('error', fail);
+    };
+    const closeFile = () => {
+      const stream = out, rec = current;
+      out = null; current = null; mode = 'closing';
+      rec.size = fileBytes;
+      files.push(rec);
+      req.pause();
+      stream.end(() => {
+        if (settled) return;
+        mode = 'after';
+        req.resume();
+        process();
+        // 'end' can arrive while the file is still flushing. Fail only once that file is closed and nothing finished the form.
+        if (!settled && ended && mode !== 'closing') fail(httpError(400, 'Upload ended early.'));
+      });
+    };
+    function process() {
+      try {
+        while (!settled && mode !== 'closing') {
+          if (mode === 'seek') {
+            const i = buf.indexOf(opener);
+            if (i < 0) { if (buf.length > opener.length) buf = buf.subarray(buf.length - opener.length + 1); return; }
+            buf = buf.subarray(i + opener.length); mode = 'after';
+          }
+          if (mode === 'after') {
+            if (buf.length < 2) return;
+            if (buf[0] === 45 && buf[1] === 45) return finish();
+            if (buf[0] !== 13 || buf[1] !== 10) throw httpError(400, 'Upload was not a valid form.');
+            buf = buf.subarray(2); mode = 'headers';
+          }
+          if (mode === 'headers') {
+            const end = buf.indexOf('\r\n\r\n');
+            if (end < 0) { if (buf.length > 16384) throw httpError(400, 'Upload was not a valid form.'); return; }
+            const filename = filenameFromHeaders(buf.subarray(0, end).toString('utf8'));
+            buf = buf.subarray(end + 4);
+            if (filename) { openFile(filename); mode = 'body'; }
+            else mode = 'skip';
+          }
+          if (mode === 'body' || mode === 'skip') {
+            const i = buf.indexOf(delim);
+            if (i < 0) {
+              const keep = delim.length - 1;
+              if (buf.length > keep) {
+                const chunk = buf.subarray(0, buf.length - keep);
+                buf = buf.subarray(buf.length - keep);
+                if (mode === 'body') writeChunk(chunk);
+              }
+              return;
+            }
+            if (mode === 'body') writeChunk(buf.subarray(0, i));
+            buf = buf.subarray(i + delim.length);
+            if (mode === 'body') return closeFile();
+            mode = 'after';
+          }
+        }
+      } catch (e) { fail(e); }
+    }
+    req.on('data', c => {
+      if (settled) return;
+      received += c.length;
+      if (received > maxTotal + 1024 * 1024) return fail(httpError(413, 'A version can be up to 300 MB.'));
+      buf = Buffer.concat([buf, c]);
+      if (mode !== 'closing') process();
+    });
+    req.on('end', () => { ended = true; if (!settled && mode !== 'closing') fail(httpError(400, 'Upload ended early.')); });
+    req.on('error', fail);
+    req.on('aborted', () => fail(httpError(400, 'Upload ended early.')));
+  });
+}
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(buf, seed = 0) {
+  let c = (seed ^ 0xffffffff) >>> 0;
+  for (let i = 0; i < buf.length; i++) c = (CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8)) >>> 0;
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zipEntryName(name, used) {
+  let base = safeName(name).replace(/[\\/]/g, '') || 'image';
+  const ext = extOf(base) || extOf(name);
+  if (ext && !base.toLowerCase().endsWith(ext)) base += ext;
+  const stem = ext && base.toLowerCase().endsWith(ext) ? base.slice(0, -ext.length) : base;
+  let n = base, i = 2;
+  while (used.has(n.toLowerCase())) { n = `${stem}-${i}${ext}`; i++; }
+  used.add(n.toLowerCase());
+  return n;
+}
+function crcFile(filePath) {
+  return new Promise((resolve, reject) => {
+    let c = 0, size = 0;
+    const rs = fs.createReadStream(filePath);
+    rs.on('data', chunk => { c = crc32(chunk, c); size += chunk.length; });
+    rs.on('end', () => resolve({ crc: c, size }));
+    rs.on('error', reject);
+  });
+}
+function writeOut(res, buf) {
+  return new Promise((resolve, reject) => {
+    res.write(buf, err => err ? reject(err) : resolve());
+  });
+}
+function pipeFile(res, filePath) {
+  return new Promise((resolve, reject) => {
+    const rs = fs.createReadStream(filePath);
+    const done = err => { rs.removeListener('error', done); res.removeListener('error', done); err ? reject(err) : resolve(); };
+    rs.on('error', done); res.on('error', done);
+    rs.on('end', () => done());
+    rs.pipe(res, { end: false });
+  });
+}
+async function sendZip(req, res, filename, entries) {
+  const used = new Set();
+  const d = new Date();
+  const dosTime = ((d.getHours() & 31) << 11) | ((d.getMinutes() & 63) << 5) | ((d.getSeconds() >> 1) & 31);
+  const dosDate = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | (((d.getMonth() + 1) & 15) << 5) | (d.getDate() & 31);
+  const files = [];
+  for (const e of entries) {
+    const name = Buffer.from(zipEntryName(e.name, used), 'utf8');
+    const meta = req.method === 'HEAD' ? { crc: 0, size: (await fsp.stat(e.filePath)).size } : await crcFile(e.filePath);
+    files.push({ name, filePath: e.filePath, crc: meta.crc >>> 0, size: meta.size });
+  }
+  let total = 22;
+  for (const f of files) total += 30 + f.name.length + f.size + 46 + f.name.length;
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${String(filename).replace(/"/g, '')}"`,
+    'Content-Length': total,
+    'Cache-Control': 'private, max-age=300',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  if (req.method === 'HEAD') return res.end();
+  const locals = [];
+  let offset = 0;
+  for (const f of files) {
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(f.crc, 14);
+    local.writeUInt32LE(f.size, 18);
+    local.writeUInt32LE(f.size, 22);
+    local.writeUInt16LE(f.name.length, 26);
+    local.writeUInt16LE(0, 28);
+    locals.push(offset);
+    await writeOut(res, local);
+    await writeOut(res, f.name);
+    await pipeFile(res, f.filePath);
+    offset += 30 + f.name.length + f.size;
+  }
+  const cdStart = offset;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(20, 4);
+    cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(0x0800, 8);
+    cd.writeUInt16LE(0, 10);
+    cd.writeUInt16LE(dosTime, 12);
+    cd.writeUInt16LE(dosDate, 14);
+    cd.writeUInt32LE(f.crc, 16);
+    cd.writeUInt32LE(f.size, 20);
+    cd.writeUInt32LE(f.size, 24);
+    cd.writeUInt16LE(f.name.length, 28);
+    cd.writeUInt16LE(0, 30);
+    cd.writeUInt16LE(0, 32);
+    cd.writeUInt16LE(0, 34);
+    cd.writeUInt16LE(0, 36);
+    cd.writeUInt32LE(0, 38);
+    cd.writeUInt32LE(locals[i], 42);
+    await writeOut(res, cd);
+    await writeOut(res, f.name);
+    offset += 46 + f.name.length;
+  }
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(files.length, 8);
+  eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(offset - cdStart, 12);
+  eocd.writeUInt32LE(cdStart, 16);
+  res.end(eocd);
+}
+async function addUploadedVersion(req, res, job, note, incoming) {
+  const check = checkProofSet(incoming);
+  if (check.error) {
+    await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
+    return err(res, check.status, check.error);
+  }
+  const fresh = await loadJob(job.id);
+  if (!fresh) {
+    await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
+    return err(res, 404, 'No job with that number.');
+  }
+  const n = (fresh.versions.length ? fresh.versions[fresh.versions.length - 1].n : 0) + 1;
+  const dir = path.join(FILES, fresh.id);
+  const committed = [];
+  const version = { n, kind: check.kind, originalName: incoming[0].originalName, stored: '', size: 0, uploadedAt: now(), studioNote: note, feedback: [] };
+  try {
+    for (const f of incoming) {
+      const stored = `v${n}-${id(4)}${extOf(f.originalName)}`;
+      const dest = path.join(dir, stored);
+      await fsp.rename(f.storedPath, dest);
+      committed.push({ originalName: f.originalName, stored, size: f.size, dest });
+    }
+    version.originalName = committed[0].originalName;
+    version.stored = committed[0].stored;
+    version.size = committed.reduce((s, f) => s + f.size, 0);
+    if (committed.length > 1) version.files = committed.map(f => ({ originalName: f.originalName, stored: f.stored, size: f.size }));
+    fresh.versions.push(version);
+    await saveJob(fresh);
+  } catch (e) {
+    await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
+    await Promise.all(committed.map(f => fsp.rm(f.dest, { force: true })));
+    throw e;
+  }
+  if (fresh.versions.length > 1) await notifyVersionUploaded(req, fresh, version);
+  return send(res, 201, studioJob(req, fresh));
 }
 
 // ---------- storage ----------
@@ -119,10 +423,14 @@ function syncUnread(job) {
 }
 async function removeVersionFiles(job, version) {
   const root = path.resolve(FILES, job.id);
-  const rels = [version && version.stored];
+  const rels = [];
+  if (version && version.stored) rels.push(version.stored);
+  for (const f of versionPages(version)) rels.push(f.stored);
   for (const f of (version && version.feedback) || []) for (const a of f.attachments || []) rels.push(a && a.stored);
+  const seen = new Set();
   for (const rel of rels) {
-    if (!rel || typeof rel !== 'string') continue;
+    if (!rel || typeof rel !== 'string' || seen.has(rel)) continue;
+    seen.add(rel);
     const file = path.resolve(root, rel);
     if (file !== root && file.startsWith(root + path.sep)) await fsp.rm(file, { force: true });
   }
@@ -596,14 +904,24 @@ const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http
 const numPath = job => `${B}/${encodeURIComponent(job.jobNumber)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
 function secureUrl(req, job) { return `${origin(req)}${numPath(job)}?k=${job.token}`; }
+function publicVersion(job, v, q) {
+  const pages = versionPages(v);
+  const multi = v.kind === 'image' && pages.length > 1;
+  const base = `${numPath(job)}/file/v${v.n}`;
+  return {
+    n: v.n, kind: v.kind, originalName: v.originalName, size: v.size, uploadedAt: v.uploadedAt, studioNote: v.studioNote || '',
+    url: `${base}${q}`,
+    ...(multi ? { downloadAll: `${base}/zip${q}` } : {}),
+    files: pages.map((f, i) => ({ name: f.originalName, size: f.size, url: multi ? `${base}/${i + 1}${q}` : `${base}${q}` })),
+    feedback: (v.feedback || []).map(f => ({ id: f.id, type: f.type, name: f.name, note: f.note, at: f.at, stickies: (f.stickies || []).map(s => ({ n: s.n, page: s.page, x: s.x, y: s.y, text: s.text })), attachments: (f.attachments || []).map(a => ({ name: a.originalName, size: a.size, url: `${numPath(job)}/file/a${a.id}${q}` })) }))
+  };
+}
 function publicJob(job, k) {
   const q = k ? `?k=${encodeURIComponent(k)}` : '';
   return {
     jobNumber: job.jobNumber, description: job.description, clientName: job.clientName, clientCompany: job.clientCompany,
     status: status(job), createdAt: job.createdAt,
-    versions: job.versions.map(v => ({ n: v.n, kind: v.kind, originalName: v.originalName, size: v.size, uploadedAt: v.uploadedAt, studioNote: v.studioNote || '',
-      url: `${numPath(job)}/file/v${v.n}${q}`,
-      feedback: v.feedback.map(f => ({ id: f.id, type: f.type, name: f.name, note: f.note, at: f.at, stickies: (f.stickies || []).map(s => ({ n: s.n, page: s.page, x: s.x, y: s.y, text: s.text })), attachments: f.attachments.map(a => ({ name: a.originalName, size: a.size, url: `${numPath(job)}/file/a${a.id}${q}` })) })) }))
+    versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
 function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null }; }
@@ -651,7 +969,7 @@ async function notifyVersionUploaded(req, job, v) {
     `UPDATED — Job ${job.jobNumber} (V${v.n})`, '',
     `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
     `Job: ${job.description}`,
-    `File: ${v.originalName}`,
+    versionFileLine(v),
     `When: ${new Date(v.uploadedAt).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
     v.studioNote ? `Note to client:\n${v.studioNote}\n` : '(no note to the client)',
     `Open in studio: ${studioLink}`
@@ -779,13 +1097,20 @@ async function handle(req, res) {
       const v = job.versions.find(x => x.n === +u.searchParams.get('v'));
       const fb = v && v.feedback.find(f => f.id === u.searchParams.get('f') && f.type === 'changes');
       if (!v || !fb || !(fb.stickies || []).length) return err(res, 404, 'No marked-up changes on that version.');
+      const meta = { jobNumber: job.jobNumber, version: v.n, clientName: job.clientName, requester: fb.name, note: fb.note, feedbackId: fb.id };
+      const pages = versionPages(v);
       let pdf;
       try {
-        pdf = await buildChangesPdf({
-          kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
-          stickies: fb.stickies,
-          meta: { jobNumber: job.jobNumber, version: v.n, clientName: job.clientName, requester: fb.name, note: fb.note, feedbackId: fb.id }
-        });
+        if (v.kind === 'image' && pages.length > 1) {
+          const images = [];
+          for (const f of pages) images.push({ bytes: await fsp.readFile(path.join(FILES, job.id, f.stored)), ext: extOf(f.stored) });
+          pdf = await buildChangesPdf({ kind: 'image', images, stickies: fb.stickies, meta });
+        } else {
+          pdf = await buildChangesPdf({
+            kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
+            stickies: fb.stickies, meta
+          });
+        }
       } catch (e) { console.error('[changes.pdf]', e); return err(res, 500, 'Could not build the changes PDF.'); }
       const fname = `YBI-${safeName(job.jobNumber)}-V${v.n}-changes.pdf`;
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -850,18 +1175,26 @@ async function handle(req, res) {
       }
       if (r[2] === '/versions' && m === 'DELETE') return err(res, 404, 'Include the version number to remove.');
       if (r[2] && m === 'POST') {
-        const orig = safeName(u.searchParams.get('name')); const kind = PROOF_TYPES[extOf(orig)];
-        if (!kind) return err(res, 415, 'Proofs must be PDF, JPG or PNG.');
-        const n = (job.versions.length ? job.versions[job.versions.length - 1].n : 0) + 1;
-        const stored = `v${n}-${id(4)}${extOf(orig)}`;
-        const size = await streamToFile(req, path.join(FILES, job.id, stored), MAX_PROOF);
-        const fresh = await loadJob(job.id);
-        const priorCount = fresh.versions.length;
-        const version = { n, kind, originalName: orig, stored, size, uploadedAt: now(), studioNote: String(u.searchParams.get('note') || '').slice(0, 2000), feedback: [] };
-        fresh.versions.push(version);
-        await saveJob(fresh);
-        if (priorCount > 0) await notifyVersionUploaded(req, fresh, version);
-        return send(res, 201, studioJob(req, fresh));
+        const note = String(u.searchParams.get('note') || '').slice(0, 2000);
+        const dir = path.join(FILES, job.id);
+        await fsp.mkdir(dir, { recursive: true });
+        const multipart = /^multipart\/form-data\b/i.test(String(req.headers['content-type'] || ''));
+        if (!multipart) {
+          const orig = safeName(u.searchParams.get('name'));
+          if (!PROOF_TYPES[extOf(orig)]) return err(res, 415, 'Proofs must be PDF, JPG or PNG.');
+          const storedPath = path.join(dir, `incoming-${id(6)}${extOf(orig)}`);
+          let size;
+          try { size = await streamToFile(req, storedPath, MAX_PROOF); }
+          catch (e) { await fsp.rm(storedPath, { force: true }); throw e; }
+          return addUploadedVersion(req, res, job, note, [{ originalName: orig, storedPath, size }]);
+        }
+        let incoming;
+        try { incoming = await readMultipartFiles(req, dir, { maxFiles: MAX_VERSION_FILES, maxEach: MAX_PROOF, maxTotal: MAX_PROOF }); }
+        catch (e) {
+          if (e.code === 400 || e.code === 413 || e.code === 415) return err(res, e.code, e.message);
+          throw e;
+        }
+        return addUploadedVersion(req, res, job, note, incoming);
       }
     }
     if (p === '/api/settings') {
@@ -881,16 +1214,45 @@ async function handle(req, res) {
   if ((m === 'GET' || m === 'HEAD') && (p.startsWith('/assets/') || p.startsWith('/vendor/'))) return serveStatic(req, res, p);
   if (p === '/favicon.ico') return serveStatic(req, res, '/assets/img/favicon.ico');
 
-  // proof + attachment files:  /{jobNumber}/file/v{n}  |  /{jobNumber}/file/a{id}
-  if ((r = p.match(/^\/([^/]+)\/file\/(v|a)(\w+)$/)) && (m === 'GET' || m === 'HEAD')) {
+  // proof + attachment files:  /{jobNumber}/file/v{n}  |  /{jobNumber}/file/v{n}/{page}  |  /{jobNumber}/file/v{n}/zip  |  /{jobNumber}/file/a{id}
+  if ((r = p.match(/^\/([^/]+)\/file\/(v|a)(\w+)(?:\/([A-Za-z0-9]+))?$/)) && (m === 'GET' || m === 'HEAD')) {
     const job = await jobByNumber(r[1]);
     if (!job || !(canView(job, k) || isStudio(req))) { miss(req); return err(res, 404, 'Not found'); }
-    let rec;
-    if (r[2] === 'v') rec = job.versions.find(v => v.n === +r[3]);
-    else for (const v of job.versions) for (const f of v.feedback) for (const a of f.attachments) if (a.id === r[3]) rec = a;
-    if (!rec) return err(res, 404, 'Not found');
-    const name = rec.originalName; const inline = /\.(pdf|png|jpe?g|webp|gif)$/i.test(name) && !u.searchParams.has('download');
-    return serveFile(req, res, path.join(FILES, job.id, rec.stored), { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=300' });
+    if (r[2] === 'a') {
+      if (r[4]) return err(res, 404, 'Not found');
+      let rec;
+      for (const v of job.versions) for (const f of v.feedback) for (const a of f.attachments) if (a.id === r[3]) rec = a;
+      if (!rec) return err(res, 404, 'Not found');
+      const name = rec.originalName; const inline = /\.(pdf|png|jpe?g|webp|gif)$/i.test(name) && !u.searchParams.has('download');
+      return serveFile(req, res, path.join(FILES, job.id, rec.stored), { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=300' });
+    }
+    if (!/^\d+$/.test(r[3])) return err(res, 404, 'Not found');
+    const version = job.versions.find(v => v.n === +r[3]);
+    const pages = versionPages(version);
+    if (!version || !pages.length) return err(res, 404, 'Not found');
+    const part = r[4] || '';
+    if (part === 'zip') {
+      if (!(version.kind === 'image' && pages.length > 1)) return err(res, 404, 'Not found');
+      const root = path.resolve(FILES, job.id);
+      const entries = [];
+      for (const f of pages) {
+        const filePath = path.resolve(root, f.stored);
+        if (filePath !== root && filePath.startsWith(root + path.sep)) entries.push({ name: f.originalName, filePath });
+      }
+      if (entries.length !== pages.length) return err(res, 404, 'Not found');
+      return sendZip(req, res, `YBI-${safeName(job.jobNumber)}-V${version.n}.zip`, entries);
+    }
+    let file = pages[0];
+    if (part) {
+      if (!/^[1-9]\d*$/.test(part) || +part > pages.length) return err(res, 404, 'Not found');
+      file = pages[+part - 1];
+    }
+    const safe = String(file.originalName || 'file').replace(/"/g, '');
+    const inline = /\.(pdf|png|jpe?g|webp|gif)$/i.test(safe) && !u.searchParams.has('download');
+    const filePath = path.resolve(FILES, job.id, file.stored);
+    const root = path.resolve(FILES, job.id);
+    if (filePath === root || !filePath.startsWith(root + path.sep)) return err(res, 404, 'Not found');
+    return serveFile(req, res, filePath, { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safe}"`, 'Cache-Control': 'private, max-age=300' });
   }
 
   // client review page:  /{jobNumber}
@@ -920,5 +1282,5 @@ if (require.main === module) {
 
 module.exports = {
   handle, createAppServer, parseNotifyAddresses, DEFAULT_NOTIFY_EMAIL, DEFAULT_NOTIFY_EMAILS,
-  loadSettings, notifyRecipients, setMailerForTests,
+  loadSettings, notifyRecipients, setMailerForTests, readMultipartFiles,
 };

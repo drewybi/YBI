@@ -43,7 +43,8 @@ function render() {
      ${!isLatest ? `<div class="banner">You’re viewing an earlier version (V${v.n}). <button class="lnk" data-latest style="color:var(--warn)">View latest V${latest.n}</button></div>` : ''}
      ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
      <div data-viewer></div>
-     <p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. Use ‹ › or the arrow keys to flip pages. Colours on screen may vary slightly from print.</p>
+     ${v.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(v.downloadAll)}">Download all</a><span class="small dim">${v.files.length} images · ${fmtSize(v.size)}</span></div>` : ''}
+     <p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;
@@ -58,7 +59,7 @@ function render() {
     onSelect: id => { activeSticky = placing ? id : activeSticky; markNotes(id); },
     onText: text => setStickyText(activeSticky, text),
     onRemove: () => activeSticky && removeSticky(activeSticky)
-  }).then(api => { viewerApi = api; if (!placing && isLatest) wireSaved(api, v); }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Couldn’t display this file — <a href="${v.url}">download it</a> instead.</div>`);
+  }).then(api => { viewerApi = api; if (!placing && isLatest) wireSaved(api, v); }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Couldn’t display this file — <a href="${esc(v.downloadAll || v.url)}">download it</a> instead.</div>`);
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => { showN = +vs.value; render(); };
   const vl = $('[data-latest]', app); if (vl) vl.onclick = () => { showN = null; render(); };
   bindPanel(latest);
@@ -98,7 +99,7 @@ function history() {
   const all = job.versions.flatMap(v => v.feedback.map(f => ({ v, f }))).reverse();
   if (!all.length && job.versions.length < 2) return '';
   return `<div class="panel"><p class="eyebrow" style="margin-bottom:6px">History</p>
-   ${[...job.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag" style="font-size:1rem">V${v.n}</span><span class="small dim">${fmtDate(v.uploadedAt)}</span></div>
+   ${[...job.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag" style="font-size:1rem">V${v.n}</span><span class="small dim">${v.files && v.files.length > 1 ? `${v.files.length} images · ` : ''}${fmtDate(v.uploadedAt)}</span></div>
     ${v.feedback.map(f => `<p class="small mute" style="margin:8px 0 0">${f.type === 'approve' ? '✓ Approved' : '✎ Changes'} by ${esc(f.name)} · ${fmtDate(f.at)}${f.stickies?.length ? ` · ${f.stickies.length} note${f.stickies.length > 1 ? 's' : ''} on the proof` : ''}${f.attachments.length ? ` · ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}` : ''}</p>`).join('')}</div>`).join('')}</div>`;
 }
 

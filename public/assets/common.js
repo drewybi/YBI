@@ -25,6 +25,19 @@ export function upload(url, file, onProgress) {
     x.send(file);
   });
 }
+// Several proof images in one request. The browser sets the multipart boundary.
+export function uploadFiles(url, files, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    for (const file of files) fd.append('file', file, file.name);
+    const x = new XMLHttpRequest();
+    x.open('POST', url);
+    x.upload.onprogress = e => e.lengthComputable && onProgress && onProgress(e.loaded / e.total);
+    x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch {} x.status < 300 ? resolve(j) : reject(new Error((j && j.error) || 'Upload failed')); };
+    x.onerror = () => reject(new Error('Network error during upload'));
+    x.send(fd);
+  });
+}
 let tt; export function toast(t) { let el = $('.toast'); if (!el) { el = document.createElement('div'); el.className = 'toast'; document.body.append(el); } el.textContent = t; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2400); }
 export async function copy(text) { try { await navigator.clipboard.writeText(text); } catch { const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select(); document.execCommand('copy'); t.remove(); } toast('Link copied'); }
 
@@ -51,7 +64,8 @@ export function engineBand(inner) {
   </section>`;
 }
 
-// Proof viewer. version = { kind:'pdf'|'image', url, originalName }
+// Proof viewer. version = { kind:'pdf'|'image', url, originalName, files?, downloadAll? }
+// Several JPG/PNG files in one version are pages: files = [{ name, url }].
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
@@ -61,17 +75,20 @@ export function pinsFrom(f) {
 export async function mountViewer(root, version, opts = {}) {
   if (window.__ybiViewerClean) window.__ybiViewerClean();
   const fileUrl = version.url;
-  const dl = fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
+  const imageFiles = version.kind === 'image' && Array.isArray(version.files) ? version.files.filter(f => f && f.url) : [];
+  const multiImage = imageFiles.length > 1;
+  const dl = multiImage && version.downloadAll ? version.downloadAll : fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
+  const dlLabel = multiImage ? 'Download all' : 'Download file';
   root.innerHTML = `<div class="viewer" data-viewer-root>
     <div class="viewer__bar">
       <div class="grp"><button class="ibtn" type="button" data-prev aria-label="Previous page">‹</button><span class="pg" data-pg>—</span><button class="ibtn" type="button" data-next aria-label="Next page">›</button></div>
-      <div class="grp"><span class="small dim" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(version.originalName)}</span><span class="pin-hint" data-hint hidden>Click or tap the proof to mark a change</span></div>
+      <div class="grp"><span class="small dim" data-name style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(multiImage ? imageFiles[0].name : version.originalName)}</span><span class="pin-hint" data-hint hidden>Click or tap the proof to mark a change</span></div>
       <div class="grp">
         <button class="ibtn" type="button" data-zout aria-label="Zoom out" title="Zoom out">−</button>
         <button class="ibtn" type="button" data-zin aria-label="Zoom in" title="Zoom in">+</button>
         <button class="ibtn" type="button" data-expand aria-pressed="false" aria-label="Full screen" title="Full screen">⤢</button>
-        <a class="ibtn" href="${dl}" aria-label="Download" title="Download file" style="text-decoration:none">↓</a>
-        <a class="ibtn" href="${fileUrl}" target="_blank" rel="noopener" aria-label="Open in new tab" title="Open in new tab" style="text-decoration:none">↗</a>
+        <a class="ibtn" data-dl href="${esc(dl)}" aria-label="${dlLabel}" title="${dlLabel}" style="text-decoration:none">↓</a>
+        <a class="ibtn" data-open href="${esc(fileUrl)}" target="_blank" rel="noopener" aria-label="Open in new tab" title="Open in new tab" style="text-decoration:none">↗</a>
       </div>
     </div>
     <div class="stage" data-stage><span class="loading">Loading proof…</span></div>
@@ -81,7 +98,10 @@ export async function mountViewer(root, version, opts = {}) {
   const prev = $('[data-prev]', root), next = $('[data-next]', root), thumbs = $('[data-thumbs]', root);
   const expandBtn = $('[data-expand]', root), zin = $('[data-zin]', root), zout = $('[data-zout]', root);
   const hint = $('[data-hint]', root), dock = $('[data-dock]', root), dockText = $('[data-dock-text]', root), dockN = $('[data-dock-n]', root);
+  const nameEl = $('[data-name]', root), openEl = $('[data-open]', root);
   let zoomLevel = 0, expanded = false, render = null, page = 1, n = 1, lastKey = '';
+  let turn = async () => {};
+  let touchX = 0, touchY = 0, touchOn = false, swallowClick = false;
   let pins = (opts.pins || []).slice(), active = opts.active || null;
   const placing = !!opts.place;
 
@@ -132,6 +152,19 @@ export async function mountViewer(root, version, opts = {}) {
     if (e.key === 'ArrowLeft') prev.click();
     if (e.key === 'ArrowRight') next.click();
   });
+  stage.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || zoomLevel > 0 || n < 2) { touchOn = false; return; }
+    touchX = e.touches[0].clientX; touchY = e.touches[0].clientY; touchOn = true;
+  }, { passive: true });
+  stage.addEventListener('touchend', e => {
+    if (!touchOn) return;
+    touchOn = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchX, dy = t.clientY - touchY;
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    swallowClick = true;
+    if (dx < 0) next.click(); else prev.click();
+  }, { passive: true });
 
   const availBox = () => {
     const cs = getComputedStyle(stage);
@@ -199,6 +232,7 @@ export async function mountViewer(root, version, opts = {}) {
     sheet.className = 'sheet'; sheet.dataset.sheet = '';
     sheet.classList.toggle('is-place', placing);
     sheet.addEventListener('click', e => {
+      if (swallowClick) { swallowClick = false; return; }
       if (!placing || e.target.closest('.pin')) return;
       const r = sheet.getBoundingClientRect();
       const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
@@ -213,9 +247,8 @@ export async function mountViewer(root, version, opts = {}) {
   async function select(id) {
     active = id;
     const p = pins.find(x => x.id === id);
-    if (p && (p.page || 1) !== page && version.kind === 'pdf' && p.page >= 1 && p.page <= n) {
-      page = p.page; lastKey = ''; await render();
-    } else layoutPins();
+    if (p && (p.page || 1) !== page && p.page >= 1 && p.page <= n) await turn(p.page);
+    else layoutPins();
     focusPin(id);
     opts.onSelect && opts.onSelect(id);
   }
@@ -231,10 +264,12 @@ export async function mountViewer(root, version, opts = {}) {
   opts.onReady && opts.onReady(api);
 
   if (version.kind === 'image') {
-    prev.hidden = next.hidden = true; stage.classList.add('is-image');
-    const img = new Image(); img.alt = version.originalName || 'Proof'; img.src = version.url;
-    render = () => {
-      if (!img.naturalWidth || !stage.clientWidth) return;
+    stage.classList.add('is-image');
+    const pages = multiImage ? imageFiles.map(f => ({ name: f.name || 'Image', url: f.url })) : [{ name: version.originalName || 'Proof', url: version.url }];
+    n = pages.length;
+    let img = null, imgToken = 0;
+    const sizeImage = () => {
+      if (!img || !img.naturalWidth || !stage.clientWidth) return;
       const box = availBox();
       const fitW = box.w / img.naturalWidth, fitH = box.h / img.naturalHeight;
       // Inline shows the whole image. Full screen (and zoom) fit the width, same as PDFs, so a tall proof can be read large.
@@ -242,8 +277,46 @@ export async function mountViewer(root, version, opts = {}) {
       img.style.width = Math.max(1, Math.round(img.naturalWidth * fit * ZOOMS[zoomLevel])) + 'px';
       img.style.height = 'auto';
     };
-    img.onload = () => { pg.textContent = `${img.naturalWidth}×${img.naturalHeight}px`; ensureSheet(img); render(); };
-    img.onerror = () => { stage.innerHTML = '<span class="loading">Could not load image.</span>'; };
+    render = sizeImage;
+    const showImage = target => {
+      page = target;
+      const item = pages[page - 1];
+      nameEl.textContent = item.name || '';
+      if (openEl) openEl.href = item.url;
+      if (n > 1) {
+        pg.textContent = `Image ${page} / ${n}`;
+        prev.disabled = page <= 1; next.disabled = page >= n;
+        $$('img', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
+      }
+      const my = ++imgToken;
+      return new Promise(resolve => {
+        const el = new Image();
+        el.alt = item.name || 'Proof';
+        el.onload = () => {
+          if (my !== imgToken) return resolve();
+          img = el;
+          if (n === 1) pg.textContent = `${img.naturalWidth}×${img.naturalHeight}px`;
+          ensureSheet(img); sizeImage(); resolve();
+        };
+        el.onerror = () => { if (my === imgToken) stage.innerHTML = '<span class="loading">Could not load image.</span>'; resolve(); };
+        el.src = item.url;
+      });
+    };
+    turn = showImage;
+    if (n === 1) prev.hidden = next.hidden = true;
+    else {
+      prev.onclick = () => { if (page > 1) showImage(page - 1); };
+      next.onclick = () => { if (page < n) showImage(page + 1); };
+      thumbs.hidden = false;
+      pages.forEach((item, i) => {
+        const t = document.createElement('img');
+        t.src = item.url; t.alt = ''; t.title = item.name || ('Image ' + (i + 1));
+        t.onclick = () => showImage(i + 1);
+        if (i === 0) t.classList.add('on');
+        thumbs.append(t);
+      });
+    }
+    showImage(1);
     return api;
   }
 
@@ -273,8 +346,9 @@ export async function mountViewer(root, version, opts = {}) {
     pg.textContent = `Page ${page} / ${n}`; prev.disabled = page <= 1; next.disabled = page >= n;
     $$('canvas', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
   };
-  prev.onclick = () => { if (page > 1) { page--; lastKey = ''; render(); } };
-  next.onclick = () => { if (page < n) { page++; lastKey = ''; render(); } };
+  turn = async target => { page = target; lastKey = ''; await render(); };
+  prev.onclick = () => { if (page > 1) turn(page - 1); };
+  next.onclick = () => { if (page < n) turn(page + 1); };
   if (n === 1) prev.hidden = next.hidden = true;
   await render();
   if (n > 1) {
