@@ -1,4 +1,4 @@
-import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
+import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, uploadFiles, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
 import { addDays, compareEvents, hhmm, isoParts, mergeOrder, minutesOf, movedOrder, movedTimes, sameSpan } from './cal-move.mjs';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
@@ -9,6 +9,39 @@ function band(eyebrow, title, sub = '', right = '') {
   return engineBand(`<div class="eband__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div>`);
 }
 const lastDecision = j => { const v = j.versions.at(-1); return v && [...v.feedback].reverse().find(f => f.type !== 'note'); };
+function proofError(files) {
+  if (!files.length) return 'Choose a PDF, or one or more JPG or PNG files.';
+  if (files.some(f => !/\.(pdf|jpe?g|png)$/i.test(f.name))) return 'Proofs must be PDF, JPG or PNG.';
+  if (files.some(f => /\.pdf$/i.test(f.name)) && files.length > 1) return 'A PDF is one file per version. Upload it on its own, or upload JPG and PNG files together.';
+  return '';
+}
+function proofLabel(files) {
+  if (files.length === 1) return `<b>${esc(files[0].name)}</b> · ${fmtSize(files[0].size)}`;
+  const names = files.map(f => esc(f.name));
+  const shown = names.slice(0, 4).join(', ');
+  const more = names.length > 4 ? ` + ${names.length - 4} more` : '';
+  const total = files.reduce((s, f) => s + f.size, 0);
+  return `<b>${files.length} images</b> · ${fmtSize(total)}<span class="small dim" style="display:block;margin-top:4px">${shown}${more}</span>`;
+}
+function versionTitle(v) {
+  const files = Array.isArray(v.files) ? v.files : [];
+  if (files.length < 2) return v.originalName;
+  const names = files.map(f => f.name || f.originalName).filter(Boolean);
+  const shown = names.slice(0, 4).join(', ');
+  const more = names.length > 4 ? ` + ${names.length - 4} more` : '';
+  return `${files.length} images · ${shown}${more}`;
+}
+function sendProof(jobId, files, note, onProgress) {
+  if (files.length === 1) {
+    const q = new URLSearchParams({ name: files[0].name });
+    if (note) q.set('note', note);
+    return upload(`${B}/api/jobs/${jobId}/versions?${q}`, files[0], onProgress);
+  }
+  const q = new URLSearchParams();
+  if (note) q.set('note', note);
+  const qs = q.toString();
+  return uploadFiles(`${B}/api/jobs/${jobId}/versions${qs ? '?' + qs : ''}`, files, onProgress);
+}
 
 async function dashboard() {
   const jobs = await api(B + '/api/jobs');
@@ -53,7 +86,7 @@ function removeProofCopy(j, v) {
     : 'The job, client link and other versions stay.';
   const sees = !only && v === latest ? ' The client will see the previous version.' : '';
   const extra = had ? ' Client notes, stickies and files on this version will be removed too.' : '';
-  return `Remove proof V${v.n} (${v.originalName}) from job ${j.jobNumber}? ${keep}${sees}${extra}`;
+  return `Remove proof V${v.n} (${versionTitle(v)}) from job ${j.jobNumber}? ${keep}${sees}${extra}`;
 }
 
 async function jobPage(key, showV) {
@@ -75,15 +108,15 @@ async function jobPage(key, showV) {
     </div></div>
    <div class="jgrid">
     <div>${sel ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap"><span class="vtag">V${sel.n}${sel === latest ? ' <span class="small dim" style="font-family:var(--sans);font-weight:400;letter-spacing:.1em">LATEST · CLIENT SEES THIS</span>' : ''}</span>
-      ${j.versions.length > 1 ? `<select class="vsel" data-vsel>${[...j.versions].reverse().map(v => `<option value="${v.n}" ${v === sel ? 'selected' : ''}>V${v.n} — ${fmtDate(v.uploadedAt)}</option>`).join('')}</select>` : ''}</div><div data-viewer></div>` : '<div class="panel empty">No proof uploaded yet. Upload V1 →</div>'}</div>
+      ${j.versions.length > 1 ? `<select class="vsel" data-vsel>${[...j.versions].reverse().map(v => `<option value="${v.n}" ${v === sel ? 'selected' : ''}>V${v.n} — ${fmtDate(v.uploadedAt)}</option>`).join('')}</select>` : ''}</div><div data-viewer></div>${sel.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(sel.downloadAll)}">Download all</a><span class="small dim">${sel.files.length} images · ${fmtSize(sel.size)}</span></div>` : ''}` : '<div class="panel empty">No proof uploaded yet. Upload V1 →</div>'}</div>
     <div class="stack">
      <div class="panel"><p class="eyebrow" style="margin-bottom:16px">${latest ? `Upload new version (V${latest.n + 1})` : 'Upload V1'}</p>
-      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Older versions stay available to them.</p>
-      <div class="drop" tabindex="0" data-vdrop><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span data-vname><b>Choose PDF / JPG / PNG</b> or drop here</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></div>
+      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several JPG or PNG files become one version. A PDF stays a single file.</p>
+      <div class="drop" tabindex="0" data-vdrop><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span data-vname><b>Choose a PDF, or several JPG / PNG</b> or drop here</span><input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></div>
       <div class="field" style="margin-top:18px"><label>Note to client <span class="opt">(optional — shown on their page)</span></label><textarea data-vnote style="min-height:70px" placeholder="e.g. Logo enlarged, phone number fixed."></textarea></div>
       <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>
      <div class="panel"><p class="eyebrow" style="margin-bottom:6px">Client feedback &amp; history</p>
-      ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="ver__id"><span class="vtag">V${v.n}</span><span class="small dim">${esc(v.originalName)} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></span><button type="button" class="lnk" data-rmv="${v.n}">Remove proof</button></div>
+      ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="ver__id"><span class="vtag">V${v.n}</span><span class="small dim">${esc(versionTitle(v))} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></span><button type="button" class="lnk" data-rmv="${v.n}">Remove proof</button></div>
         ${v.studioNote ? `<p class="small mute" style="margin:8px 0 0">YBI note: ${esc(v.studioNote)}</p>` : ''}
         ${v.feedback.length ? [...v.feedback].reverse().map(f => fbHtml(f, v, j.id)).join('') : `<p class="small dim" style="margin:10px 0 0">${v === latest ? 'Waiting on client…' : 'No feedback on this version.'}</p>`}</div>`).join('') : '<p class="dim small">Nothing yet.</p>'}
      </div>
@@ -104,11 +137,16 @@ async function jobPage(key, showV) {
     }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Could not render: ${esc(e.message)}</div>`);
   }
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => jobPage(key, vs.value);
-  let file = null; const go = $('[data-vgo]', app), msg = $('[data-vmsg]', app);
-  dropzone($('[data-vdrop]', app), fs => { file = fs[0]; $('[data-vname]', app).innerHTML = `<b>${esc(file.name)}</b> · ${fmtSize(file.size)}`; go.disabled = false; });
+  let picked = []; const go = $('[data-vgo]', app), msg = $('[data-vmsg]', app);
+  dropzone($('[data-vdrop]', app), fs => {
+    const problem = proofError(fs);
+    if (problem) { picked = []; go.disabled = true; msg.className = 'msg err'; msg.textContent = problem; $('[data-vname]', app).innerHTML = '<b>Choose a PDF, or several JPG / PNG</b> or drop here'; return; }
+    picked = fs; msg.className = 'msg'; msg.textContent = ''; $('[data-vname]', app).innerHTML = proofLabel(fs); go.disabled = false;
+  });
   go.onclick = async () => {
-    if (!file) return; go.disabled = true; msg.className = 'msg';
-    try { await upload(`${B}/api/jobs/${id}/versions?name=${encodeURIComponent(file.name)}&note=${encodeURIComponent($('[data-vnote]', app).value)}`, file, p => msg.textContent = `Uploading… ${Math.round(p * 100)}%`); toast('New version uploaded'); jobPage(key); }
+    if (!picked.length) return; go.disabled = true; msg.className = 'msg';
+    const label = picked.length > 1 ? `Uploading ${picked.length} images…` : 'Uploading…';
+    try { await sendProof(id, picked, $('[data-vnote]', app).value, p => msg.textContent = `${label} ${Math.round(p * 100)}%`); toast('New version uploaded'); jobPage(key); }
     catch (e) { msg.className = 'msg err'; msg.textContent = e.message; go.disabled = false; }
   };
   $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); location.href = B + '/studio'; };
@@ -750,7 +788,7 @@ async function settings() {
 }
 
 // ---- new job modal ----
-const modal = $('#newModal'), form = $('#newForm'); let newFile = null;
+const modal = $('#newModal'), form = $('#newForm'); let newFiles = [];
 const nSwatches = $('[data-n-swatches]', form);
 if (nSwatches) nSwatches.outerHTML = colourSwatches({ name: 'colour', labelledBy: 'n-colour-label' });
 const editModal = $('#editModal'), editForm = $('#editForm');
@@ -769,8 +807,8 @@ function defaultCalendarDay() {
 }
 function openNew() {
   form.reset();
-  newFile = null;
-  $('#n-fname').innerHTML = '<b>Choose a file</b> or drop it here';
+  newFiles = [];
+  $('#n-fname').innerHTML = '<b>Choose a PDF, or several JPG / PNG</b> or drop here';
   $('#n-msg').textContent = '';
   const date = $('#n-caldate');
   if (date) date.value = defaultCalendarDay();
@@ -780,19 +818,28 @@ function openNew() {
 function bindNew() { $$('[data-new]').forEach(b => b.onclick = openNew); }
 $$('[data-close]', modal).forEach(b => b.onclick = () => modal.hidden = true);
 modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
-dropzone($('#n-drop'), fs => { newFile = fs[0]; $('#n-fname').innerHTML = `<b>${esc(newFile.name)}</b> · ${fmtSize(newFile.size)}`; });
+dropzone($('#n-drop'), fs => {
+  const problem = proofError(fs);
+  const m = $('#n-msg');
+  if (problem) { newFiles = []; $('#n-fname').innerHTML = '<b>Choose a PDF, or several JPG / PNG</b> or drop here'; m.className = 'msg err'; m.textContent = problem; return; }
+  newFiles = fs; m.className = 'msg'; m.textContent = ''; $('#n-fname').innerHTML = proofLabel(fs);
+});
 form.onsubmit = async e => {
   e.preventDefault(); const m = $('#n-msg'), go = $('#n-go'); m.className = 'msg';
   const data = Object.fromEntries(new FormData(form));
   data.colour = pickedColour();
   if (!data.jobNumber.trim() || !data.clientName.trim()) { m.className = 'msg err'; m.textContent = 'Job number and client name are required.'; return; }
-  if (newFile && !/\.(pdf|jpe?g|png)$/i.test(newFile.name)) { m.className = 'msg err'; m.textContent = 'Proof must be a PDF, JPG or PNG.'; return; }
+  const problem = newFiles.length ? proofError(newFiles) : '';
+  if (problem) { m.className = 'msg err'; m.textContent = problem; return; }
   go.disabled = true;
   try {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(data.jobNumber.trim())) { m.className = 'msg err'; m.textContent = 'Job number can only use letters, numbers, - _ or . (no spaces).'; return; }
     let j; try { j = await api(B + '/api/jobs', { method: 'POST', body: JSON.stringify(data) }); }
     catch (er) { if (er.status === 409) { m.className = 'msg err'; m.innerHTML = `${esc(er.message)} <a class="lnk" href="${B}/studio/${encodeURIComponent(data.jobNumber.trim())}">Open it</a>`; go.disabled = false; return; } throw er; }
-    if (newFile) await upload(`${B}/api/jobs/${j.id}/versions?name=${encodeURIComponent(newFile.name)}`, newFile, p => m.textContent = `Uploading… ${Math.round(p * 100)}%`);
+    if (newFiles.length) {
+      const label = newFiles.length > 1 ? `Uploading ${newFiles.length} images…` : 'Uploading…';
+      await sendProof(j.id, newFiles, '', p => m.textContent = `${label} ${Math.round(p * 100)}%`);
+    }
     modal.hidden = true; toast('Proof created — copy the link to send'); location.href = jobHref(j);
   } catch (er) { m.className = 'msg err'; m.textContent = er.message; } finally { go.disabled = false; }
 };

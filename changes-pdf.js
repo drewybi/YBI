@@ -115,9 +115,7 @@ function addChecklist(pdf, font, bold, meta, items) {
   });
 }
 
-async function loadProof(pdf, kind, bytes, ext) {
-  if (kind === 'pdf') return PDFDocument.load(bytes, { ignoreEncryption: false });
-  const doc = await PDFDocument.create();
+async function embedFittedImage(doc, bytes, ext) {
   const image = /png$/i.test(ext) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
   const pageW = 595.28, pageH = 841.89, margin = 28;
   const scale = Math.min((pageW - margin * 2) / image.width, (pageH - margin * 2) / image.height);
@@ -127,27 +125,41 @@ async function loadProof(pdf, kind, bytes, ext) {
   page.drawImage(image, { x: ox, y: oy, width: dw, height: dh });
   // Map pin fractions onto the image rectangle, not the paper margin.
   page._ybiImageBox = { ox, oy, dw, dh };
+  return page;
+}
+function annotateImagePage(page, font, bold, stickies) {
+  const box = page._ybiImageBox;
+  const { width, height } = page.getSize();
+  stickies.forEach(s => {
+    const x = box.ox + Math.min(0.98, Math.max(0.02, s.x)) * box.dw;
+    const y = box.oy + (1 - Math.min(0.98, Math.max(0.02, s.y))) * box.dh;
+    drawMarker(page, bold, s.n, x, y);
+    drawCallout(page, font, s.text, x, y, width, height);
+  });
+}
+async function loadProof(pdf, kind, bytes, ext) {
+  if (kind === 'pdf') return PDFDocument.load(bytes, { ignoreEncryption: false });
+  const doc = await PDFDocument.create();
+  await embedFittedImage(doc, bytes, ext);
   return doc;
 }
 
-async function buildChangesPdf({ kind, bytes, ext, stickies, meta }) {
-  const pdf = await loadProof(null, kind, bytes, ext);
+async function buildChangesPdf({ kind, bytes, ext, images, stickies, meta }) {
+  let pdf;
+  if (images && images.length) {
+    pdf = await PDFDocument.create();
+    for (const im of images) await embedFittedImage(pdf, im.bytes, im.ext);
+  } else {
+    pdf = await loadProof(null, kind, bytes, ext);
+  }
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const pages = pdf.getPages();
   pages.forEach((page, i) => { page.refPage = i + 1; });
-  if (pages.length === 1 && pages[0]._ybiImageBox) {
-    const box = pages[0]._ybiImageBox;
-    const page = pages[0];
-    stickies.forEach(s => {
-      const x = box.ox + Math.min(0.98, Math.max(0.02, s.x)) * box.dw;
-      const y = box.oy + (1 - Math.min(0.98, Math.max(0.02, s.y))) * box.dh;
-      drawMarker(page, bold, s.n, x, y);
-      drawCallout(page, font, s.text, x, y, page.getSize().width, page.getSize().height);
-    });
-  } else {
-    pages.forEach(page => annotatePage(page, font, bold, stickies));
-  }
+  const imagePages = pages.filter(p => p._ybiImageBox);
+  if (imagePages.length === 1) annotateImagePage(imagePages[0], font, bold, stickies);
+  else if (imagePages.length > 1) imagePages.forEach(page => annotateImagePage(page, font, bold, stickies.filter(s => (s.page || 1) === page.refPage)));
+  else pages.forEach(page => annotatePage(page, font, bold, stickies));
   const items = [];
   if (meta.note) items.push({ n: '·', field: `ybi_${meta.feedbackId}_note`, where: 'GENERAL NOTE', text: meta.note });
   stickies.forEach(s => items.push({
