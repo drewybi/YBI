@@ -6,6 +6,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { pathToFileURL } = require('url');
 const { buildChangesPdf } = require('./changes-pdf');
 
 const ROOT = __dirname;
@@ -21,7 +22,7 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin 
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
-const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'login', 'logout', 'favicon.ico', 'robots.txt']);
+const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'login', 'logout', 'favicon.ico', 'robots.txt']);
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
@@ -900,6 +901,200 @@ async function handleCalendar(req, res, p, m, u) {
   return err(res, 405, 'Method not allowed');
 }
 
+// Staff quotes. Stored in DATA_DIR/quotes.json as { quotes }. Prices are integer cents.
+// A blank quantity is stored as null and counted as 1. Totals are calculated on read
+// (subtotal ex GST, GST 10% rounded to the nearest cent, total inc GST). Studio login only.
+const quoteMathReady = import(pathToFileURL(path.join(__dirname, 'public/assets/quote-math.mjs')).href);
+const QUOTE_FILE = path.join(DATA, 'quotes.json');
+let quoteChain = Promise.resolve();
+function withQuotes(fn) {
+  const run = quoteChain.then(fn, fn);
+  quoteChain = run.then(() => {}, () => {});
+  return run;
+}
+async function readQuotesDoc() {
+  const math = await quoteMathReady;
+  let raw;
+  try { raw = await fsp.readFile(QUOTE_FILE, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return { quotes: [] }; throw e; }
+  let data;
+  try { data = JSON.parse(raw); }
+  catch { throw Object.assign(new Error('Quote data could not be read'), { code: 500 }); }
+  const list = data && Array.isArray(data.quotes) ? data.quotes : null;
+  if (!list) throw Object.assign(new Error('Quote data could not be read'), { code: 500 });
+  const quotes = [];
+  for (const q of list) {
+    if (!q || typeof q.id !== 'string' || !/^[a-f0-9]{16}$/.test(q.id)) continue;
+    const client = String(q.client || '').trim().slice(0, 160);
+    if (!client) continue;
+    if (!validDate(String(q.date || ''))) continue;
+    if (!math.QUOTE_VALIDITY.includes(q.validity)) continue;
+    if (!Array.isArray(q.lines)) continue;
+    const lines = [];
+    let ok = true;
+    for (let i = 0; i < math.QUOTE_LINES; i++) {
+      const src = q.lines[i] && typeof q.lines[i] === 'object' ? q.lines[i] : {};
+      const description = String(src.description || '').trim().slice(0, 300);
+      let qty = null;
+      if (src.qty != null && String(src.qty).trim() !== '') {
+        const milli = math.qtyToMilli(src.qty);
+        if (milli == null) { ok = false; break; }
+        qty = math.milliToQty(milli);
+      }
+      let price = null;
+      if (src.price != null && src.price !== '') {
+        if (!Number.isInteger(src.price) || src.price < 0 || src.price > 999999999) { ok = false; break; }
+        price = src.price;
+      }
+      lines.push({ description, qty, price });
+    }
+    if (!ok || lines.length !== math.QUOTE_LINES) continue;
+    quotes.push({
+      id: q.id,
+      client,
+      contactName: String(q.contactName || '').trim().slice(0, 160),
+      date: String(q.date),
+      description: String(q.description || '').trim().slice(0, 4000),
+      validity: q.validity,
+      lines,
+      createdAt: typeof q.createdAt === 'string' ? q.createdAt : now(),
+      updatedAt: typeof q.updatedAt === 'string' ? q.updatedAt : now()
+    });
+  }
+  return { quotes };
+}
+async function writeQuotesDoc(doc) {
+  const tmp = QUOTE_FILE + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify({ quotes: doc.quotes }, null, 2));
+  await fsp.rename(tmp, QUOTE_FILE);
+}
+async function cleanQuote(b) {
+  const math = await quoteMathReady;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { error: 'That quote isn’t valid.' };
+  const client = String(b.client ?? '').trim().slice(0, 160);
+  if (!client) return { error: 'Add a client.' };
+  const contactName = String(b.contactName ?? '').trim().slice(0, 160);
+  const description = String(b.description ?? '').trim().slice(0, 4000);
+  const date = String(b.date ?? '').trim();
+  if (!validDate(date)) return { error: 'That date isn’t valid.' };
+  const validity = String(b.validity ?? '').trim();
+  if (!math.QUOTE_VALIDITY.includes(validity)) return { error: 'Pick a quote validation: 7 days, 30 days or 6 months.' };
+  if (b.lines != null && !Array.isArray(b.lines)) return { error: 'Lines must be a list.' };
+  const incoming = Array.isArray(b.lines) ? b.lines : [];
+  if (incoming.length > math.QUOTE_LINES) return { error: 'A quote has 20 lines.' };
+  const lines = [];
+  for (let i = 0; i < math.QUOTE_LINES; i++) {
+    const src = incoming[i] && typeof incoming[i] === 'object' && !Array.isArray(incoming[i]) ? incoming[i] : {};
+    const lineDescription = String(src.description ?? '').trim().slice(0, 300);
+    const milli = math.qtyToMilli(src.qty);
+    if (milli === undefined) return { error: `Line ${i + 1} quantity isn’t valid.` };
+    const price = math.priceToCents(src.price);
+    if (price === undefined) return { error: `Line ${i + 1} price isn’t valid.` };
+    lines.push({ description: lineDescription, qty: math.milliToQty(milli), price });
+  }
+  return { client, contactName, date, description, validity, lines };
+}
+function publicQuote(q, math) {
+  const lines = q.lines.map(line => ({
+    description: line.description || '',
+    qty: line.qty || '',
+    price: line.price == null ? '' : math.centsToInput(line.price)
+  }));
+  const totals = math.quoteTotals(lines);
+  return {
+    id: q.id,
+    client: q.client,
+    contactName: q.contactName || '',
+    date: q.date,
+    description: q.description || '',
+    validity: q.validity,
+    lines: lines.map((line, i) => ({ ...line, amount: totals.amounts[i] })),
+    subtotal: totals.subtotal,
+    gst: totals.gst,
+    total: totals.total,
+    createdAt: q.createdAt,
+    updatedAt: q.updatedAt
+  };
+}
+function quoteSummary(full) {
+  return {
+    id: full.id,
+    client: full.client,
+    contactName: full.contactName,
+    date: full.date,
+    validity: full.validity,
+    description: full.description.slice(0, 180),
+    subtotal: full.subtotal,
+    gst: full.gst,
+    total: full.total,
+    createdAt: full.createdAt,
+    updatedAt: full.updatedAt
+  };
+}
+async function handleQuotes(req, res, p, m) {
+  const math = await quoteMathReady;
+  const r = p.match(/^\/api\/quotes(?:\/([a-f0-9]{16}))?$/);
+  if (!r) return err(res, 404, 'Not found');
+  const qid = r[1] || '';
+  if (!qid && m === 'GET') {
+    const doc = await readQuotesDoc();
+    const quotes = doc.quotes.map(q => quoteSummary(publicQuote(q, math)));
+    quotes.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.id).localeCompare(String(a.id)));
+    return send(res, 200, { quotes });
+  }
+  if (!qid && m === 'POST') {
+    const b = await readJSON(req);
+    const cleaned = await cleanQuote(b);
+    if (cleaned.error) return err(res, 400, cleaned.error);
+    const created = await withQuotes(async () => {
+      const doc = await readQuotesDoc();
+      let nid = id(8);
+      while (doc.quotes.some(q => q.id === nid)) nid = id(8);
+      const stamp = now();
+      const quote = { id: nid, ...cleaned, createdAt: stamp, updatedAt: stamp };
+      doc.quotes.push(quote);
+      await writeQuotesDoc(doc);
+      return quote;
+    });
+    return send(res, 201, publicQuote(created, math));
+  }
+  if (qid && m === 'GET') {
+    const quote = (await readQuotesDoc()).quotes.find(q => q.id === qid);
+    if (!quote) return err(res, 404, 'No quote with that id.');
+    return send(res, 200, publicQuote(quote, math));
+  }
+  if (qid && m === 'PUT') {
+    const b = await readJSON(req);
+    const cleaned = await cleanQuote(b);
+    if (cleaned.error) return err(res, 400, cleaned.error);
+    const result = await withQuotes(async () => {
+      const doc = await readQuotesDoc();
+      const i = doc.quotes.findIndex(q => q.id === qid);
+      if (i < 0) return { status: 404, error: 'No quote with that id.' };
+      const prev = doc.quotes[i];
+      const next = { ...prev, ...cleaned, id: prev.id, createdAt: prev.createdAt, updatedAt: now() };
+      doc.quotes[i] = next;
+      await writeQuotesDoc(doc);
+      return { quote: next };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, publicQuote(result.quote, math));
+  }
+  if (qid && m === 'DELETE') {
+    const result = await withQuotes(async () => {
+      const doc = await readQuotesDoc();
+      const i = doc.quotes.findIndex(q => q.id === qid);
+      if (i < 0) return { status: 404, error: 'No quote with that id.' };
+      doc.quotes.splice(i, 1);
+      await writeQuotesDoc(doc);
+      return { ok: true };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, { ok: true });
+  }
+  return err(res, 405, 'Method not allowed');
+}
+
 const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 const numPath = job => `${B}/${encodeURIComponent(job.jobNumber)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
@@ -1074,6 +1269,7 @@ async function handle(req, res) {
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
+    if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);
     if ((r = p.match(/^\/api\/jobs\/([^/]+)\/versions\/(\d+)$/))) {
       if (m !== 'DELETE') return err(res, 405, 'Method not allowed');
       const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
@@ -1269,7 +1465,7 @@ function createAppServer() {
 
 if (require.main === module) {
   createAppServer().listen(PORT, HOST, () => {
-    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · job pages: ${B}/{jobNumber})`);
+    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · job pages: ${B}/{jobNumber})`);
     console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
     console.log(`  Data folder: ${DATA}`);
     console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}`);

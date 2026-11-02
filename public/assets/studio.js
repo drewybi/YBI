@@ -1,5 +1,6 @@
 import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, uploadFiles, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
 import { addDays, compareEvents, hhmm, isoParts, mergeOrder, minutesOf, movedOrder, movedTimes, sameSpan } from './cal-move.mjs';
+import { QUOTE_LINES, QUOTE_VALIDITY, centsToInput, milliToQty, priceToCents, qtyToMilli, quoteTotals } from './quote-math.mjs';
 const app = $('#app');
 const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
@@ -934,10 +935,187 @@ editForm.onsubmit = async e => {
   finally { go.disabled = false; }
 };
 
+const aud = cents => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100);
+
+function quoteLinesFrom(quote) {
+  const src = quote && Array.isArray(quote.lines) ? quote.lines : [];
+  const lines = [];
+  for (let i = 0; i < QUOTE_LINES; i++) {
+    const line = src[i] || {};
+    lines.push({ description: line.description || '', qty: line.qty || '', price: line.price || '' });
+  }
+  return lines;
+}
+function quoteLineRow(i, line) {
+  const n = i + 1;
+  return `<tr data-q-line><td class="num">${n}</td><td><input data-q-desc aria-label="Line ${n} description" maxlength="300" value="${esc(line.description)}"></td><td class="qty"><input data-q-qty inputmode="decimal" aria-label="Line ${n} quantity" maxlength="12" value="${esc(line.qty)}" placeholder="1"></td><td class="price"><input data-q-price inputmode="decimal" aria-label="Line ${n} price in Australian dollars" maxlength="14" value="${esc(line.price)}"></td><td class="amt" data-q-amt></td></tr>`;
+}
+function readQuoteForm(root) {
+  return {
+    client: $('#q-client', root).value.trim(),
+    contactName: $('#q-contact', root).value.trim(),
+    date: $('#q-date', root).value,
+    description: $('#q-desc', root).value.trim(),
+    validity: $('#q-valid', root).value,
+    lines: $$('[data-q-line]', root).map(tr => ({
+      description: $('[data-q-desc]', tr).value,
+      qty: $('[data-q-qty]', tr).value,
+      price: $('[data-q-price]', tr).value
+    }))
+  };
+}
+function paintQuoteTotals(root) {
+  const rows = $$('[data-q-line]', root);
+  const lines = rows.map(tr => ({
+    description: $('[data-q-desc]', tr).value,
+    qty: $('[data-q-qty]', tr).value,
+    price: $('[data-q-price]', tr).value
+  }));
+  const totals = quoteTotals(lines);
+  rows.forEach((tr, i) => {
+    const line = lines[i];
+    const touched = line.description.trim() || line.qty.trim() || line.price.trim();
+    const cell = $('[data-q-amt]', tr);
+    cell.textContent = totals.amounts[i] == null ? (touched ? '—' : '') : (touched ? aud(totals.amounts[i]) : '');
+    tr.classList.toggle('is-empty', !touched);
+  });
+  $('[data-q-sub]', root).textContent = aud(totals.subtotal);
+  $('[data-q-gst]', root).textContent = aud(totals.gst);
+  $('[data-q-grand]', root).textContent = aud(totals.total);
+  return totals;
+}
+async function quotePage(rawId) {
+  const id = rawId || '';
+  const badId = !!(id && !/^[a-f0-9]{16}$/.test(id));
+  const list = await api(B + '/api/quotes');
+  let quote = null;
+  let missing = badId;
+  if (id && !badId) {
+    try { quote = await api(`${B}/api/quotes/${id}`); }
+    catch (e) { if (e.status !== 404) throw e; missing = true; }
+  }
+  const lines = quoteLinesFrom(quote);
+  const validity = QUOTE_VALIDITY.includes(quote && quote.validity) ? quote.validity : '30 days';
+  const dateValue = quote ? quote.date : melbourneToday();
+  const quotes = list.quotes || [];
+  app.innerHTML = band('YBI Studio', 'Staff <span class="ol">quote.</span>', 'A blank quantity counts as 1, so a line with only a price is charged once. Enter a quantity when the price is each. GST is 10% of the subtotal.', `<button class="btn" type="button" data-q-new>New quote ${ARROW}</button>`) +
+  `<div class="wrap q-page">
+    <section class="q-recent">
+      <div class="toolbar"><p class="eyebrow" style="margin:0">Recent quotes</p></div>
+      <table class="jobs"><thead><tr><th>Client</th><th class="hide-m">Contact</th><th>Date</th><th class="hide-m">Valid</th><th>Total</th><th class="hide-m">Updated</th></tr></thead>
+      <tbody>${quotes.length ? quotes.map(q => `<tr class="row${quote && q.id === quote.id ? ' on' : ''}" data-href="${B}/studio/quote/${q.id}"><td><b>${esc(q.client)}</b>${q.description ? `<div class="small dim">${esc(q.description.slice(0, 80))}${q.description.length > 80 ? '…' : ''}</div>` : ''}</td><td class="hide-m">${esc(q.contactName || '—')}</td><td>${esc(fmtUTC(q.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</td><td class="hide-m">${esc(q.validity)}</td><td class="num">${aud(q.total)}</td><td class="hide-m small dim">${fmtDate(q.updatedAt)}</td></tr>`).join('') : `<tr><td colspan="6" class="empty">No quotes yet. Save one here and the rest of the studio can reopen it.</td></tr>`}</tbody></table>
+    </section>
+    ${missing ? '<p class="msg err">No quote with that id.</p>' : ''}
+    <form class="panel q-sheet" id="quoteForm" novalidate>
+      <header class="q-brand">
+        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
+        <div class="q-brand__in">
+          <div class="q-brand__row">
+            <div class="logo"><img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></div>
+            <p class="q-brand__title">Quote<span class="ol">.</span></p>
+          </div>
+        </div>
+      </header>
+      <div class="q-body">
+      <div class="grid2">
+        <div class="field"><label for="q-client">Client</label><input id="q-client" name="client" required maxlength="160" autocomplete="organization" value="${esc(quote ? quote.client : '')}" placeholder="Business name"></div>
+        <div class="field"><label for="q-contact">Contact name</label><input id="q-contact" name="contactName" maxlength="160" autocomplete="name" value="${esc(quote ? quote.contactName : '')}" placeholder="Who the quote is for"></div>
+        <div class="field"><label for="q-date">Date</label><input id="q-date" name="date" type="date" required min="2000-01-01" max="2100-12-31" value="${esc(dateValue)}"></div>
+        <div class="field"><label for="q-valid">Quote validation</label><select id="q-valid" name="validity">${QUOTE_VALIDITY.map(v => `<option value="${esc(v)}"${v === validity ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
+        <div class="field field--full"><label for="q-desc">Job description</label><textarea id="q-desc" name="description" maxlength="4000" placeholder="What’s being quoted — size, stock, finish…">${esc(quote ? quote.description : '')}</textarea></div>
+      </div>
+      <div class="q-scroll"><table class="qlines"><thead><tr><th class="num">#</th><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="amt">Amount</th></tr></thead><tbody>${lines.map((line, i) => quoteLineRow(i, line)).join('')}</tbody></table></div>
+      <p class="small mute q-note">Leave Qty blank to charge the price once (treated as 1). Fill Qty when the price is each — the amount is Qty × Price. A Qty of 0 is free. Prices are ex GST, in Australian dollars. GST is 10% of the subtotal, rounded to the nearest cent.</p>
+      <div class="qtotals" aria-live="polite">
+        <div><span>Subtotal <span class="dim">(ex GST)</span></span><b data-q-sub>$0.00</b></div>
+        <div><span>GST 10%</span><b data-q-gst>$0.00</b></div>
+        <div class="grand"><span>Total <span class="dim">(inc GST)</span></span><b data-q-grand>$0.00</b></div>
+      </div>
+      <div class="btns q-actions" style="margin-top:26px"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div>
+      <p class="msg" id="q-msg"></p>
+      </div>
+      <footer class="q-brandfoot">
+        <div class="q-brandfoot__cols">
+          <div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
+          <div><span class="k">YBI SA</span><address>PO Box 188<br>Williamstown SA 5351<br><a href="tel:+61885246345">(08) 8524 6345</a></address></div>
+          <div><span class="k">Get in touch</span><a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a><a href="https://www.ybicreative.com.au">ybicreative.com.au</a></div>
+        </div>
+        <p class="q-brandfoot__base">Brand Engineering · Bendigo VIC · Williamstown SA</p>
+      </footer>
+    </form>
+  </div>`;
+  const form = $('#quoteForm', app);
+  paintQuoteTotals(form);
+  const snapshot = () => JSON.stringify(readQuoteForm(form));
+  const savedSnap = snapshot();
+  const leave = () => snapshot() === savedSnap || confirm('Leave this quote? Changes that aren’t saved will be dropped.');
+  $$('tr.row', app).forEach(r => r.onclick = () => { if (!leave()) return; location.href = r.dataset.href; });
+  $('[data-q-new]', app).onclick = () => {
+    if (!leave()) return;
+    const here = location.pathname.replace(/\/$/, '');
+    if (here === `${B}/studio/quote`) { quotePage('').catch(e => { if (e.status === 401) location.href = B + '/'; }); return; }
+    location.href = `${B}/studio/quote`;
+  };
+  form.addEventListener('input', () => paintQuoteTotals(form));
+  form.addEventListener('focusout', e => {
+    const t = e.target;
+    if (t.matches('[data-q-price]')) {
+      const cents = priceToCents(t.value);
+      if (cents != null) t.value = centsToInput(cents);
+    } else if (t.matches('[data-q-qty]')) {
+      const milli = qtyToMilli(t.value);
+      if (milli != null) t.value = milliToQty(milli);
+    } else return;
+    paintQuoteTotals(form);
+  });
+  $('[data-q-print]', form).onclick = () => window.print();
+  const del = $('[data-q-del]', form);
+  if (del) del.onclick = async () => {
+    if (!quote || !confirm(`Delete the quote for ${quote.client}?`)) return;
+    del.disabled = true;
+    try {
+      await api(`${B}/api/quotes/${quote.id}`, { method: 'DELETE' });
+      toast('Quote deleted');
+      location.href = `${B}/studio/quote`;
+    } catch (err) {
+      const msg = $('#q-msg', form);
+      msg.className = 'msg err';
+      msg.textContent = err.message;
+      del.disabled = false;
+    }
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const msg = $('#q-msg', form), go = $('#q-go', form);
+    msg.className = 'msg'; msg.textContent = '';
+    const data = readQuoteForm(form);
+    if (!data.client) { msg.className = 'msg err'; msg.textContent = 'Add a client.'; $('#q-client', form).focus(); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) { msg.className = 'msg err'; msg.textContent = 'Pick a date.'; $('#q-date', form).focus(); return; }
+    const totals = paintQuoteTotals(form);
+    if (totals.errors.length) { msg.className = 'msg err'; msg.textContent = totals.errors[0]; return; }
+    go.disabled = true;
+    try {
+      const saved = await api(quote ? `${B}/api/quotes/${quote.id}` : `${B}/api/quotes`, { method: quote ? 'PUT' : 'POST', body: JSON.stringify(data) });
+      toast(quote ? 'Quote updated' : 'Quote saved');
+      const next = `${B}/studio/quote/${saved.id}`;
+      if (location.pathname.replace(/\/$/, '') !== next) history.replaceState(null, '', next);
+      markNav();
+      await quotePage(saved.id);
+    } catch (err) {
+      msg.className = 'msg err';
+      msg.textContent = err.message;
+      go.disabled = false;
+    }
+  };
+  if (quote) form.scrollIntoView({ block: 'start' });
+  else $('#q-client', form).focus({ preventScroll: true });
+}
+
 function markNav() {
   const here = location.pathname.replace(/\/$/, '');
   $$('.hdr__r a').forEach(a => {
-    const on = a.pathname.replace(/\/$/, '') === here;
+    const path = a.pathname.replace(/\/$/, '');
+    const on = path.endsWith('/studio/quote') ? (here === path || here.startsWith(path + '/')) : path === here;
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -945,9 +1123,12 @@ function markNav() {
 async function route() {
   markNav();
   const rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
+  document.body.classList.toggle('is-quote', rest === 'quote' || rest.startsWith('quote/'));
   try {
     if (rest === 'settings') await settings();
     else if (rest === 'calendar') await calendar();
+    else if (rest === 'quote') await quotePage('');
+    else if (rest.startsWith('quote/')) await quotePage(rest.slice('quote/'.length));
     else if (rest) await jobPage(rest);
     else await dashboard();
   } catch (e) { if (e.status === 401) location.href = B + '/'; else app.innerHTML = `<div class="wrap" style="padding-top:80px;padding-bottom:80px"><p class="msg err">${esc(e.message)}</p><a class="lnk" href="${B}/studio">Back to jobs</a></div>`; }

@@ -17,6 +17,7 @@ chk "$(code "$BASE")" 200 "$BP entry page (studio login)"
 entry=$(curl -sf "$BASE"); echo "$entry" | grep -q 'id="jn"' && fail "job-number finder still on the entry page" || pass "no job-number finder"
 chk "$(code "$BASE/studio")" 302 "$BP/studio redirects to login when signed out"
 chk "$(code "$BASE/studio/calendar")" 302 "$BP/studio/calendar redirects to login when signed out"
+chk "$(code "$BASE/studio/quote")" 302 "$BP/studio/quote redirects to login when signed out"
 cal_loc=$(curl -s -D - -o /dev/null "$BASE/studio/calendar" | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r')
 echo "$cal_loc" | grep -q 'studio%2Fcalendar' && pass "calendar login redirect returns to the calendar page" || fail "calendar login redirect (got '$cal_loc')"
 chk "$(code "$BASE/api/jobs")" 401 "studio API blocked without password"
@@ -29,8 +30,10 @@ chk "$(code "${H[@]}" "${JS[@]}" -d "{\"jobNumber\":\"${NA,,}\",\"clientName\":\
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"bad number!","clientName":"x"}' "$BASE/api/jobs")" 400 "invalid job number refused"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"studio","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved job number refused"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"calendar","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved calendar job number refused"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"quote","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved quote job number refused"
 calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
 echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
+echo "$calhtml" | grep -q "href=\"$BP/studio/quote\"" && pass "studio nav links to quote" || fail "studio nav missing quote link"
 echo "$calhtml" | grep -qi '<iframe' && fail "calendar page must not embed an iframe" || pass "calendar page has no iframe"
 caljs=$(curl -sf "$BASE/assets/studio.js")
 grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' <<<"$caljs" && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
@@ -350,7 +353,29 @@ echo "$studiohtml" | grep -q '>Edit job<' && pass "edit job dialog is on the stu
 echo "$reviewhtml" | grep -q 'Remove proof' && fail "client page offers Remove proof" || pass "client page has no Remove proof control"
 echo "$reviewhtml" | grep -q 'Edit job' && fail "client page offers Edit job" || pass "client page has no Edit job control"
 
-echo "6) Misc"
+echo "6) Quotes"
+chk "$(code "$BASE/api/quotes")" 401 "quotes API blocked without password"
+QBODY=$(node -e 'const lines=[{description:"Design",price:"450"},{description:"Cards",qty:"500",price:"0.40"}]; console.log(JSON.stringify({client:"Acme Print",contactName:"Nicola",date:"2026-11-02",description:"Business cards",validity:"30 days",lines}))')
+Q=$(curl -sf "${H[@]}" "${JS[@]}" -d "$QBODY" "$BASE/api/quotes")
+chk "$(echo "$Q" | j .subtotal)" 65000 "blank qty is 1 and qty × price is ex GST"
+chk "$(echo "$Q" | j .gst)" 6500 "GST is 10% of the subtotal"
+chk "$(echo "$Q" | j .total)" 71500 "quote total includes GST"
+chk "$(echo "$Q" | j '.lines.length')" 20 "a quote stores 20 lines"
+QID=$(echo "$Q" | j .id)
+chk "$(curl -sf "${H[@]}" "$BASE/api/quotes/$QID" | j .client)" "Acme Print" "a quote can be reopened"
+chk "$(curl -sf "${H[@]}" "$BASE/api/quotes" | j ".quotes.filter(q=>q.id==='$QID').length")" 1 "a quote is in the recent list"
+UBODY=$(node -e 'console.log(JSON.stringify({client:"Acme Print",contactName:"Rob",date:"2026-11-02",description:"Business cards",validity:"7 days",lines:[{description:"Design",price:"100"}]}))')
+U=$(curl -sf "${H[@]}" "${JS[@]}" -X PUT -d "$UBODY" "$BASE/api/quotes/$QID")
+chk "$(echo "$U" | j .total)" 11000 "editing a quote recalculates 10% GST"
+chk "$(echo "$U" | j .validity)" "7 days" "quote validation can be changed"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"client":"X","date":"2026-11-02","validity":"1 year","lines":[]}' "$BASE/api/quotes")" 400 "unknown quote validation refused"
+node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const q=d.quotes.find(x=>x.id===process.argv[2]); if(!q||q.lines[0].price!==10000||q.lines[0].qty!==null) process.exit(1);' "$DATA/quotes.json" "$QID" && pass "quote file stores cents and a blank quantity" || fail "quote file shape"
+curl -sf "${H[@]}" -X DELETE "$BASE/api/quotes/$QID" >/dev/null && pass "quote deleted"
+chk "$(code "${H[@]}" "$BASE/api/quotes/$QID")" 404 "deleted quote is gone"
+grep -q 'Leave Qty blank to charge the price once' <<<"$caljs" && pass "quote form documents blank quantity" || fail "blank quantity note missing"
+grep -q 'data-q-gst' <<<"$caljs" && pass "quote form shows GST" || fail "GST row missing"
+
+echo "7) Misc"
 grep -q "$NB" "${DATA_DIR:-$(dirname "$0")/../data}/notifications.log" && pass "logged in notifications.log"
 chk "$(code "$BASE/api/review/NOPE$RUN")" 404 "unknown job number 404"
 if [ -n "$BP" ]; then chk "$(code "$ORIGIN/api/review/$NA")" 403 "stripped prefix still refuses a bare job number"; chk "$(code "$ORIGIN/api/review/$NA?k=$ATOK")" 200 "stripped prefix accepts the secure key"; fi
