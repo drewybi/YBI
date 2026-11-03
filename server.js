@@ -949,6 +949,7 @@ async function readQuotesDoc() {
       lines.push({ description, qty, price });
     }
     if (!ok || lines.length !== math.QUOTE_LINES) continue;
+    const jobId = typeof q.jobId === 'string' && /^[a-f0-9]{12}$/.test(q.jobId) ? q.jobId : '';
     quotes.push({
       id: q.id,
       token: validQuoteToken(q.token),
@@ -959,6 +960,7 @@ async function readQuotesDoc() {
       validity: q.validity,
       lines,
       responses: cleanQuoteResponses(q.responses),
+      ...(jobId ? { jobId } : {}),
       createdAt: typeof q.createdAt === 'string' ? q.createdAt : now(),
       updatedAt: typeof q.updatedAt === 'string' ? q.updatedAt : now()
     });
@@ -1058,9 +1060,17 @@ function clientQuote(q, math) {
     responses: publicResponses(q)
   };
 }
-function studioQuote(req, q, math) {
+async function studioQuote(req, q, math) {
   const pub = publicQuote(q, math);
-  return { ...pub, status: quoteStatus(q), responses: publicResponses(q), clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}` };
+  const job = q.jobId ? await loadJob(q.jobId) : null;
+  return {
+    ...pub,
+    status: quoteStatus(q),
+    responses: publicResponses(q),
+    clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
+    ...(q.jobId ? { jobId: q.jobId } : {}),
+    ...(job ? { jobNumber: job.jobNumber } : {})
+  };
 }
 function quoteSummary(full) {
   return {
@@ -1075,7 +1085,9 @@ function quoteSummary(full) {
     gst: full.gst,
     total: full.total,
     createdAt: full.createdAt,
-    updatedAt: full.updatedAt
+    updatedAt: full.updatedAt,
+    ...(full.jobId ? { jobId: full.jobId } : {}),
+    ...(full.jobNumber ? { jobNumber: full.jobNumber } : {})
   };
 }
 async function repairQuoteSecrets(doc) {
@@ -1097,7 +1109,7 @@ async function handleQuotes(req, res, p, m) {
   const qid = r[1] || '';
   if (!qid && m === 'GET') {
     const doc = await loadQuotes();
-    const quotes = doc.quotes.map(q => quoteSummary(studioQuote(req, q, math)));
+    const quotes = await Promise.all(doc.quotes.map(async q => quoteSummary(await studioQuote(req, q, math))));
     quotes.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.id).localeCompare(String(a.id)));
     return send(res, 200, { quotes });
   }
@@ -1115,12 +1127,12 @@ async function handleQuotes(req, res, p, m) {
       await writeQuotesDoc(doc);
       return quote;
     });
-    return send(res, 201, studioQuote(req, created, math));
+    return send(res, 201, await studioQuote(req, created, math));
   }
   if (qid && m === 'GET') {
     const quote = (await loadQuotes()).quotes.find(q => q.id === qid);
     if (!quote) return err(res, 404, 'No quote with that id.');
-    return send(res, 200, studioQuote(req, quote, math));
+    return send(res, 200, await studioQuote(req, quote, math));
   }
   if (qid && m === 'PUT') {
     const b = await readJSON(req);
@@ -1132,12 +1144,13 @@ async function handleQuotes(req, res, p, m) {
       if (i < 0) return { status: 404, error: 'No quote with that id.' };
       const prev = doc.quotes[i];
       const next = { ...prev, ...cleaned, id: prev.id, createdAt: prev.createdAt, updatedAt: now() };
+      if (prev.jobId) next.jobId = prev.jobId;
       doc.quotes[i] = next;
       await writeQuotesDoc(doc);
       return { quote: next };
     });
     if (result.error) return err(res, result.status, result.error);
-    return send(res, 200, studioQuote(req, result.quote, math));
+    return send(res, 200, await studioQuote(req, result.quote, math));
   }
   if (qid && m === 'DELETE') {
     const result = await withQuotes(async () => {
@@ -1152,6 +1165,76 @@ async function handleQuotes(req, res, p, m) {
     return send(res, 200, { ok: true });
   }
   return err(res, 405, 'Method not allowed');
+}
+
+// Quote client → proof job. Contact is the person; Client is the business.
+// A blank contact uses the business as the required client name, and the business
+// is left off when it would repeat that name. Description keeps the job’s 2,000-character cap.
+function quoteJobFields(quote) {
+  const company = String(quote.client || '').trim().slice(0, 120);
+  const contact = String(quote.contactName || '').trim().slice(0, 120);
+  const clientName = contact || company;
+  const clientCompany = contact && contact.toLowerCase() !== company.toLowerCase() ? company : '';
+  return { clientName, clientCompany, description: String(quote.description || '').trim().slice(0, 2000) };
+}
+// Next whole number above the highest all-digit job number, skipping anything already taken.
+function nextJobNumber(jobs) {
+  const taken = new Set(jobs.map(j => norm(j.jobNumber)));
+  let max = 0;
+  for (const j of jobs) {
+    if (/^\d{1,12}$/.test(String(j.jobNumber || ''))) {
+      const n = Number(j.jobNumber);
+      if (Number.isSafeInteger(n) && n > max) max = n;
+    }
+  }
+  for (let n = max + 1; n < max + 10000; n++) {
+    const candidate = String(n);
+    if (!JOBNUM_RE.test(candidate) || RESERVED.has(norm(candidate)) || taken.has(norm(candidate))) continue;
+    return candidate;
+  }
+  let fallback;
+  do { fallback = 'Q' + id(6); } while (!JOBNUM_RE.test(fallback) || RESERVED.has(norm(fallback)) || taken.has(norm(fallback)));
+  return fallback;
+}
+// One job per quote. A previous attempt that saved the job but not the quote is reused.
+async function createJobFromQuote(quote) {
+  if (quote.jobId) {
+    const linked = await loadJob(quote.jobId);
+    if (linked) return linked;
+  }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const jobs = await allJobs();
+    const existing = jobs.find(j => j.quoteId === quote.id);
+    if (existing) return existing;
+    const fields = quoteJobFields(quote);
+    if (!fields.clientName) throw httpError(400, 'Add a client.');
+    const jobNumber = nextJobNumber(jobs);
+    let jid = id(6);
+    while (jobs.some(j => j.id === jid)) jid = id(6);
+    const job = {
+      id: jid,
+      token: token(),
+      jobNumber,
+      description: fields.description,
+      clientName: fields.clientName,
+      clientCompany: fields.clientCompany,
+      clientEmail: '',
+      clientPhone: '',
+      quoteId: quote.id,
+      access: 'private',
+      createdAt: now(),
+      versions: []
+    };
+    const clash = (await allJobs()).find(j => j.quoteId === quote.id || norm(j.jobNumber) === norm(jobNumber));
+    if (clash) {
+      if (clash.quoteId === quote.id) return clash;
+      continue;
+    }
+    await fsp.mkdir(path.join(FILES, job.id), { recursive: true });
+    await saveJob(job);
+    return job;
+  }
+  throw httpError(500, 'Could not create a job for this quote.');
 }
 
 async function handlePublicQuote(req, res, qid, action, m, k) {
@@ -1176,14 +1259,19 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
       const current = fresh.quotes[i];
       if (k !== current.token) return { status: 403, error: 'This quote is private — please use the secure link YBI sent you.' };
       if (quoteStatus(current) === 'accepted') return { status: 409, error: 'This quote is already confirmed.' };
+      let job = null;
+      if (b.type === 'accept') {
+        job = await createJobFromQuote(current);
+        current.jobId = job.id;
+      }
       const response = { id: id(6), type: b.type, name, note, at: now() };
       current.responses = [...(current.responses || []), response];
       current.updatedAt = response.at;
       await writeQuotesDoc(fresh);
-      return { quote: current, response };
+      return { quote: current, response, job };
     });
     if (result.error) return err(res, result.status, result.error);
-    await notifyQuote(req, result.quote, result.response);
+    await notifyQuote(req, result.quote, result.response, result.job);
     return send(res, 200, clientQuote(result.quote, math));
   }
   return err(res, 405, 'Method not allowed');
@@ -1213,7 +1301,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1237,12 +1325,15 @@ async function deliverStaffMail({ subject, text, replyTo }) {
 function audMail(cents) {
   return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100);
 }
-async function notifyQuote(req, quote, response) {
+// Same recipients and From address as proof alerts (deliverStaffMail → notifyRecipients).
+// Accept and request-changes both mail. The client mailto to website@ is only a backup.
+async function notifyQuote(req, quote, response, job) {
   const math = await quoteMathReady;
   const pub = publicQuote(quote, math);
   const jobLine = String(quote.description || '').split('\n')[0].trim();
   const label = response.type === 'accept' ? 'CONFIRMED' : 'CHANGES REQUESTED';
   const studioLink = origin(req) + `${B}/studio/quote/${quote.id}`;
+  const proofLink = job ? origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}` : '';
   const lines = [
     `${label} — Quote for ${quote.client}`, '',
     `Contact: ${quote.contactName || '(none)'}`,
@@ -1252,6 +1343,7 @@ async function notifyQuote(req, quote, response) {
     `By: ${response.name}`,
     `When: ${new Date(response.at).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
     response.note ? `Note:\n${response.note}\n` : '(no note)',
+    ...(job ? [`Proof job: ${job.jobNumber}`, `Open job in studio: ${proofLink}`] : []),
     `Open in studio: ${studioLink}`
   ].join('\n');
   await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
