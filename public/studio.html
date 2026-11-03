@@ -11,8 +11,8 @@
  <div class="modal__h"><h2 class="h3">New job</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
  <div class="grid2">
   <div class="field"><label for="n-num">Job number <span class="opt">(the client gets a private link, not this number)</span></label><input id="n-num" name="jobNumber" required placeholder="e.g. 30434" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}"></div>
-  <div class="field"><label for="n-client">Client name</label><input id="n-client" name="clientName" required placeholder="Contact name"></div>
-  <div class="field"><label for="n-co">Business <span class="opt">(optional)</span></label><input id="n-co" name="clientCompany"></div>
+  <div class="field"><label for="n-client">Client</label><input id="n-client" name="clientName" required></div>
+  <div class="field"><label for="n-co">Contact <span class="opt">(optional)</span></label><input id="n-co" name="clientCompany"></div>
   <div class="field"><label for="n-email">Client email <span class="opt">(optional)</span></label><input id="n-email" name="clientEmail" type="email"></div>
   <div class="field field--full"><label for="n-desc">Job description</label><textarea id="n-desc" name="description" placeholder="What's being proofed — size, stock, finish, quantity…"></textarea></div>
   <div class="field field--full"><label>Proof — one PDF, or several JPG / PNG</label>
@@ -27,9 +27,9 @@
  <div class="modal__h"><h2 class="h3">Edit job</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
  <p class="small mute" style="margin:-8px 0 22px">Proofs and the secure key stay. The calendar chip uses this description. Colour and date change only if you edit them here. Moving the date clears the order within that day.</p>
  <div class="grid2">
-  <div class="field"><label for="e-num">Job number</label><input id="e-num" name="jobNumber" required placeholder="e.g. 30434" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}" maxlength="40"></div>
-  <div class="field"><label for="e-client">Client name</label><input id="e-client" name="clientName" required placeholder="Contact name" maxlength="120"></div>
-  <div class="field"><label for="e-co">Business <span class="opt">(optional)</span></label><input id="e-co" name="clientCompany" maxlength="120"></div>
+  <div class="field"><label for="e-num">Job number</label><input id="e-num" name="jobNumber" placeholder="e.g. 30434" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}" maxlength="40"></div>
+  <div class="field"><label for="e-client">Client</label><input id="e-client" name="clientName" required maxlength="120"></div>
+  <div class="field"><label for="e-co">Contact <span class="opt">(optional)</span></label><input id="e-co" name="clientCompany" maxlength="120"></div>
   <div class="field"><label for="e-email">Client email <span class="opt">(optional)</span></label><input id="e-email" name="clientEmail" type="email" maxlength="200"></div>
   <div class="field"><label for="e-phone">Client phone <span class="opt">(optional)</span></label><input id="e-phone" name="clientPhone" type="tel" maxlength="60"></div>
   <div class="field field--full"><label for="e-desc">Job description</label><textarea id="e-desc" name="description" maxlength="2000" placeholder="What's being proofed — size, stock, finish, quantity…"></textarea></div>

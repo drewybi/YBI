@@ -382,6 +382,11 @@ async function saveJob(job) { job.access = 'private'; job.updatedAt = now(); con
 async function allJobs() { const fsn = (await fsp.readdir(JOBS)).filter(f => f.endsWith('.json')); const jobs = (await Promise.all(fsn.map(f => loadJob(f.slice(0, -5))))).filter(Boolean); await Promise.all(jobs.map(ensurePrivate)); return jobs; }
 async function jobByToken(tok) { if (!tok || tok.length < 10) return null; return (await allJobs()).find(j => j.token === tok) || null; }
 async function jobByNumber(num) { const n = norm(num); if (!n) return null; return (await allJobs()).find(j => norm(j.jobNumber) === n) || null; }
+async function jobByRef(key) {
+  const raw = String(key || '');
+  if (/^[a-f0-9]{12}$/.test(raw)) { const byId = await loadJob(raw); if (byId) return byId; }
+  return jobByNumber(raw);
+}
 const accessOf = () => 'private';
 const canView = (job, k) => !!(job && k && k === job.token);
 // Existing jobs may still say access:"public" on disk. Treat them as private and rewrite that flag without bumping updatedAt.
@@ -632,7 +637,7 @@ function jobEvent(job, override) {
     notes: '',
     colour: (override && normalColour(override.colour)) || 'grey',
     dayOrder: override ? storedDayOrder(override.dayOrder) : null,
-    href: `${B}/studio/${encodeURIComponent(job.jobNumber)}`,
+    href: `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };
@@ -1069,7 +1074,7 @@ async function studioQuote(req, q, math) {
     responses: publicResponses(q),
     clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
     ...(q.jobId ? { jobId: q.jobId } : {}),
-    ...(job ? { jobNumber: job.jobNumber } : {})
+    ...(job && job.jobNumber ? { jobNumber: job.jobNumber } : {})
   };
 }
 function quoteSummary(full) {
@@ -1167,34 +1172,14 @@ async function handleQuotes(req, res, p, m) {
   return err(res, 405, 'Method not allowed');
 }
 
-// Quote client → proof job. Contact is the person; Client is the business.
-// A blank contact uses the business as the required client name, and the business
-// is left off when it would repeat that name. Description keeps the job’s 2,000-character cap.
+// Quote Client → job Client (clientName, the jobs-list Client column).
+// Quote Contact → job Contact (clientCompany, the line under Client).
+// The job number stays blank. Staff add it themselves. Description is the quote’s
+// job description only — no generated number in the title.
 function quoteJobFields(quote) {
-  const company = String(quote.client || '').trim().slice(0, 120);
-  const contact = String(quote.contactName || '').trim().slice(0, 120);
-  const clientName = contact || company;
-  const clientCompany = contact && contact.toLowerCase() !== company.toLowerCase() ? company : '';
+  const clientName = String(quote.client || '').trim().slice(0, 120);
+  const clientCompany = String(quote.contactName || '').trim().slice(0, 120);
   return { clientName, clientCompany, description: String(quote.description || '').trim().slice(0, 2000) };
-}
-// Next whole number above the highest all-digit job number, skipping anything already taken.
-function nextJobNumber(jobs) {
-  const taken = new Set(jobs.map(j => norm(j.jobNumber)));
-  let max = 0;
-  for (const j of jobs) {
-    if (/^\d{1,12}$/.test(String(j.jobNumber || ''))) {
-      const n = Number(j.jobNumber);
-      if (Number.isSafeInteger(n) && n > max) max = n;
-    }
-  }
-  for (let n = max + 1; n < max + 10000; n++) {
-    const candidate = String(n);
-    if (!JOBNUM_RE.test(candidate) || RESERVED.has(norm(candidate)) || taken.has(norm(candidate))) continue;
-    return candidate;
-  }
-  let fallback;
-  do { fallback = 'Q' + id(6); } while (!JOBNUM_RE.test(fallback) || RESERVED.has(norm(fallback)) || taken.has(norm(fallback)));
-  return fallback;
 }
 // One job per quote. A previous attempt that saved the job but not the quote is reused.
 async function createJobFromQuote(quote) {
@@ -1202,39 +1187,30 @@ async function createJobFromQuote(quote) {
     const linked = await loadJob(quote.jobId);
     if (linked) return linked;
   }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const jobs = await allJobs();
-    const existing = jobs.find(j => j.quoteId === quote.id);
-    if (existing) return existing;
-    const fields = quoteJobFields(quote);
-    if (!fields.clientName) throw httpError(400, 'Add a client.');
-    const jobNumber = nextJobNumber(jobs);
-    let jid = id(6);
-    while (jobs.some(j => j.id === jid)) jid = id(6);
-    const job = {
-      id: jid,
-      token: token(),
-      jobNumber,
-      description: fields.description,
-      clientName: fields.clientName,
-      clientCompany: fields.clientCompany,
-      clientEmail: '',
-      clientPhone: '',
-      quoteId: quote.id,
-      access: 'private',
-      createdAt: now(),
-      versions: []
-    };
-    const clash = (await allJobs()).find(j => j.quoteId === quote.id || norm(j.jobNumber) === norm(jobNumber));
-    if (clash) {
-      if (clash.quoteId === quote.id) return clash;
-      continue;
-    }
-    await fsp.mkdir(path.join(FILES, job.id), { recursive: true });
-    await saveJob(job);
-    return job;
-  }
-  throw httpError(500, 'Could not create a job for this quote.');
+  const jobs = await allJobs();
+  const existing = jobs.find(j => j.quoteId === quote.id);
+  if (existing) return existing;
+  const fields = quoteJobFields(quote);
+  if (!fields.clientName) throw httpError(400, 'Add a client.');
+  let jid = id(6);
+  while (jobs.some(j => j.id === jid)) jid = id(6);
+  const job = {
+    id: jid,
+    token: token(),
+    jobNumber: '',
+    description: fields.description,
+    clientName: fields.clientName,
+    clientCompany: fields.clientCompany,
+    clientEmail: '',
+    clientPhone: '',
+    quoteId: quote.id,
+    access: 'private',
+    createdAt: now(),
+    versions: []
+  };
+  await fsp.mkdir(path.join(FILES, job.id), { recursive: true });
+  await saveJob(job);
+  return job;
 }
 
 async function handlePublicQuote(req, res, qid, action, m, k) {
@@ -1278,7 +1254,7 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
 }
 
 const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-const numPath = job => `${B}/${encodeURIComponent(job.jobNumber)}`;
+const numPath = job => `${B}/${encodeURIComponent(job.jobNumber || job.id)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
 function secureUrl(req, job) { return `${origin(req)}${numPath(job)}?k=${job.token}`; }
 function publicVersion(job, v, q) {
@@ -1301,7 +1277,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1333,9 +1309,10 @@ async function notifyQuote(req, quote, response, job) {
   const jobLine = String(quote.description || '').split('\n')[0].trim();
   const label = response.type === 'accept' ? 'CONFIRMED' : 'CHANGES REQUESTED';
   const studioLink = origin(req) + `${B}/studio/quote/${quote.id}`;
-  const proofLink = job ? origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}` : '';
+  const proofLink = job ? origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}` : '';
   const lines = [
     `${label} — Quote for ${quote.client}`, '',
+    `Client: ${quote.client}`,
     `Contact: ${quote.contactName || '(none)'}`,
     `Date: ${quote.date}`,
     `Job: ${quote.description || '(no description)'}`,
@@ -1343,7 +1320,7 @@ async function notifyQuote(req, quote, response, job) {
     `By: ${response.name}`,
     `When: ${new Date(response.at).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
     response.note ? `Note:\n${response.note}\n` : '(no note)',
-    ...(job ? [`Proof job: ${job.jobNumber}`, `Open job in studio: ${proofLink}`] : []),
+    ...(job ? [`Proof job number: ${job.jobNumber || '(not set — add it in the studio)'}`, `Open job in studio: ${proofLink}`] : []),
     `Open in studio: ${studioLink}`
   ].join('\n');
   await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
@@ -1448,7 +1425,7 @@ async function handle(req, res) {
   // client API — keyed by job number (+ optional secure key k)
   if ((r = p.match(/^\/api\/review\/([^/]+)(\/attachments|\/decision)?$/))) {
     if (tooManyMisses(req)) return err(res, 429, 'Too many attempts — please try again later.');
-    const job = await jobByNumber(r[1]);
+    const job = await jobByRef(r[1]);
     if (!job) { miss(req); return err(res, 404, 'We couldn’t find a proof with that job number.'); }
     if (!canView(job, k)) { miss(req); return err(res, 403, 'This proof is private — please use the secure link YBI sent you.'); }
     if (!r[2] && m === 'GET') return send(res, 200, publicJob(job, k || null));
@@ -1529,7 +1506,7 @@ async function handle(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       return m === 'HEAD' ? res.end() : res.end(pdf);
     }
-    if (p === '/api/jobs' && m === 'GET') { const js = await allJobs(); js.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); return send(res, 200, js.map(j => studioJob(req, j))); }
+    if (p === '/api/jobs' && m === 'GET') { const js = await allJobs(); js.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))); return send(res, 200, js.map(j => studioJob(req, j))); }
     if (p === '/api/jobs' && m === 'POST') {
       const b = await readJSON(req); const num = String(b.jobNumber || '').trim();
       if (!String(b.clientName || '').trim() || !num) return err(res, 400, 'Client name and job number are required.');
@@ -1566,9 +1543,13 @@ async function handle(req, res) {
           const b = await readJSON(req);
           if ('jobNumber' in b) {
             const num = String(b.jobNumber ?? '').trim();
-            if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
-            if (norm(num) !== norm(job.jobNumber) && await jobByNumber(num)) return err(res, 409, `Job ${num} already exists.`);
-            job.jobNumber = num;
+            if (!num) {
+              if (job.jobNumber) return err(res, 400, 'Job number is required.');
+            } else {
+              if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
+              if (norm(num) !== norm(job.jobNumber) && await jobByNumber(num)) return err(res, 409, `Job ${num} already exists.`);
+              job.jobNumber = num;
+            }
           }
           if ('clientName' in b) {
             const name = String(b.clientName ?? '').trim().slice(0, 120);
@@ -1629,7 +1610,7 @@ async function handle(req, res) {
 
   // proof + attachment files:  /{jobNumber}/file/v{n}  |  /{jobNumber}/file/v{n}/{page}  |  /{jobNumber}/file/v{n}/zip  |  /{jobNumber}/file/a{id}
   if ((r = p.match(/^\/([^/]+)\/file\/(v|a)(\w+)(?:\/([A-Za-z0-9]+))?$/)) && (m === 'GET' || m === 'HEAD')) {
-    const job = await jobByNumber(r[1]);
+    const job = await jobByRef(r[1]);
     if (!job || !(canView(job, k) || isStudio(req))) { miss(req); return err(res, 404, 'Not found'); }
     if (r[2] === 'a') {
       if (r[4]) return err(res, 404, 'Not found');
