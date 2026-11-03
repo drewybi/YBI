@@ -31,7 +31,8 @@ function render() {
     <h1 class="h1">${head[0]} <span class="ol">${head[1]}</span></h1>
     <div class="meta">
      <div><span class="k">Job number</span><b>${esc(job.jobNumber)}</b></div>
-     <div><span class="k">Client</span>${esc(job.clientName)}${job.clientCompany ? ' · ' + esc(job.clientCompany) : ''}</div>
+     <div><span class="k">Client</span>${esc(job.clientName)}</div>
+     <div><span class="k">Contact</span>${esc(job.clientCompany) || '—'}</div>
      <div style="grid-column:span 2"><span class="k">Job description</span>${esc(job.description) || '—'}</div>
      <div><span class="k">Version</span>V${latest.n} <span class="dim small">· ${fmtDate(latest.uploadedAt)}</span></div>
     </div>`) + `<div class="wrap"><div class="jgrid">

@@ -2,7 +2,8 @@ import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, uploadFiles, toast,
 import { addDays, compareEvents, hhmm, isoParts, mergeOrder, minutesOf, movedOrder, movedTimes, sameSpan } from './cal-move.mjs';
 import { QUOTE_LINES, QUOTE_VALIDITY, centsToInput, milliToQty, priceToCents, qtyToMilli, quoteTotals } from './quote-math.mjs';
 const app = $('#app');
-const jobHref = j => `${B}/studio/${encodeURIComponent(j.jobNumber)}`;
+const jobKey = j => j.jobNumber || j.id;
+const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 
@@ -58,7 +59,7 @@ async function dashboard() {
   const tb = $('tbody', app);
   const draw = () => {
     const list = jobs.filter(j => (filter === 'all' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
-    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${esc(j.jobNumber)}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
+    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
       : `<tr><td colspan="6" class="empty">${jobs.length ? 'No jobs match.' : 'No proofs yet — hit “New job” to create the first one.'}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
   };
@@ -96,14 +97,16 @@ async function jobPage(key, showV) {
   const latest = j.versions.at(-1); const sel = j.versions.find(v => v.n === +showV) || latest;
   const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\nYBI Creative`)}` : '';
   const phone = j.clientPhone ? `<br><a href="tel:${esc(j.clientPhone)}" class="mute">${esc(j.clientPhone)}</a>` : '';
-  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(j.jobNumber), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div>${chip(j.status)}</div>`) +
+  const heading = j.jobNumber || String(j.description || '').split('\n')[0].trim().slice(0, 80);
+  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div>${chip(j.status)}</div>`) +
   `<div class="wrap">
    <div class="panel" style="margin-top:36px"><div class="ver__h"><span class="k" style="margin:0">Client page — send this to ${esc(j.clientName)}</span><button type="button" class="btn btn--sm btn--ghost" data-edit>Edit job</button></div>
     <div class="linkbox"><input readonly value="${esc(j.secureUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
-    <p class="small mute" style="margin:10px 0 0">Private link only. The job number alone won’t open this proof — send this link.</p>
+    <p class="small mute" style="margin:10px 0 0">${j.jobNumber ? 'Private link only. The job number alone won’t open this proof — send this link.' : 'No job number yet. Add one in Edit job and the client link will use it.'}</p>
     <div class="meta">
      <div><span class="k">Description</span>${esc(j.description) || '<span class="dim">—</span>'}</div>
-     <div><span class="k">Client contact</span>${esc(j.clientName)}${phone}${j.clientEmail ? `<br><a href="mailto:${esc(j.clientEmail)}" class="mute">${esc(j.clientEmail)}</a>` : ''}</div>
+     <div><span class="k">Client</span>${esc(j.clientName)}${phone}${j.clientEmail ? `<br><a href="mailto:${esc(j.clientEmail)}" class="mute">${esc(j.clientEmail)}</a>` : ''}</div>
+     <div><span class="k">Contact</span>${esc(j.clientCompany) || '<span class="dim">—</span>'}</div>
      <div><span class="k">Versions</span>${j.versions.length || 0}</div>
      <div><span class="k">Created</span>${fmtDate(j.createdAt)}</div>
     </div></div>
@@ -829,7 +832,7 @@ form.onsubmit = async e => {
   e.preventDefault(); const m = $('#n-msg'), go = $('#n-go'); m.className = 'msg';
   const data = Object.fromEntries(new FormData(form));
   data.colour = pickedColour();
-  if (!data.jobNumber.trim() || !data.clientName.trim()) { m.className = 'msg err'; m.textContent = 'Job number and client name are required.'; return; }
+  if (!data.jobNumber.trim() || !data.clientName.trim()) { m.className = 'msg err'; m.textContent = 'Job number and client are required.'; return; }
   const problem = newFiles.length ? proofError(newFiles) : '';
   if (problem) { m.className = 'msg err'; m.textContent = problem; return; }
   go.disabled = true;
@@ -903,8 +906,9 @@ editForm.onsubmit = async e => {
     clientPhone: $('#e-phone').value.trim(),
     description: $('#e-desc').value.trim()
   };
-  if (!data.jobNumber || !data.clientName) { m.className = 'msg err'; m.textContent = 'Job number and client name are required.'; return; }
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(data.jobNumber)) { m.className = 'msg err'; m.textContent = 'Job number can only use letters, numbers, - _ or . (no spaces).'; return; }
+  if (!data.clientName) { m.className = 'msg err'; m.textContent = 'Client is required.'; return; }
+  if (data.jobNumber && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(data.jobNumber)) { m.className = 'msg err'; m.textContent = 'Job number can only use letters, numbers, - _ or . (no spaces).'; return; }
+  if (!data.jobNumber && ctx.jobNumber) { m.className = 'msg err'; m.textContent = 'Job number is required.'; return; }
   let colour = 'grey', dateVal = '';
   if (ctx.calOk) {
     const picked = $('#editForm input[name="colour"]:checked');
@@ -912,7 +916,7 @@ editForm.onsubmit = async e => {
     dateVal = $('#e-caldate').value;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) { m.className = 'msg err'; m.textContent = 'Pick a date on the calendar.'; return; }
   }
-  if (data.jobNumber.toLowerCase() !== ctx.jobNumber.toLowerCase()) {
+  if (ctx.jobNumber && data.jobNumber.toLowerCase() !== ctx.jobNumber.toLowerCase()) {
     if (!confirm(`Change the job number from ${ctx.jobNumber} to ${data.jobNumber}? The client link will use the new number. The secure key stays the same — send the updated link.`)) return;
   }
   go.disabled = true;
@@ -930,7 +934,7 @@ editForm.onsubmit = async e => {
     toast('Job details saved');
     const next = jobHref(updated);
     if (location.pathname !== next) history.replaceState(null, '', next);
-    await jobPage(updated.jobNumber);
+    await jobPage(jobKey(updated));
   } catch (err) { m.className = 'msg err'; m.textContent = err.message; }
   finally { go.disabled = false; }
 };
@@ -987,7 +991,9 @@ function paintQuoteTotals(root) {
 function quoteShare(quote) {
   if (!quote || !quote.clientUrl) return '';
   const notes = (quote.responses || []).map(r => `<div class="fb fb--${r.type === 'accept' ? 'approve' : 'changes'}"><div class="small dim">${r.type === 'accept' ? 'Accepted' : 'Changes requested'} · ${esc(r.name)} · ${fmtDate(r.at)}</div>${r.note ? `<p>${esc(r.note)}</p>` : ''}</div>`).join('');
-  return `<section class="q-share panel" style="margin-top:28px"><span class="k">Client link</span><p class="small mute" style="margin:6px 0 12px">Send this private link. The client can accept the quote or request changes. Without the key, the page stays closed.</p><div class="linkbox"><input readonly value="${esc(quote.clientUrl)}" aria-label="Client quote link"><button type="button" class="btn btn--sm" data-q-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(quote.clientUrl)}" target="_blank" rel="noopener">Open</a></div>${notes}</section>`;
+  const jobRef = quote.jobNumber || quote.jobId;
+  const jobLink = jobRef ? `<p class="small" data-quote-job style="margin:14px 0 0"><a class="lnk" href="${B}/studio/${encodeURIComponent(jobRef)}">${quote.jobNumber ? `Job ${esc(quote.jobNumber)}` : 'Job'}</a> is in the job list${quote.jobNumber ? '' : ' — add the job number there'}. Proofs stay empty until a file is uploaded.</p>` : '';
+  return `<section class="q-share panel" style="margin-top:28px"><span class="k">Client link</span><p class="small mute" style="margin:6px 0 12px">Send this private link. The client can accept the quote or request changes. Without the key, the page stays closed.</p><div class="linkbox"><input readonly value="${esc(quote.clientUrl)}" aria-label="Client quote link"><button type="button" class="btn btn--sm" data-q-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(quote.clientUrl)}" target="_blank" rel="noopener">Open</a></div>${notes}${jobLink}</section>`;
 }
 async function quotePage(rawId) {
   const id = rawId || '';
@@ -1008,7 +1014,7 @@ async function quotePage(rawId) {
     <section class="q-recent">
       <div class="toolbar"><p class="eyebrow" style="margin:0">Recent quotes</p></div>
       <table class="jobs"><thead><tr><th>Client</th><th class="hide-m">Contact</th><th>Date</th><th class="hide-m">Valid</th><th>Total</th><th class="hide-m">Updated</th></tr></thead>
-      <tbody>${quotes.length ? quotes.map(q => `<tr class="row${quote && q.id === quote.id ? ' on' : ''}" data-href="${B}/studio/quote/${q.id}"><td><b>${esc(q.client)}</b>${q.description ? `<div class="small dim">${esc(q.description.slice(0, 80))}${q.description.length > 80 ? '…' : ''}</div>` : ''}</td><td class="hide-m">${esc(q.contactName || '—')}</td><td>${esc(fmtUTC(q.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</td><td class="hide-m">${esc(q.validity)}</td><td class="num">${aud(q.total)}${q.status && q.status !== 'open' ? `<div class="small dim">${esc(q.status === 'accepted' ? 'Accepted' : 'Changes requested')}</div>` : ''}</td><td class="hide-m small dim">${fmtDate(q.updatedAt)}</td></tr>`).join('') : `<tr><td colspan="6" class="empty">No quotes yet. Save one here and the rest of the studio can reopen it.</td></tr>`}</tbody></table>
+      <tbody>${quotes.length ? quotes.map(q => `<tr class="row${quote && q.id === quote.id ? ' on' : ''}" data-href="${B}/studio/quote/${q.id}"><td><b>${esc(q.client)}</b>${q.description ? `<div class="small dim">${esc(q.description.slice(0, 80))}${q.description.length > 80 ? '…' : ''}</div>` : ''}</td><td class="hide-m">${esc(q.contactName || '—')}</td><td>${esc(fmtUTC(q.date, { day: 'numeric', month: 'short', year: 'numeric' }))}</td><td class="hide-m">${esc(q.validity)}</td><td class="num">${aud(q.total)}${q.status && q.status !== 'open' ? `<div class="small dim">${esc(q.status === 'accepted' ? 'Accepted' : 'Changes requested')}${q.jobNumber ? ` · ${esc(q.jobNumber)}` : ''}</div>` : ''}</td><td class="hide-m small dim">${fmtDate(q.updatedAt)}</td></tr>`).join('') : `<tr><td colspan="6" class="empty">No quotes yet. Save one here and the rest of the studio can reopen it.</td></tr>`}</tbody></table>
     </section>
     ${missing ? '<p class="msg err">No quote with that id.</p>' : ''}
     ${quoteShare(quote)}
@@ -1024,8 +1030,8 @@ async function quotePage(rawId) {
       </header>
       <div class="q-body">
       <div class="q-fields">
-        <div class="field"><label for="q-client">Client</label><input id="q-client" name="client" required maxlength="160" autocomplete="organization" value="${esc(quote ? quote.client : '')}" placeholder="Business name"></div>
-        <div class="field"><label for="q-contact">Contact name</label><input id="q-contact" name="contactName" maxlength="160" autocomplete="name" value="${esc(quote ? quote.contactName : '')}" placeholder="Who the quote is for"></div>
+        <div class="field"><label for="q-client">Client</label><input id="q-client" name="client" required maxlength="160" autocomplete="organization" value="${esc(quote ? quote.client : '')}"></div>
+        <div class="field"><label for="q-contact">Contact</label><input id="q-contact" name="contactName" maxlength="160" autocomplete="name" value="${esc(quote ? quote.contactName : '')}"></div>
         <div class="field"><label for="q-date">Date</label><input id="q-date" name="date" type="date" required min="2000-01-01" max="2100-12-31" value="${esc(dateValue)}"></div>
         <div class="field"><label for="q-valid">Quote validation</label><select id="q-valid" name="validity">${QUOTE_VALIDITY.map(v => `<option value="${esc(v)}"${v === validity ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
         <div class="field field--full"><label for="q-desc">Job description</label><textarea id="q-desc" name="description" maxlength="4000" placeholder="What’s being quoted — size, stock, finish…">${esc(quote ? quote.description : '')}</textarea></div>

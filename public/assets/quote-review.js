@@ -1,7 +1,8 @@
 import { B, $, esc, fmtDate, api, toast, engineBand } from './common.js';
 
-// The confirmation email is addressed to the public studio inbox on ybicreative.com.au.
-// Staff alerts still go through the proof notification list when the decision is saved.
+// Backup draft to the public studio inbox. The server emails the studio
+// notification list (the same addresses as proof alerts) when this decision
+// is saved, so staff are notified even if the client never sends this draft.
 const CONFIRM_TO = 'website@ybicreative.com.au';
 const app = $('#app');
 const parts = location.pathname.slice(B.length).split('/').filter(Boolean);
