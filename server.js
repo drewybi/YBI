@@ -89,11 +89,6 @@ function versionPages(v) {
   if (v && typeof v.stored === 'string' && v.stored) return [{ originalName: v.originalName || 'file', stored: v.stored, size: Number(v.size) || 0 }];
   return [];
 }
-function versionFileLine(v) {
-  const pages = versionPages(v);
-  if (pages.length <= 1) return `File: ${v.originalName}`;
-  return `Files (${pages.length}): ${pages.map(f => f.originalName).join(', ')}`;
-}
 function checkProofSet(files) {
   if (!files.length) return { error: PROOF_EMPTY_ERROR, status: 400 };
   if (files.length > MAX_VERSION_FILES) return { error: `A version can include up to ${MAX_VERSION_FILES} images.`, status: 400 };
@@ -370,13 +365,13 @@ async function addUploadedVersion(req, res, job, note, incoming) {
     version.size = committed.reduce((s, f) => s + f.size, 0);
     if (committed.length > 1) version.files = committed.map(f => ({ originalName: f.originalName, stored: f.stored, size: f.size }));
     fresh.versions.push(version);
+    applyArchive(fresh);
     await saveJob(fresh);
   } catch (e) {
     await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
     await Promise.all(committed.map(f => fsp.rm(f.dest, { force: true })));
     throw e;
   }
-  if (fresh.versions.length > 1) await notifyVersionUploaded(req, fresh, version);
   return send(res, 201, studioJob(req, fresh));
 }
 
@@ -421,10 +416,69 @@ function cleanStickies(raw) {
   return out;
 }
 function status(job) {
-  const v = job.versions[job.versions.length - 1];
-  if (!v) return 'draft';
-  const d = [...v.feedback].reverse().find(f => f.type === 'approve' || f.type === 'changes');
+  if (!job.versions || !job.versions.length) return 'draft';
+  const d = latestDecision(job);
   return d ? (d.type === 'approve' ? 'approved' : 'changes_requested') : 'awaiting_review';
+}
+// Archive is studio-only. Two days (48 hours) after the client approves the latest
+// version, the job leaves All and stays under Archive. archivedAt is that approval
+// time plus 48 hours. A newer version, or a latest version that is no longer approved,
+// clears it. The job file is kept.
+const ARCHIVE_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
+function latestDecision(job) {
+  const versions = job && job.versions;
+  const v = versions && versions[versions.length - 1];
+  if (!v) return null;
+  return [...(v.feedback || [])].reverse().find(f => f && (f.type === 'approve' || f.type === 'changes')) || null;
+}
+function archivedAtFor(job, atMs = Date.now()) {
+  const d = latestDecision(job);
+  if (!d || d.type !== 'approve' || !d.at) return null;
+  const approved = Date.parse(d.at);
+  if (!Number.isFinite(approved)) return null;
+  const due = approved + ARCHIVE_AFTER_MS;
+  if (due > atMs) return null;
+  return new Date(due).toISOString();
+}
+function applyArchive(job, atMs = Date.now()) {
+  const next = archivedAtFor(job, atMs);
+  const cur = typeof job.archivedAt === 'string' && job.archivedAt ? job.archivedAt : null;
+  if (cur === next) return false;
+  if (next) job.archivedAt = next;
+  else delete job.archivedAt;
+  return true;
+}
+// Writes archivedAt only. Leaves updatedAt so a sweep is not a new edit.
+async function commitArchive(job) {
+  job.access = 'private';
+  const t = jobPath(job.id) + '.tmp';
+  await fsp.writeFile(t, JSON.stringify(job, null, 2));
+  await fsp.rename(t, jobPath(job.id));
+}
+async function persistJobArchive(job, atMs = Date.now()) {
+  if (!job) return null;
+  if (!applyArchive(job, atMs)) return job;
+  const fresh = await loadJob(job.id);
+  if (!fresh) return null;
+  if (!applyArchive(fresh, atMs)) return fresh;
+  await commitArchive(fresh);
+  return fresh;
+}
+async function sweepArchives(atMs = Date.now()) {
+  const jobs = await allJobs();
+  const out = [];
+  for (const job of jobs) {
+    const next = await persistJobArchive(job, atMs);
+    if (next) out.push(next);
+  }
+  return out;
+}
+const ARCHIVE_SWEEP_MS = 60 * 60 * 1000;
+function startArchiveSweep() {
+  const run = () => { sweepArchives().catch(e => console.error('[archive]', e && e.message)); };
+  run();
+  const timer = setInterval(run, ARCHIVE_SWEEP_MS);
+  if (timer.unref) timer.unref();
 }
 // Drop the unread dot once nothing newer than the last studio visit remains.
 function syncUnread(job) {
@@ -1282,7 +1336,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1350,23 +1404,6 @@ async function notify(req, job, fb, v) {
   ].join('\n');
   await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
   await deliverStaffMail({ subject: `[YBI Proof] ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines, replyTo: job.clientEmail || undefined });
-}
-
-// New proof on a job that already has one. The first file (create + V1, or the
-// first upload onto an empty job) is not mailed — that would fire for every new job.
-async function notifyVersionUploaded(req, job, v) {
-  const studioLink = origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`;
-  const lines = [
-    `UPDATED — Job ${job.jobNumber} (V${v.n})`, '',
-    `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
-    `Job: ${job.description}`,
-    versionFileLine(v),
-    `When: ${new Date(v.uploadedAt).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} (Melbourne)`, '',
-    v.studioNote ? `Note to client:\n${v.studioNote}\n` : '(no note to the client)',
-    `Open in studio: ${studioLink}`
-  ].join('\n');
-  await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
-  await deliverStaffMail({ subject: `[YBI Proof] UPDATED: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines });
 }
 
 // ---------- auth ----------
@@ -1457,7 +1494,7 @@ async function handle(req, res) {
       const atts = (b.attachments || []).map(a => job.pendingAttachments && job.pendingAttachments[a]).filter(Boolean);
       atts.forEach(a => delete job.pendingAttachments[a.id]);
       const fb = { id: id(6), type: b.type, name, note, attachments: atts, stickies, at: now(), ip: req.socket.remoteAddress, via: k === job.token ? 'secure-link' : 'job-number' };
-      v.feedback.push(fb); await notify(req, job, fb, v); job.unread = true; await saveJob(job);
+      v.feedback.push(fb); await notify(req, job, fb, v); job.unread = true; applyArchive(job); await saveJob(job);
       return send(res, 200, publicJob(job, k || null));
     }
     return err(res, 405, 'Method not allowed');
@@ -1484,6 +1521,7 @@ async function handle(req, res) {
       if (idx < 0) return err(res, 404, `No version V${n} on this job.`);
       fresh.versions.splice(idx, 1);
       syncUnread(fresh);
+      applyArchive(fresh);
       await saveJob(fresh);
       return send(res, 200, studioJob(req, fresh));
     }
@@ -1512,7 +1550,7 @@ async function handle(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       return m === 'HEAD' ? res.end() : res.end(pdf);
     }
-    if (p === '/api/jobs' && m === 'GET') { const js = await allJobs(); js.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))); return send(res, 200, js.map(j => studioJob(req, j))); }
+    if (p === '/api/jobs' && m === 'GET') { const js = await sweepArchives(); js.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))); return send(res, 200, js.map(j => studioJob(req, j))); }
     if (p === '/api/jobs' && m === 'POST') {
       const b = await readJSON(req); const num = String(b.jobNumber || '').trim();
       if (!String(b.clientName || '').trim() || !num) return err(res, 400, 'Client name and job number are required.');
@@ -1544,7 +1582,7 @@ async function handle(req, res) {
       const job = (/^[a-f0-9]{12}$/.test(r[1]) && await loadJob(r[1])) || await jobByNumber(r[1]);
       if (!job) return err(res, 404, 'No job with that number.');
       if (!r[2]) {
-        if (m === 'GET') { await ensurePrivate(job); return send(res, 200, studioJob(req, job)); }
+        if (m === 'GET') { await ensurePrivate(job); const synced = await persistJobArchive(job); return send(res, 200, studioJob(req, synced || job)); }
         if (m === 'PATCH') {
           const b = await readJSON(req);
           if ('jobNumber' in b) {
@@ -1669,6 +1707,7 @@ function createAppServer() {
 }
 
 if (require.main === module) {
+  startArchiveSweep();
   createAppServer().listen(PORT, HOST, () => {
     console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · job pages: ${B}/{jobNumber})`);
     console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
@@ -1684,4 +1723,5 @@ if (require.main === module) {
 module.exports = {
   handle, createAppServer, parseNotifyAddresses, DEFAULT_NOTIFY_EMAIL, DEFAULT_NOTIFY_EMAILS,
   loadSettings, notifyRecipients, setMailerForTests, readMultipartFiles,
+  ARCHIVE_AFTER_MS, archivedAtFor,
 };

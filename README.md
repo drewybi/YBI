@@ -71,10 +71,11 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 2. On the job page:
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
-3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout. The dashboard's *Latest client activity* lists every response.
-4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable. Staff on the notification list are emailed about that new version. The first proof on a job does not send that email.
+3. When the client responds, the job shows **Approved** or **Changes requested**, with a yellow dot until you open it. Their note, sticky markers and attachments appear under *Client feedback & history*. **Download changes PDF** builds a file of that version with the numbered stickies drawn on the artwork and a last page of fillable checkboxes (one per change, plus the general note) so you can tick them on screen or on a printout.
+4. To send a revision, use **Upload new version (V2)**, with an optional note to the client. The same client URL now shows V2 and returns to *Awaiting review*. Earlier versions stay viewable. Uploading a proof does not email staff.
 5. **Edit job** updates the job number, description, client name, business, email and phone, plus the calendar colour and date. Proof files, the secure key, and the order within a day stay. The calendar chip text is the description, so editing that updates the chip. Changing the date clears that day’s order. Changing the job number changes the client link (the key stays the same) — copy the new link and send it. A job number that already belongs to another job is refused.
 6. **Remove proof**, next to a version under *Client feedback & history*, deletes that PDF/JPG/PNG and any client notes, stickies or files that were on it. The job, client link, calendar entry and the other versions stay. Confirm before it goes. If that was the only proof, the job remains ready for a new upload and the client page says the proof is still being prepared. `DELETE /proof/api/jobs/{job number or id}/versions/{n}` is studio-only.
+7. **Archive.** Two days (48 hours) after the client approves the latest version, the job leaves **All** and the **Approved** filter. It stays on the jobs page under **Archive**, with the same status chip. Nothing is deleted: the proof, client link and calendar entry stay, and the job page still opens from Archive. `archivedAt` on the job file is the approval time plus 48 hours. The check runs when the jobs list or a job is opened, again when the server starts, and hourly while it is running. It does not change `updatedAt`. Uploading a newer version, or removing the approved version so the latest one is no longer an approval from two days ago, clears `archivedAt` and the job returns to All.
 
 **Staff calendar** (`/proof/studio/calendar`) shows every proof job, plus deadlines, meetings and notes. It does not use Google Calendar. Times are Australia/Melbourne. A job is placed on the **Date on Calendar** chosen when it is created. If that was left blank, it uses a due date on the job (`dueAt`, `dueDate`, `deadline` or `calendarDate`) and otherwise the day the job was created in Melbourne. New jobs show up on their own — nothing is copied in by hand. The chip’s only text is the job description from **New job** (no job number, client name, or “Job” label). A blank description leaves a colour-only chip. Open a job from the day list or from **Open job** on its calendar card. Changing the day or the colour does not edit the proof; those overrides live in `data/calendar-events.json` (`jobOverrides`). The colour and the date chosen on **New job** are saved the same way. Staff events are in the same file (`events`): title, start, optional end, optional notes, optional all-day, a colour, and an optional `dayOrder`. Colours are red, blue, green, yellow, purple or grey (grey if unset). Drag a chip to another day to reschedule it. In week view, drop a timed event on a time to change the clock. Slide a chip up or down between the others on the same day to change that day’s order — month view and the week-day list both do this, and a reload keeps it. `dayOrder` is a whole number, lower first; chips with no order keep the previous all-day-then-time order and sit after anything that has been placed. Moving a chip to a different day clears its order so it doesn’t jump the queue. The API is `/proof/api/calendar/events` for staff events and `/proof/api/calendar/jobs/{job number or id}` to set a job’s day, colour and `dayOrder`. `PATCH /proof/api/calendar/order` with `{ "date", "ids" }` saves one day’s order in a single write. Creating a job accepts `colour` and `calendarDate`. Both use the same studio login.
 
@@ -109,7 +110,7 @@ An approved version is locked. A decision made on an out-of-date version is reje
 ## Notifications
 
 Every approval or change request:
-1. shows on the **studio dashboard** (activity feed, status, unread dot; the dashboard refreshes every 30 s)
+1. shows on the **studio dashboard** (status and unread dot; the dashboard refreshes every 30 s)
 2. is added to **`data/notifications.log`**
 3. is **emailed** to every address in **Studio → Settings**, *if* SMTP is configured:
 
@@ -129,9 +130,9 @@ A list saved in Studio → Settings replaces both the built-in addresses and `NO
 
 The client email includes the job number, client, the client's note, sticky positions, links to their attachments and a link to the job in the studio. Times are Australia/Melbourne. Its reply-to is the client's email.
 
-Quote confirmations and quote change requests use this same recipient list and the same From address. They do not change who a proof approval, change request, or new-version alert is sent to. A quote confirmation also names the proof job that was created from it.
+Quote confirmations and quote change requests use this same recipient list and the same From address. They do not change who a proof approval or change request is sent to. A quote confirmation also names the proof job that was created from it.
 
-Uploading a **new proof version** emails the same people, with the subject `[YBI Proof] UPDATED: {jobNumber} — {client} (V{n})`, only when the job already had a proof. Creating a job and uploading its first file does not send one, and neither does the first upload onto a job that has no versions left. That alert is also written to `data/notifications.log`. It includes the job number, client, file name (or each image name, when a version has several), studio note, Melbourne time and the studio link.
+Uploading a proof, including a new version on a job that already has one, does not email staff and is not written to `data/notifications.log`.
 
 ## Where things live
 
@@ -140,12 +141,12 @@ ybi-approval/
   server.js            # the whole backend (Node built-ins only)
   public/              # front-end: login.html, studio.html, review.html, assets/ (css, js, fonts, logo), vendor/pdfjs (PDF.js 4.10, bundled, works offline)
   data/                # created on first run. Back this folder up.
-    jobs/<id>.json     # one file per job: details, token, versions, feedback
+    jobs/<id>.json     # one file per job: details, token, versions, feedback, archivedAt once an approval is two days old
     files/<id>/        # proof files (v1-xxxx.pdf, v2-…) and feedback/ (client attachments)
     settings.json      # notification emails (comma- or semicolon-separated; blank uses the default list)
     calendar-events.json  # staff events, plus each job’s calendar colour, date and day order
     quotes.json        # staff quotes (client, lines, validation). Totals are recalculated when a quote is opened
-    notifications.log  # plain-text log of every approve / change request, plus new-version alerts
+    notifications.log  # plain-text log of every approve / change request, plus quote responses
     secret.key         # signs the studio login cookie
   samples/             # test proofs (scripts/make-samples.py)
   scripts/smoke-test.sh  # API end-to-end test (curl): routes, duplicates, private jobs, full flow

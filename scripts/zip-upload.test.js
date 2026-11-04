@@ -164,8 +164,8 @@ function req(server, method, urlPath, { headers = {}, body, studio = true } = {}
   const v2file = await req(server, 'GET', viaForm.json.versions[1].url, { studio: false });
   check(v2file.body.equals(packed), 'the second zip is also the original bytes');
   const log = fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8');
-  check(log.includes(`UPDATED — Job ${num} (V2)`) && log.includes('File: Next-pack.zip'), 'a new zip version notifies with the zip name');
-  check(!log.includes('2-mid.png'), 'the notification does not list files from inside the zip');
+  check(!log.includes(`UPDATED — Job ${num}`), 'a new zip version does not notify staff');
+  check(!log.includes('2-mid.png') && !log.includes('Next-pack.zip'), 'the notification log does not list the uploaded zip or the files inside it');
 
   const plain = await req(server, 'POST', `/api/jobs/${job.id}/versions?name=poster.jpg`, { headers: { 'Content-Type': 'image/jpeg' }, body: JPG });
   check(plain.status === 201 && plain.json.versions[2].kind === 'image' && plain.json.versions[2].originalName === 'poster.jpg' && !plain.json.versions[2].downloadAll, 'a raw JPG upload is unchanged');

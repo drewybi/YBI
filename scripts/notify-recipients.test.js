@@ -1,5 +1,6 @@
 'use strict';
-// Recipient list, settings override, approve/changes mail, and V2-only version alerts.
+// Recipient list, settings override, and approve/changes mail.
+// Uploading a proof, including V2+, does not email staff.
 // Uses a temp data dir and a fake mailer — no SMTP and no real inbox.
 const assert = require('assert');
 const fs = require('fs');
@@ -47,6 +48,8 @@ try {
 
 const studioJs = fs.readFileSync(path.join(__dirname, '../public/assets/studio.js'), 'utf8');
 assert.ok(studioJs.includes('Alerts go to these addresses when a client approves or requests changes.'), 'settings help text');
+assert.ok(studioJs.includes('Uploading a proof does not send an alert.'), 'settings say a proof upload does not email');
+assert.ok(!studioJs.includes('new proof version is uploaded'), 'settings no longer promise a version-upload email');
 assert.ok(studioJs.includes("const placeholder = 'drew@ybicreative.com.au, nicola@ybicreative.com.au, rob@ybicreative.com.au'"), 'settings placeholder lists the three addresses');
 assert.ok(!studioJs.includes('data-email type="email"'), 'field accepts a list, not a single email input');
 
@@ -122,15 +125,9 @@ setMailerForTests({
   let v = await up('proof-v1.pdf');
   check(v.status === 201 && sent.length === 0, 'first proof upload does not email');
   v = await up('proof-v2.pdf', 'Phone number fixed');
-  check(v.status === 201 && sent.length === 1, 'V2 emails staff');
-  const updated = sent[0];
-  check(updated.to === THREE, 'V2 goes to the default three addresses');
-  check(updated.subject === `[YBI Proof] UPDATED: ${base}A — Sam Client (V2)`, 'V2 subject');
-  check(updated.replyTo == null, 'version alert does not reply to the client');
-  check(updated.text.includes('Sam Client') && updated.text.includes('Acme') && updated.text.includes('A2 poster'), 'V2 body has client and job');
-  check(updated.text.includes('proof-v2.pdf') && updated.text.includes('Phone number fixed'), 'V2 body has file and studio note');
-  check(updated.text.includes('(Melbourne)') && updated.text.includes(`/studio/${base}A`), 'V2 body has Melbourne time and studio link');
-  check(updated.from === 'proofs@ybicreative.com.au', 'from address unchanged');
+  check(v.status === 201 && sent.length === 0, 'uploading a new version does not email staff');
+  const logAfterUpload = fs.existsSync(path.join(dataDir, 'notifications.log')) ? fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8') : '';
+  check(!logAfterUpload.includes('UPDATED'), 'uploading a new version is not logged as a staff alert');
 
   s = await req(server, 'POST', '/api/settings', { body: JSON.stringify({ notifyEmail: 'one@example.com, nope, two@example.com; one@example.com' }) });
   check(s.json.notifyEmail === 'one@example.com, nope, two@example.com; one@example.com', 'comma list is saved as entered');
@@ -142,27 +139,28 @@ setMailerForTests({
     }),
   });
   check(decision.status === 200 && decision.json.status === 'changes_requested', 'changes request still saves');
-  check(sent.length === 2, 'changes request emails staff');
-  const changes = sent[1];
+  check(sent.length === 1, 'changes request emails staff');
+  const changes = sent[0];
   check(changes.to === 'one@example.com, two@example.com', 'comma/semicolon list sends to each valid address once');
   check(changes.subject === `[YBI Proof] CHANGES REQUESTED: ${base}A — Sam Client (V2)`, 'changes subject');
   check(changes.replyTo === 'client@example.com', 'reply-to stays the client');
   check(changes.text.includes('Please fix the phone') && changes.text.includes('Move the logo'), 'changes body keeps note and sticky');
   check(changes.text.includes('Job ' + base + 'A') && changes.text.includes('(Melbourne)') && changes.text.includes(`/studio/${base}A`), 'changes body keeps job, Melbourne time, studio link');
+  check(changes.from === 'proofs@ybicreative.com.au', 'from address unchanged');
 
   const createdB = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({
     jobNumber: base + 'B', clientName: 'Jo Retailer', clientEmail: 'jo@example.com', description: 'Catalogue',
   }) });
   const jobB = createdB.json;
   v = await req(server, 'POST', `/api/jobs/${jobB.id}/versions?name=cat.pdf`, { headers: { 'Content-Type': 'application/pdf' }, body: Buffer.from('%PDF-1.1\n') });
-  check(v.status === 201 && sent.length === 2, 'another job’s first upload stays quiet');
+  check(v.status === 201 && sent.length === 1, 'another job’s first upload stays quiet');
   const approved = await req(server, 'POST', `/api/review/${base}B/decision?k=${jobB.token}`, {
     studio: false,
     body: JSON.stringify({ type: 'approve', name: 'Jo Retailer', note: 'Looks great', version: 1 }),
   });
   check(approved.status === 200 && approved.json.status === 'approved', 'approve still saves');
-  check(sent.length === 3 && sent[2].subject === `[YBI Proof] APPROVED: ${base}B — Jo Retailer (V1)`, 'approve still emails');
-  check(sent[2].to === 'one@example.com, two@example.com' && sent[2].text.includes('Looks great') && sent[2].replyTo === 'jo@example.com', 'approve uses the saved list, note, and reply-to');
+  check(sent.length === 2 && sent[1].subject === `[YBI Proof] APPROVED: ${base}B — Jo Retailer (V1)`, 'approve still emails');
+  check(sent[1].to === 'one@example.com, two@example.com' && sent[1].text.includes('Looks great') && sent[1].replyTo === 'jo@example.com', 'approve uses the saved list, note, and reply-to');
 
   await req(server, 'POST', '/api/settings', { body: JSON.stringify({ notifyEmail: 'not-an-email' }) });
   const createdC = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({
@@ -174,9 +172,10 @@ setMailerForTests({
     studio: false,
     body: JSON.stringify({ type: 'approve', name: 'Pat', note: 'Ok', version: 1 }),
   });
-  check(bad.status === 200 && sent.length === 3, 'a saved list with no valid address does not send');
+  check(bad.status === 200 && sent.length === 2, 'a saved list with no valid address does not send');
   const log = fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8');
   check(log.includes('APPROVED — Job ' + base + 'C') && log.includes('no valid addresses'), 'the decision is still logged when mail is skipped');
+  check(!log.includes('UPDATED'), 'version uploads never reach the notification log');
 
   const fresh = await loadSettings();
   check(fresh.notifyEmail === 'not-an-email', 'invalid saved text is left visible in settings');
