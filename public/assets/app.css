@@ -126,9 +126,6 @@ main{flex:1;padding-top:var(--hdr)}
 .jobs tr.row{cursor:pointer;transition:background .2s}.jobs tr.row:hover,.jobs tr.row.on{background:var(--bg2)}
 .jobs .num{font-family:var(--display);font-stretch:112%;font-weight:700;letter-spacing:.02em}
 .empty{padding:60px 0;text-align:center;color:var(--dim)}
-.activity{list-style:none;margin:0;padding:0;display:grid;gap:0}
-.activity li{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--line);font-size:.92rem}
-.activity li a{text-decoration:none}.activity li a:hover{color:var(--g)}
 
 /* job detail */
 .jgrid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,1fr);gap:clamp(20px,3vw,44px);margin-top:36px;align-items:start}

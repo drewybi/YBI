@@ -185,8 +185,9 @@ async function parseInPieces(body, contentType) {
   check(v2.status === 201 && v2.json.versions.length === 2, 'a later PDF is the next version');
   check(!Object.prototype.hasOwnProperty.call(JSON.parse(fs.readFileSync(path.join(dataDir, 'jobs', job.id + '.json'), 'utf8')).versions[1], 'files'), 'a single PDF is stored without files[]');
   check(v2.json.versions[1].kind === 'pdf' && !v2.json.versions[1].downloadAll, 'a PDF does not offer a zip');
-  const log = fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8');
-  check(log.includes(`UPDATED — Job ${num}`) && log.includes('File: rev.pdf'), 'a new single-file version still notifies with its file name');
+  const logPath = path.join(dataDir, 'notifications.log');
+  const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+  check(!log.includes(`UPDATED — Job ${num}`) && !log.includes('File: rev.pdf'), 'a new version does not notify staff');
   const client = await req(server, 'GET', `/api/review/${num}?k=${encodeURIComponent(job.token)}`, { studio: false });
   check(client.json.versions.length === 2 && client.json.versions[0].files.length === 2 && client.json.versions[1].url.endsWith('/file/v2?k=' + encodeURIComponent(job.token)), 'the client still receives both versions');
 

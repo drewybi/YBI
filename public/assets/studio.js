@@ -6,11 +6,11 @@ const jobKey = j => j.jobNumber || j.id;
 const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
+const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review], ['changes_requested', STATUS.changes_requested], ['approved', STATUS.approved], ['archive', 'Archive']];
 
 function band(eyebrow, title, sub = '', right = '') {
   return engineBand(`<div class="eband__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div>`);
 }
-const lastDecision = j => { const v = j.versions.at(-1); return v && [...v.feedback].reverse().find(f => f.type !== 'note'); };
 const PROOF_ACCEPT = '.pdf,.jpg,.jpeg,.png,.zip,application/pdf,image/jpeg,image/png,application/zip,application/x-zip-compressed';
 const PROOF_EMPTY = '<b>Choose a PDF, JPG / PNG, or a ZIP</b> or drop here';
 function proofError(files) {
@@ -50,20 +50,22 @@ function sendProof(jobId, files, note, onProgress) {
 
 async function dashboard() {
   const jobs = await api(B + '/api/jobs');
-  const counts = { all: jobs.length }; jobs.forEach(j => counts[j.status] = (counts[j.status] || 0) + 1);
-  const acts = jobs.flatMap(j => j.versions.flatMap(v => v.feedback.map(f => ({ j, v, f })))).sort((a, b) => b.f.at.localeCompare(a.f.at)).slice(0, 8);
+  const active = jobs.filter(j => !j.archivedAt);
+  const counts = { all: active.length, archive: jobs.length - active.length };
+  active.forEach(j => counts[j.status] = (counts[j.status] || 0) + 1);
   app.innerHTML = band('YBI Studio · Proofs', 'Artwork <span class="ol">approvals.</span>', 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New job ${ARROW}</button>`) +
   `<div class="wrap">
-   ${acts.length ? `<section style="margin-top:44px"><p class="eyebrow">Latest client activity</p><ul class="activity">${acts.map(({ j, v, f }) => `<li>${chip(f.type === 'approve' ? 'approved' : 'changes_requested')}<a href="${jobHref(j)}"><b class="num">${esc(j.jobNumber)}</b> · ${esc(j.clientName)} — V${v.n} · ${esc(f.name)}${f.note ? `: <span class="mute">“${esc(f.note.slice(0, 90))}${f.note.length > 90 ? '…' : ''}”</span>` : ''}${f.stickies?.length ? ` <span class="dim">· ${f.stickies.length} on the proof</span>` : ''}${f.attachments.length ? ` <span class="dim">· ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}</span>` : ''}${j.unread && f === lastDecision(j) ? '<span class="dot" title="New"></span>' : ''}</a><span class="small dim">${fmtDate(f.at)}</span></li>`).join('')}</ul></section>` : ''}
-   <div class="toolbar"><div class="tabs">${['all', 'awaiting_review', 'changes_requested', 'approved'].map(s => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${s === 'all' ? 'All' : STATUS[s]} ${counts[s] || 0}</button>`).join('')}</div>
+   <div class="toolbar"><div class="tabs">${JOB_FILTERS.map(([s, label]) => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${label} ${counts[s] || 0}</button>`).join('')}</div>
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
    <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
   </div>`;
   const tb = $('tbody', app);
   const draw = () => {
-    const list = jobs.filter(j => (filter === 'all' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
+    const pool = filter === 'archive' ? jobs.filter(j => j.archivedAt) : active;
+    const list = pool.filter(j => (filter === 'all' || filter === 'archive' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
+    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (filter === 'archive' && !q ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it.' : 'No jobs match.');
     tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
-      : `<tr><td colspan="6" class="empty">${jobs.length ? 'No jobs match.' : 'No proofs yet — hit “New job” to create the first one.'}</td></tr>`;
+      : `<tr><td colspan="6" class="empty">${empty}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
   };
   draw();
@@ -112,6 +114,7 @@ async function jobPage(key, showV) {
      <div><span class="k">Contact</span>${esc(j.clientCompany) || '<span class="dim">—</span>'}</div>
      <div><span class="k">Versions</span>${j.versions.length || 0}</div>
      <div><span class="k">Created</span>${fmtDate(j.createdAt)}</div>
+     ${j.archivedAt ? `<div><span class="k">Archived</span>${fmtDate(j.archivedAt)}</div>` : ''}
     </div></div>
    <div class="jgrid">
     <div>${sel ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap"><span class="vtag">V${sel.n}${sel === latest ? ' <span class="small dim" style="font-family:var(--sans);font-weight:400;letter-spacing:.1em">LATEST · CLIENT SEES THIS</span>' : ''}</span>
@@ -781,7 +784,7 @@ async function settings() {
   const placeholder = 'drew@ybicreative.com.au, nicola@ybicreative.com.au, rob@ybicreative.com.au';
   app.innerHTML = band('YBI Studio', 'Settings') + `<div class="wrap"><div class="panel" style="margin-top:36px;max-width:760px">
    <div class="field"><label>Notification emails</label><input data-email type="text" value="${esc(s.notifyEmail)}" placeholder="${placeholder}" autocomplete="off" spellcheck="false"></div>
-   <p class="small mute">Alerts go to these addresses when a client approves or requests changes. Separate more than one with a comma or a semicolon. Addresses that are not valid emails are skipped. The same list is used when a new proof version is uploaded to a job that already has one. Clear the field and save to use the default list.</p>
+   <p class="small mute">Alerts go to these addresses when a client approves or requests changes. Separate more than one with a comma or a semicolon. Addresses that are not valid emails are skipped. Uploading a proof does not send an alert. Clear the field and save to use the default list.</p>
    <p class="small mute">Email alerts: <b>${s.emailEnabled ? 'ON (SMTP configured)' : 'OFF'}</b>. ${s.emailEnabled ? '' : 'Approvals and change requests still show on the Jobs dashboard and in <code>data/notifications.log</code>. To switch email on, set the SMTP_* variables — see README.'}</p>
    <p class="small mute">Clients only open a proof from the private link on the job (<b>…?k=</b>). A job number on its own does not work.</p>
    <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-save>Save</button><button class="btn btn--sm btn--ghost" data-out>Log out</button></div></div></div>`;

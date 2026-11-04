@@ -71,7 +71,7 @@ with sync_playwright() as p:
     c.wait_for_selector('.pin.on')
     c.screenshot(path=f'{OUT}/06-client-waiting.png', full_page=True)
 
-    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.wait_for_selector('.eband')
+    studio.goto(BASE + '/studio'); studio.wait_for_selector('table.jobs'); studio.wait_for_selector('.eband')
     studio.screenshot(path=f'{OUT}/07-studio-dashboard.png', full_page=True)
     studio.click('tr.row:has-text("30434")'); studio.wait_for_url('**/proof/studio/30434'); studio.wait_for_selector('.fb--changes img')
     studio.wait_for_selector('.stage .pin')
@@ -111,7 +111,7 @@ with sync_playwright() as p:
     assert e.locator('[data-viewer]').count() == 0
     # duplicate job number refused in the UI
     studio.goto(BASE + '/studio'); studio.wait_for_selector('table.jobs'); studio.click('header [data-new]'); studio.fill('#n-num', '30434'); studio.fill('#n-client', 'Someone'); studio.click('#n-go'); studio.wait_for_selector('#n-msg a'); assert 'already exists' in studio.text_content('#n-msg'); studio.screenshot(path=f'{OUT}/13-studio-duplicate-refused.png')
-    studio.goto(BASE + '/studio'); studio.wait_for_selector('.activity'); studio.screenshot(path=f'{OUT}/12-studio-dashboard-final.png', full_page=True)
+    studio.goto(BASE + '/studio'); studio.wait_for_selector('table.jobs'); studio.screenshot(path=f'{OUT}/12-studio-dashboard-final.png', full_page=True)
     b.close()
 errs = [e for e in errs if '409' not in e]  # 409 = the intentional duplicate-job test
 print('console errors:', errs or 'none'); sys.exit(1 if errs else 0)
