@@ -61,10 +61,15 @@ async function dashboard() {
   </div>`;
   const tb = $('tbody', app);
   const draw = () => {
-    const pool = filter === 'archive' ? jobs.filter(j => j.archivedAt) : active;
-    const list = pool.filter(j => (filter === 'all' || filter === 'archive' || j.status === filter) && (!q || `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase().includes(q.toLowerCase())));
-    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (filter === 'archive' && !q ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it.' : 'No jobs match.');
-    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
+    const query = q.trim().toLowerCase();
+    const hay = j => `${j.jobNumber} ${j.clientName} ${j.clientCompany} ${j.description}`.toLowerCase();
+    const inView = j => filter === 'all' || filter === 'archive' || j.status === filter;
+    // A query searches active jobs and Archive together. An empty box stays on the selected filter.
+    const list = query
+      ? jobs.filter(j => hay(j).includes(query))
+      : (filter === 'archive' ? jobs.filter(j => j.archivedAt) : active).filter(inView);
+    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it.' : 'No jobs match.');
+    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
       : `<tr><td colspan="6" class="empty">${empty}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
   };

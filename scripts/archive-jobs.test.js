@@ -44,6 +44,8 @@ const serverSrc = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
 assert.ok(studioJs.includes("['archive', 'Archive']"), 'jobs page has an Archive filter');
 assert.ok(studioJs.includes('!j.archivedAt'), 'All excludes archived jobs');
 assert.ok(studioJs.includes("filter === 'archive'"), 'Archive is its own list');
+assert.ok(studioJs.includes('jobs.filter(j => hay(j).includes(query))'), 'a search looks through active jobs and Archive');
+assert.ok(studioJs.includes("filter === 'archive' ? jobs.filter(j => j.archivedAt) : active"), 'an empty search stays on the current filter');
 assert.ok(studioJs.includes('<span class="k">Archived</span>'), 'an archived job shows when it was archived');
 assert.ok(!studioJs.includes('Latest client activity'), 'latest client activity is gone');
 assert.ok(!studioJs.includes('lastDecision'), 'the activity helper is gone');
