@@ -6,8 +6,6 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
-const zlib = require('zlib');
-const { pipeline, Transform } = require('stream');
 const { pathToFileURL } = require('url');
 const { buildChangesPdf } = require('./changes-pdf');
 
@@ -29,20 +27,9 @@ const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
 const MAX_VERSION_FILES = 40;
-// A zip is unpacked into JPG/PNG pages. Caps stop a huge central directory or a tiny
-// archive that claims to expand far past the usual proof limit.
-const MAX_ZIP_ENTRIES = 500;
-const MAX_ZIP_CD = 2 * 1024 * 1024;
-const MAX_ZIP_RATIO = 200;
-const PROOF_TYPE_ERROR = 'Proofs must be PDF, JPG, PNG, or a ZIP of images.';
-const PROOF_EMPTY_ERROR = 'Choose a PDF, one or more JPG or PNG files, or a ZIP of images.';
-const ZIP_ALONE = 'A ZIP is one upload per version. Upload it on its own, or upload JPG and PNG files together.';
-const ZIP_NONE = 'That ZIP has no JPG or PNG pages. Upload those images, or upload a PDF on its own.';
-const ZIP_BAD = 'That ZIP could not be read.';
-const ZIP_ENCRYPTED = 'That ZIP is password-protected. Save the pages as JPG or PNG and zip them without a password.';
-const ZIP_METHOD = "That ZIP uses a compression this studio can't open. Save the pages as JPG or PNG and zip them again.";
-const ZIP_RATIO = 'That ZIP is too heavily compressed to open safely.';
-const ZIP_TOO_MANY = 'That ZIP has too many files to open.';
+const PROOF_TYPE_ERROR = 'Proofs must be PDF, JPG, PNG, or a ZIP.';
+const PROOF_EMPTY_ERROR = 'Choose a PDF, one or more JPG or PNG files, or a ZIP.';
+const ZIP_ALONE = 'A ZIP is one file per version. Upload it on its own, or upload JPG and PNG files together.';
 
 for (const d of [DATA, JOBS, FILES]) fs.mkdirSync(d, { recursive: true });
 const SECRET_FILE = path.join(DATA, 'secret.key');
@@ -54,7 +41,7 @@ const LOG_FILE = path.join(DATA, 'notifications.log');
 
 // ---------- helpers ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.webm': 'video/webm', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.zip': 'application/zip', '.ai': 'application/postscript', '.eps': 'application/postscript' };
-const PROOF_TYPES = { '.pdf': 'pdf', '.jpg': 'image', '.jpeg': 'image', '.png': 'image' };
+const PROOF_TYPES = { '.pdf': 'pdf', '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.zip': 'zip' };
 const id = (n = 6) => crypto.randomBytes(n).toString('hex');
 const token = () => crypto.randomBytes(18).toString('base64url');
 const now = () => new Date().toISOString();
@@ -112,6 +99,7 @@ function checkProofSet(files) {
   if (files.length > MAX_VERSION_FILES) return { error: `A version can include up to ${MAX_VERSION_FILES} images.`, status: 400 };
   const kinds = files.map(f => PROOF_TYPES[extOf(f.originalName)] || null);
   if (kinds.some(k => !k)) return { error: PROOF_TYPE_ERROR, status: 415 };
+  if (kinds.some(k => k === 'zip') && files.length > 1) return { error: ZIP_ALONE, status: 400 };
   if (kinds.some(k => k === 'pdf') && files.length > 1) return { error: 'A PDF is one file per version. Upload it on its own, or upload JPG and PNG files together.', status: 400 };
   const total = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
   if (files.some(f => f.size > MAX_PROOF) || total > MAX_PROOF) return { error: 'A version can be up to 300 MB.', status: 413 };
@@ -354,188 +342,7 @@ async function sendZip(req, res, filename, entries) {
   eocd.writeUInt32LE(cdStart, 16);
   res.end(eocd);
 }
-function naturalCompare(a, b) {
-  const parts = s => String(s).toLowerCase().match(/\d+|\D+/g) || [];
-  const ax = parts(a), bx = parts(b);
-  const n = Math.min(ax.length, bx.length);
-  for (let i = 0; i < n; i++) {
-    const x = ax[i], y = bx[i];
-    if (x === y) continue;
-    if (/^\d+$/.test(x) && /^\d+$/.test(y)) {
-      const nx = x.replace(/^0+/, '') || '0';
-      const ny = y.replace(/^0+/, '') || '0';
-      if (nx.length !== ny.length) return nx.length - ny.length;
-      if (nx !== ny) return nx < ny ? -1 : 1;
-      if (x.length !== y.length) return x.length - y.length;
-    }
-    return x < y ? -1 : 1;
-  }
-  return ax.length - bx.length;
-}
-function zipDecodeName(buf, flags) {
-  if (flags & 0x800) return buf.toString('utf8');
-  const asUtf8 = buf.toString('utf8');
-  if (!asUtf8.includes('\uFFFD')) return asUtf8;
-  return buf.toString('latin1');
-}
-// JPG/PNG page paths only. Skip macOS junk, hidden files, directories and anything that could escape the job folder.
-function zipImageRel(name) {
-  const rel = String(name || '').replace(/\\/g, '/');
-  if (!rel || rel.length > 512 || rel.includes('\0') || rel.endsWith('/')) return null;
-  if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel)) return null;
-  const parts = rel.split('/');
-  if (parts.some(p => !p || p === '.' || p === '..' || p === '__MACOSX' || p === '.DS_Store' || p.startsWith('.'))) return null;
-  const base = parts[parts.length - 1];
-  if (base.startsWith('._') || PROOF_TYPES[extOf(base)] !== 'image') return null;
-  return rel;
-}
-function zipSpecial(versionMadeBy, externalAttrs) {
-  if (((versionMadeBy >>> 8) & 0xff) !== 3) return false;
-  const type = ((externalAttrs >>> 16) & 0xffff) & 0o170000;
-  return type === 0o040000 || type === 0o120000;
-}
-async function readFileRange(filePath, position, length) {
-  const fh = await fsp.open(filePath, 'r');
-  try {
-    const buf = Buffer.alloc(length);
-    let got = 0;
-    while (got < length) {
-      const { bytesRead } = await fh.read(buf, got, length - got, position + got);
-      if (!bytesRead) break;
-      got += bytesRead;
-    }
-    if (got !== length) throw httpError(400, ZIP_BAD);
-    return buf;
-  } finally {
-    await fh.close();
-  }
-}
-function extractZipEntry(zipPath, { dataOff, compSize, uncompSize, method, crc, dest }) {
-  if (compSize < 1 || uncompSize < 1) return Promise.reject(httpError(400, ZIP_BAD));
-  return new Promise((resolve, reject) => {
-    let produced = 0, sum = 0;
-    const rs = fs.createReadStream(zipPath, { start: dataOff, end: dataOff + compSize - 1 });
-    const limiter = new Transform({
-      transform(chunk, _enc, cb) {
-        produced += chunk.length;
-        if (produced > uncompSize) return cb(httpError(400, ZIP_BAD));
-        sum = crc32(chunk, sum);
-        cb(null, chunk);
-      }
-    });
-    const out = fs.createWriteStream(dest);
-    const steps = method === 0 ? [rs, limiter, out] : [rs, zlib.createInflateRaw(), limiter, out];
-    pipeline(steps, err => {
-      const fail = e => { fsp.rm(dest, { force: true }).then(() => reject(e), () => reject(e)); };
-      if (err) return fail(err.code === 400 || err.code === 413 || err.code === 415 ? err : httpError(400, ZIP_BAD));
-      if (produced !== uncompSize || (sum >>> 0) !== (crc >>> 0)) return fail(httpError(400, ZIP_BAD));
-      resolve(produced);
-    });
-  });
-}
-// Read the central directory, keep JPG/PNG pages, and write them as incoming uploads. Never recurses into nested zips.
-async function extractProofZip(zipPath, dir) {
-  const fh = await fsp.open(zipPath, 'r');
-  let fileSize = 0;
-  const images = [];
-  try {
-    fileSize = (await fh.stat()).size;
-    if (fileSize < 22) throw httpError(400, ZIP_BAD);
-    const tailLen = Math.min(fileSize, 22 + 65535);
-    const tail = await readFileRange(zipPath, fileSize - tailLen, tailLen);
-    let eocd = null;
-    for (let i = tail.length - 22; i >= 0; i--) {
-      if (tail.readUInt32LE(i) !== 0x06054b50) continue;
-      if (i + 22 + tail.readUInt16LE(i + 20) === tail.length) { eocd = tail.subarray(i, i + 22); break; }
-    }
-    if (!eocd) throw httpError(400, ZIP_BAD);
-    if (eocd.readUInt16LE(4) !== 0 || eocd.readUInt16LE(6) !== 0 || eocd.readUInt16LE(8) !== eocd.readUInt16LE(10)) throw httpError(400, ZIP_BAD);
-    const entries = eocd.readUInt16LE(10);
-    const cdSize = eocd.readUInt32LE(12);
-    const cdOff = eocd.readUInt32LE(16);
-    if (entries === 0xffff || cdSize === 0xffffffff || cdOff === 0xffffffff) throw httpError(413, 'A version can be up to 300 MB.');
-    if (entries > MAX_ZIP_ENTRIES) throw httpError(400, ZIP_TOO_MANY);
-    if (entries === 0) return [];
-    if (!cdSize || cdSize > MAX_ZIP_CD || cdOff > fileSize || cdOff + cdSize > fileSize) throw httpError(400, ZIP_BAD);
-    const cd = await readFileRange(zipPath, cdOff, cdSize);
-    let p = 0;
-    for (let n = 0; n < entries; n++) {
-      if (p + 46 > cd.length || cd.readUInt32LE(p) !== 0x02014b50) throw httpError(400, ZIP_BAD);
-      const madeBy = cd.readUInt16LE(p + 4);
-      const flags = cd.readUInt16LE(p + 8);
-      const method = cd.readUInt16LE(p + 10);
-      const crc = cd.readUInt32LE(p + 16);
-      const compSize = cd.readUInt32LE(p + 20);
-      const uncompSize = cd.readUInt32LE(p + 24);
-      const nameLen = cd.readUInt16LE(p + 28);
-      const extraLen = cd.readUInt16LE(p + 30);
-      const commentLen = cd.readUInt16LE(p + 32);
-      const externalAttrs = cd.readUInt32LE(p + 38);
-      const localOff = cd.readUInt32LE(p + 42);
-      const next = p + 46 + nameLen + extraLen + commentLen;
-      if (next > cd.length) throw httpError(400, ZIP_BAD);
-      const name = zipDecodeName(cd.subarray(p + 46, p + 46 + nameLen), flags);
-      p = next;
-      if (compSize === 0xffffffff || uncompSize === 0xffffffff || localOff === 0xffffffff) throw httpError(413, 'A version can be up to 300 MB.');
-      if (zipSpecial(madeBy, externalAttrs)) continue;
-      const rel = zipImageRel(name);
-      if (!rel) continue;
-      if (flags & 0x1 || flags & 0x40) throw httpError(400, ZIP_ENCRYPTED);
-      if (method !== 0 && method !== 8) throw httpError(400, ZIP_METHOD);
-      if (uncompSize === 0) continue;
-      if (compSize === 0 || (method === 0 && compSize !== uncompSize)) throw httpError(400, ZIP_BAD);
-      if (uncompSize > MAX_PROOF || compSize > MAX_PROOF) throw httpError(413, 'A version can be up to 300 MB.');
-      if (method === 8 && uncompSize > 1024 * 1024 && uncompSize > compSize * MAX_ZIP_RATIO) throw httpError(400, ZIP_RATIO);
-      images.push({ rel, method, crc, compSize, uncompSize, localOff, index: images.length });
-    }
-  } finally {
-    await fh.close();
-  }
-  if (images.length > MAX_VERSION_FILES) throw httpError(400, `A version can include up to ${MAX_VERSION_FILES} images.`);
-  let total = 0;
-  for (const img of images) {
-    total += img.uncompSize;
-    if (total > MAX_PROOF) throw httpError(413, 'A version can be up to 300 MB.');
-  }
-  images.sort((a, b) => naturalCompare(a.rel, b.rel) || a.index - b.index);
-  const used = new Set();
-  const made = [];
-  try {
-    for (const entry of images) {
-      const originalName = zipEntryName(path.posix.basename(entry.rel), used);
-      const storedPath = path.join(dir, `incoming-${id(6)}${extOf(originalName)}`);
-      const local = await readFileRange(zipPath, entry.localOff, 30);
-      if (local.readUInt32LE(0) !== 0x04034b50) throw httpError(400, ZIP_BAD);
-      const dataOff = entry.localOff + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
-      if (dataOff < 0 || dataOff + entry.compSize > fileSize) throw httpError(400, ZIP_BAD);
-      await extractZipEntry(zipPath, { dataOff, compSize: entry.compSize, uncompSize: entry.uncompSize, method: entry.method, crc: entry.crc, dest: storedPath });
-      made.push({ originalName, storedPath, size: entry.uncompSize });
-    }
-  } catch (e) {
-    await Promise.all(made.map(f => fsp.rm(f.storedPath, { force: true })));
-    throw e;
-  }
-  return made;
-}
-async function expandProofUploads(dir, incoming) {
-  const zips = incoming.filter(f => extOf(f.originalName) === '.zip');
-  if (!zips.length) return incoming;
-  if (zips.length !== 1 || incoming.length !== 1) {
-    await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
-    throw httpError(400, ZIP_ALONE);
-  }
-  const zip = incoming[0];
-  let images;
-  try {
-    images = await extractProofZip(zip.storedPath, dir);
-  } catch (e) {
-    await fsp.rm(zip.storedPath, { force: true });
-    throw e;
-  }
-  await fsp.rm(zip.storedPath, { force: true });
-  if (!images.length) throw httpError(400, ZIP_NONE);
-  return images;
-}
+
 async function addUploadedVersion(req, res, job, note, incoming) {
   const check = checkProofSet(incoming);
   if (check.error) {
@@ -1644,6 +1451,7 @@ async function handle(req, res) {
       const stickies = b.type === 'changes' ? cleanStickies(b.stickies) : [];
       if (!name) return err(res, 400, 'Please add your name.');
       if (stickies === null) return err(res, 400, 'Add a note to each sticky.');
+      if (v.kind === 'zip' && stickies.length) return err(res, 400, 'A ZIP has no pages to mark. Describe the changes, or attach a file.');
       if (b.type === 'changes' && !note && !(b.attachments || []).length && !stickies.length) return err(res, 400, 'Please describe the changes, mark the proof, or attach a file.');
       if (status(job) === 'approved') return err(res, 409, 'This version is already approved.');
       const atts = (b.attachments || []).map(a => job.pendingAttachments && job.pendingAttachments[a]).filter(Boolean);
@@ -1684,7 +1492,7 @@ async function handle(req, res) {
       if (!job) return err(res, 404, 'No job with that number.');
       const v = job.versions.find(x => x.n === +u.searchParams.get('v'));
       const fb = v && v.feedback.find(f => f.id === u.searchParams.get('f') && f.type === 'changes');
-      if (!v || !fb || !(fb.stickies || []).length) return err(res, 404, 'No marked-up changes on that version.');
+      if (!v || v.kind === 'zip' || !fb || !(fb.stickies || []).length) return err(res, 404, 'No marked-up changes on that version.');
       const meta = { jobNumber: job.jobNumber, version: v.n, clientName: job.clientName, requester: fb.name, note: fb.note, feedbackId: fb.id };
       const pages = versionPages(v);
       let pdf;
@@ -1777,20 +1585,15 @@ async function handle(req, res) {
         };
         if (!multipart) {
           const orig = safeName(u.searchParams.get('name'));
-          if (!PROOF_TYPES[extOf(orig)] && extOf(orig) !== '.zip') return err(res, 415, PROOF_TYPE_ERROR);
+          if (!PROOF_TYPES[extOf(orig)]) return err(res, 415, PROOF_TYPE_ERROR);
           const storedPath = path.join(dir, `incoming-${id(6)}${extOf(orig)}`);
           let size;
           try { size = await streamToFile(req, storedPath, MAX_PROOF); }
           catch (e) { await fsp.rm(storedPath, { force: true }); throw e; }
-          let incoming = [{ originalName: orig, storedPath, size }];
-          try { incoming = await expandProofUploads(dir, incoming); }
-          catch (e) { return takeUploadError(e); }
-          return addUploadedVersion(req, res, job, note, incoming);
+          return addUploadedVersion(req, res, job, note, [{ originalName: orig, storedPath, size }]);
         }
         let incoming;
         try { incoming = await readMultipartFiles(req, dir, { maxFiles: MAX_VERSION_FILES, maxEach: MAX_PROOF, maxTotal: MAX_PROOF }); }
-        catch (e) { return takeUploadError(e); }
-        try { incoming = await expandProofUploads(dir, incoming); }
         catch (e) { return takeUploadError(e); }
         return addUploadedVersion(req, res, job, note, incoming);
       }

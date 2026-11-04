@@ -202,6 +202,8 @@ body.viewer-open{overflow:hidden}
 .thumbs img{max-width:140px;object-fit:contain}
 .thumbs canvas.on,.thumbs img.on{border-color:var(--g);opacity:1}
 .dlall{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px}
+.zipdl{background:var(--bg2);border:1px solid var(--line);border-radius:18px;padding:clamp(20px,2.4vw,34px)}
+.zipdl .btn{margin-top:16px}
 
 /* client decision */
 .state{border-radius:18px;padding:clamp(22px,2.6vw,34px);border:1px solid var(--line2);background:var(--bg2)}

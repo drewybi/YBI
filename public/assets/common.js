@@ -64,8 +64,8 @@ export function engineBand(inner) {
   </section>`;
 }
 
-// Proof viewer. version = { kind:'pdf'|'image', url, originalName, files?, downloadAll? }
-// Several JPG/PNG files in one version are pages: files = [{ name, url }].
+// Proof viewer. version = { kind:'pdf'|'image'|'zip', url, originalName, files?, downloadAll? }
+// A zip is not shown as pages. Several JPG/PNG files in one version are pages: files = [{ name, url }].
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
@@ -74,6 +74,15 @@ export function pinsFrom(f) {
 }
 export async function mountViewer(root, version, opts = {}) {
   if (window.__ybiViewerClean) window.__ybiViewerClean();
+  if (version.kind === 'zip') {
+    const name = version.originalName || 'proof.zip';
+    const fileUrl = version.url || '';
+    const href = fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
+    root.innerHTML = `<div class="zipdl" data-viewer-root><span class="k">ZIP file</span><p style="margin:0"><b>${esc(name)}</b></p><p class="small dim" style="margin:6px 0 0">${fmtSize(version.size || 0)}</p><a class="btn" href="${esc(href)}">Download zip</a></div>`;
+    const api = { setPins() {}, select() {}, setText() {}, focusDock() {} };
+    opts.onReady && opts.onReady(api);
+    return api;
+  }
   const fileUrl = version.url;
   const imageFiles = version.kind === 'image' && Array.isArray(version.files) ? version.files.filter(f => f && f.url) : [];
   const multiImage = imageFiles.length > 1;
