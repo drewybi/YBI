@@ -14,9 +14,9 @@ const lastDecision = j => { const v = j.versions.at(-1); return v && [...v.feedb
 const PROOF_ACCEPT = '.pdf,.jpg,.jpeg,.png,.zip,application/pdf,image/jpeg,image/png,application/zip,application/x-zip-compressed';
 const PROOF_EMPTY = '<b>Choose a PDF, JPG / PNG, or a ZIP</b> or drop here';
 function proofError(files) {
-  if (!files.length) return 'Choose a PDF, one or more JPG or PNG files, or a ZIP of images.';
-  if (files.some(f => !/\.(pdf|jpe?g|png|zip)$/i.test(f.name))) return 'Proofs must be PDF, JPG, PNG, or a ZIP of images.';
-  if (files.some(f => /\.zip$/i.test(f.name)) && files.length > 1) return 'A ZIP is one upload per version. Upload it on its own, or upload JPG and PNG files together.';
+  if (!files.length) return 'Choose a PDF, one or more JPG or PNG files, or a ZIP.';
+  if (files.some(f => !/\.(pdf|jpe?g|png|zip)$/i.test(f.name))) return 'Proofs must be PDF, JPG, PNG, or a ZIP.';
+  if (files.some(f => /\.zip$/i.test(f.name)) && files.length > 1) return 'A ZIP is one file per version. Upload it on its own, or upload JPG and PNG files together.';
   if (files.some(f => /\.pdf$/i.test(f.name)) && files.length > 1) return 'A PDF is one file per version. Upload it on its own, or upload JPG and PNG files together.';
   return '';
 }
@@ -118,7 +118,7 @@ async function jobPage(key, showV) {
       ${j.versions.length > 1 ? `<select class="vsel" data-vsel>${[...j.versions].reverse().map(v => `<option value="${v.n}" ${v === sel ? 'selected' : ''}>V${v.n} — ${fmtDate(v.uploadedAt)}</option>`).join('')}</select>` : ''}</div><div data-viewer></div>${sel.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(sel.downloadAll)}">Download all</a><span class="small dim">${sel.files.length} images · ${fmtSize(sel.size)}</span></div>` : ''}` : '<div class="panel empty">No proof uploaded yet. Upload V1 →</div>'}</div>
     <div class="stack">
      <div class="panel"><p class="eyebrow" style="margin-bottom:16px">${latest ? `Upload new version (V${latest.n + 1})` : 'Upload V1'}</p>
-      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several JPG or PNG files become one version, and a ZIP of those images does too. A PDF stays a single file.</p>
+      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several JPG or PNG files become one version. A PDF stays a single file. A ZIP is kept as that file and downloaded as it was uploaded.</p>
       <div class="drop" tabindex="0" data-vdrop><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span data-vname>${PROOF_EMPTY}</span><input type="file" multiple accept="${PROOF_ACCEPT}"></div>
       <div class="field" style="margin-top:18px"><label>Note to client <span class="opt">(optional — shown on their page)</span></label><textarea data-vnote style="min-height:70px" placeholder="e.g. Logo enlarged, phone number fixed."></textarea></div>
       <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>

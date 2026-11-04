@@ -67,7 +67,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | One-click login link | `/proof/studio?key=<password>` sets a 90-day cookie. Bookmark it on studio machines. |
 | Scripts/API | send the header `X-Studio-Key: <password>`. Jobs can be addressed by number: `/proof/api/jobs/30434` |
 
-1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), and set **Date on Calendar** (it starts as today, or as a due date if that field is already on the form). Then drop in one PDF, one or more JPG/PNG images, or a ZIP of those images. Several images are saved as **one** version. A ZIP is unpacked into those pages, in numeric file-name order, and has to be the only file in that upload. Junk inside it (`__MACOSX`, `.DS_Store`, nested files that are not JPG or PNG) is skipped. A PDF stays one file per version (it is not mixed into an image set). Click **Create & get link**.
+1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), and set **Date on Calendar** (it starts as today, or as a due date if that field is already on the form). Then drop in one PDF, one or more JPG/PNG images, or a single ZIP. Several images are saved as **one** version. A ZIP is stored as that file and the client downloads it as it was uploaded — it is not unpacked into pages, and it is not mixed with other files. A PDF stays one file per version (it is not mixed into an image set). Click **Create & get link**.
 2. On the job page:
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
@@ -89,7 +89,7 @@ Accepting a quote adds **one** proof job to the job list. Quote **Client** is th
 The client opens the private link YBI sent (`/proof/30434?k=…`) and sees:
 
 - the job number, client name and job description
-- the proof itself: a single image inline; a version made of several JPG/PNG files flips between them (‹ ›, arrow keys, swipe, thumbnails) and offers **Download all** (one ZIP of that version). PDFs stay page by page (‹ ›, arrow keys, thumbnails). Zoom (+ / −), a full-screen stage (⤢, Esc to leave), download and open-in-new-tab
+- the proof itself: a single image inline; a version made of several JPG/PNG files flips between them (‹ ›, arrow keys, swipe, thumbnails) and offers **Download all** (one ZIP of that version). PDFs stay page by page (‹ ›, arrow keys, thumbnails). A version that was uploaded as a ZIP is not shown as pages — the page offers **Download zip**, which is the file the studio uploaded. Zoom (+ / −), a full-screen stage (⤢, Esc to leave), download and open-in-new-tab
 - **Approve**: name, an optional comment and a "checked spelling, contact details, colours, sizes" tick box, then a green confirmation
 - **Request changes**: name, optional notes, and **optional file attachments** (several files, up to 100 MB each). They can also click the proof to drop numbered sticky notes — each sticky has its own change text, listed on the right in the same order, and selecting a list item highlights that sticky (and the other way around). Positions are saved with the feedback so the studio sees them on the artwork. They then see "Thanks — we're on it. This same link will show the new version" and can add more notes or files while they wait.
 - previous versions (view-only) and a short history
@@ -162,7 +162,7 @@ node server.js &                         # in one terminal
 bash scripts/smoke-test.sh               # API: routes, duplicate refusal, private jobs, JPG approve, PDF changes+file → V2 → approve
 node scripts/notify-recipients.test.js   # default recipient list, comma/semicolon settings, approve + V2 mail
 node scripts/multi-version.test.js       # several JPG/PNG in one version, ZIP download, legacy single-file jobs
-node scripts/zip-upload.test.js          # a ZIP of JPG/PNG becomes those pages; junk, bombs and mixed uploads are refused
+node scripts/zip-upload.test.js          # a ZIP is stored and downloaded as uploaded; it is not unpacked
 rm -rf data && node server.js &          # ui-test creates job 30434, so start from empty data
 python3 scripts/ui-test.py               # same flow in a real browser, saves screenshots/
 ```
@@ -188,4 +188,4 @@ Serverless hosts without a disk (Netlify or Vercel functions) would need storage
 ## Security notes (v1)
 - See *Security: job-number URLs are guessable* above. Secure links (`?k=`) are 24-character random tokens, so treat them like a password.
 - The studio uses one shared password and an HttpOnly cookie. Use a strong `STUDIO_PASSWORD` once it's online.
-- Proofs must be PDF, JPG or PNG (up to 300 MB). Several JPG/PNG files can share one version, up to 40 images and 300 MB combined, including images unpacked from a single ZIP. A ZIP that is password-protected, too heavily compressed, or has no JPG/PNG pages is refused. A PDF is still one file per version. Client attachments can be any type and are downloaded rather than run.
+- Proofs must be PDF, JPG, PNG, or a ZIP (up to 300 MB). Several JPG/PNG files can share one version, up to 40 images and 300 MB combined. A ZIP is one file per version and is downloaded as uploaded, not unpacked. A PDF is still one file per version. Client attachments can be any type and are downloaded rather than run.

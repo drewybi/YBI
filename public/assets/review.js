@@ -45,11 +45,13 @@ function render() {
      ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
      <div data-viewer></div>
      ${v.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(v.downloadAll)}">Download all</a><span class="small dim">${v.files.length} images · ${fmtSize(v.size)}</span></div>` : ''}
-     <p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>
+     ${v.kind === 'zip'
+       ? `<p class="small dim" style="margin-top:12px">This version is a ZIP file. Download it to review what YBI sent.</p>`
+       : `<p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>`}
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;
-  const placing = mode === 'changes' && isLatest;
+  const placing = mode === 'changes' && isLatest && v.kind !== 'zip';
   const pinFb = !placing && [...v.feedback].reverse().find(f => f.stickies?.length);
   mountViewer($('[data-viewer]', app), v, {
     place: placing,
@@ -87,7 +89,7 @@ function form() {
   const ap = mode === 'approve';
   return `<form data-form novalidate class="stack" style="gap:20px;${job.status === 'changes_requested' ? 'margin-top:20px' : ''}">
     <div class="field"><label for="c-name">Your name</label><input id="c-name" autocomplete="name" value="${esc(saved())}" required></div>
-    ${ap ? '' : `<div class="field"><span class="k">On the proof</span><p class="small mute" style="margin:0">Click or tap the artwork to drop a numbered note. The list here matches the markers — select one to jump to it.</p><ol class="notelist" data-notes></ol></div>`}
+    ${ap || job.versions.at(-1)?.kind === 'zip' ? '' : `<div class="field"><span class="k">On the proof</span><p class="small mute" style="margin:0">Click or tap the artwork to drop a numbered note. The list here matches the markers — select one to jump to it.</p><ol class="notelist" data-notes></ol></div>`}
     <div class="field"><label for="c-note">${ap ? 'Comment <span class="opt">(optional)</span>' : 'Other notes <span class="opt">(optional if you’ve marked the proof)</span>'}</label><textarea id="c-note" placeholder="${ap ? 'Anything else we should know?' : 'Anything that isn’t marked on the proof.'}"></textarea></div>
     ${ap ? '' : `<div class="field"><label>Attach a file <span class="opt">(optional — markup, photo, logo, reference)</span></label>
       <div class="drop" tabindex="0" data-drop><span class="ico">${ICO.clip}</span><span><b>Add files</b> or drop here</span><input type="file" multiple></div><ul class="files" data-files></ul></div>`}
@@ -170,7 +172,7 @@ function bindPanel(latest) {
     if (!name) return bad('Please add your name.');
     if (mode === 'approve' && !$('#c-ok').checked) return bad('Please tick the box to confirm you’ve checked the proof.');
     if (mode === 'changes' && stickies.some(s => !s.text.trim())) return bad('Write what should change on each note.');
-    if (mode === 'changes' && !note && !files.length && !stickies.length) return bad('Mark the proof, describe the changes, or attach a file.');
+    if (mode === 'changes' && !note && !files.length && !stickies.length) return bad(latest.kind === 'zip' ? 'Describe the changes, or attach a file.' : 'Mark the proof, describe the changes, or attach a file.');
     localStorage.setItem('ybi-proof-name', name); go.disabled = true;
     try {
       const ids = [];
