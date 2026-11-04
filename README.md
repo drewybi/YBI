@@ -67,7 +67,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | One-click login link | `/proof/studio?key=<password>` sets a 90-day cookie. Bookmark it on studio machines. |
 | Scripts/API | send the header `X-Studio-Key: <password>`. Jobs can be addressed by number: `/proof/api/jobs/30434` |
 
-1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), and set **Date on Calendar** (it starts as today, or as a due date if that field is already on the form). Then drop in one PDF, or one or more JPG/PNG images. Several images are saved as **one** version. A PDF stays one file per version (it is not mixed into an image set). Click **Create & get link**.
+1. Click **+ New job**. Enter the job number (for the studio — it is not the client link), client name, business, email and description, pick a calendar colour (grey if you leave it), and set **Date on Calendar** (it starts as today, or as a due date if that field is already on the form). Then drop in one PDF, one or more JPG/PNG images, or a ZIP of those images. Several images are saved as **one** version. A ZIP is unpacked into those pages, in numeric file-name order, and has to be the only file in that upload. Junk inside it (`__MACOSX`, `.DS_Store`, nested files that are not JPG or PNG) is skipped. A PDF stays one file per version (it is not mixed into an image set). Click **Create & get link**.
 2. On the job page:
    - **Copy link** copies the private URL `/proof/30434?k=…`. That is the only link that opens the proof.
    - **Email client** opens your mail app with that same private link already in the message.
@@ -162,6 +162,7 @@ node server.js &                         # in one terminal
 bash scripts/smoke-test.sh               # API: routes, duplicate refusal, private jobs, JPG approve, PDF changes+file → V2 → approve
 node scripts/notify-recipients.test.js   # default recipient list, comma/semicolon settings, approve + V2 mail
 node scripts/multi-version.test.js       # several JPG/PNG in one version, ZIP download, legacy single-file jobs
+node scripts/zip-upload.test.js          # a ZIP of JPG/PNG becomes those pages; junk, bombs and mixed uploads are refused
 rm -rf data && node server.js &          # ui-test creates job 30434, so start from empty data
 python3 scripts/ui-test.py               # same flow in a real browser, saves screenshots/
 ```
@@ -187,4 +188,4 @@ Serverless hosts without a disk (Netlify or Vercel functions) would need storage
 ## Security notes (v1)
 - See *Security: job-number URLs are guessable* above. Secure links (`?k=`) are 24-character random tokens, so treat them like a password.
 - The studio uses one shared password and an HttpOnly cookie. Use a strong `STUDIO_PASSWORD` once it's online.
-- Proofs must be PDF, JPG or PNG (up to 300 MB). Several JPG/PNG files can share one version, up to 40 images and 300 MB combined. A PDF is still one file per version. Client attachments can be any type and are downloaded rather than run.
+- Proofs must be PDF, JPG or PNG (up to 300 MB). Several JPG/PNG files can share one version, up to 40 images and 300 MB combined, including images unpacked from a single ZIP. A ZIP that is password-protected, too heavily compressed, or has no JPG/PNG pages is refused. A PDF is still one file per version. Client attachments can be any type and are downloaded rather than run.
