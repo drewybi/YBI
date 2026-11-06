@@ -67,9 +67,10 @@ export function pdfStackEdgePad(stageHeight, pageHeight) {
   return Math.max(0, (stageHeight - pageHeight) / 2);
 }
 // Gap between two stacked pages. A viewport-tall slot used to leave edge-pad above and below
-// each page, so the band between pages was the sum of those. This is half of that band.
+// each page, so the band between pages was the sum of those. A quarter of that band keeps
+// the fit padding and puts consecutive pages twice as close as the half-gap spacing.
 export function pdfStackGap(stageHeight, pageHeight, nextPageHeight = pageHeight) {
-  return (pdfStackEdgePad(stageHeight, pageHeight) + pdfStackEdgePad(stageHeight, nextPageHeight)) / 2;
+  return (pdfStackEdgePad(stageHeight, pageHeight) + pdfStackEdgePad(stageHeight, nextPageHeight)) / 4;
 }
 
 // Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
