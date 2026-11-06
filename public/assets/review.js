@@ -47,7 +47,7 @@ function render() {
      ${v.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(v.downloadAll)}">Download all</a><span class="small dim">${v.files.length} images · ${fmtSize(v.size)}</span></div>` : ''}
      ${v.kind === 'zip'
        ? `<p class="small dim" style="margin-top:12px">This version is a ZIP file. Download it to review what YBI sent.</p>`
-       : `<p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>`}
+       : `<p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : v.kind === 'pdf' ? 'Scroll to read every page. ‹ › and the arrow keys jump a page.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>`}
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;

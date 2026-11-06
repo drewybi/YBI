@@ -27,14 +27,41 @@ with sync_playwright() as p:
     c = b.new_page(viewport={'width': 1440, 'height': 1000})
     c.on('console', lambda m: m.type == 'error' and errs.append('client: ' + m.text))
     c.on('pageerror', lambda e: errs.append('client: ' + str(e)))
-    c.goto(link); c.wait_for_selector('[data-viewer] .stage canvas'); c.wait_for_selector('.thumbs canvas:nth-child(3)')
+    c.goto(link);     c.wait_for_selector('[data-viewer] .stage canvas'); c.wait_for_selector('.thumbs canvas:nth-child(3)')
+    c.wait_for_function("""() => document.querySelectorAll('.stage.is-pdf [data-page-slot]').length === 3 && document.querySelector('.stage.is-pdf canvas').width > 10""")
     c.wait_for_selector('.eband video')
     assert 'harry-' not in c.content() and 'engine.mp4' in c.content()
     assert 'Page 1 / 3' in c.text_content('[data-pg]')
-    assert c.locator('a[aria-label="Download"]').count() == 1 and c.locator('a[aria-label="Open in new tab"]').count() == 1
-    inline_w = c.eval_on_selector('.stage canvas', 'el => el.getBoundingClientRect().width')
+    assert 'Scroll to read every page' in c.inner_text('main')
+    assert c.locator('a[aria-label="Download file"]').count() == 1 and c.locator('a[aria-label="Open in new tab"]').count() == 1
+    # Each page is fitted in the stage with about 10% clear on the tight axis (fit / 1.2).
+    def assert_page_fits(scope):
+        c.wait_for_function("""(sel) => {
+          const stage = document.querySelector(sel);
+          const canvas = stage && stage.querySelector('[data-page-slot="1"] canvas');
+          if (!canvas || canvas.width < 10) return false;
+          const cr = canvas.getBoundingClientRect();
+          const sr = stage.getBoundingClientRect();
+          const slot = canvas.closest('[data-page-slot]').getBoundingClientRect();
+          const tight = Math.min((sr.width - cr.width) / sr.width, (slot.height - cr.height) / slot.height);
+          const inside = cr.top >= sr.top - 1 && cr.bottom <= sr.bottom + 1 && cr.left >= sr.left - 1 && cr.right <= sr.right + 1;
+          return inside && tight >= 0.12 && tight <= 0.22;
+        }""", arg=scope)
+    assert_page_fits('.stage.is-pdf')
+    c.eval_on_selector('.stage.is-pdf', 'el => { el.scrollTop = el.scrollHeight; }')
+    c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 3 / 3')")
+    box3 = c.locator('.stage.is-pdf [data-page-slot="3"] canvas').bounding_box()
+    stage_box = c.locator('.stage.is-pdf').bounding_box()
+    assert box3 and stage_box and box3['y'] >= stage_box['y'] - 2 and box3['y'] + box3['height'] <= stage_box['y'] + stage_box['height'] + 2, (box3, stage_box)
+    c.click('[data-prev]'); c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 2 / 3')")
+    c.click('[data-prev]'); c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 1 / 3')")
+    c.wait_for_function("""() => {
+      const stage = document.querySelector('.stage.is-pdf');
+      const slot = stage.querySelector('[data-page-slot="1"]');
+      return Math.abs(slot.getBoundingClientRect().top - stage.getBoundingClientRect().top) < 4;
+    }""")
     c.click('[data-expand]'); c.wait_for_selector('.viewer.is-fs')
-    c.wait_for_function('''(w) => { const el = document.querySelector(".viewer.is-fs .stage canvas"); return el && el.getBoundingClientRect().width > w * 1.45; }''', arg=inline_w)
+    assert_page_fits('.viewer.is-fs .stage.is-pdf')
     fs = c.locator('.viewer.is-fs').bounding_box()
     assert fs['y'] <= 1 and fs['width'] > 1300 and fs['height'] > 900, fs
     c.screenshot(path=f'{OUT}/15-pdf-fullscreen.png')
@@ -44,9 +71,10 @@ with sync_playwright() as p:
     assert 'Page 2 / 3' in c.text_content('[data-pg]')
     assert '30434' in c.inner_text('main') and 'Spring catalogue' in c.inner_text('main') and 'Jo Retailer' in c.inner_text('main')
     c.screenshot(path=f'{OUT}/04-client-review-V1.png', full_page=True)
-    c.click('.seg [data-a=changes]'); c.wait_for_selector('.sheet.is-place'); c.wait_for_selector('[data-viewer] .stage canvas')
-    c.locator('[data-viewer] .stage canvas').scroll_into_view_if_needed()
-    box = c.locator('[data-viewer] .stage canvas').bounding_box()
+    c.click('.seg [data-a=changes]'); c.wait_for_selector('.sheet.is-place'); c.wait_for_selector('[data-viewer] .stage [data-page-slot="1"] canvas')
+    page1 = c.locator('[data-viewer] .stage [data-page-slot="1"] canvas')
+    page1.scroll_into_view_if_needed()
+    box = page1.bounding_box()
     stage = c.locator('[data-viewer] .stage').bounding_box()
     y = max(box['y'], stage['y']) + 40
     c.mouse.click(box['x'] + box['width'] * 0.3, y)

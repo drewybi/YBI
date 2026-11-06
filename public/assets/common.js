@@ -1,5 +1,5 @@
 // Shared helpers + proof viewer (PDF.js vendored in /vendor/pdfjs)
-export const B = window.BASE || '';
+export const B = (typeof window !== 'undefined' && window.BASE) || '';
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,6 +55,14 @@ export function dropzone(el, onFiles) {
 let pdfjsP;
 const pdfjs = () => pdfjsP ||= import(B + '/vendor/pdfjs/pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = B + '/vendor/pdfjs/pdf.worker.min.mjs'; return m; });
 
+// Fit the whole page in the stage, then pull back so the tight axis keeps about
+// 10% clear on each side (83% of a fit-to-view). Zoom multiplies that base.
+export const PDF_FIT_PAD = 1.2;
+export function pdfFitScale(pageWidth, pageHeight, boxWidth, boxHeight, zoom = 1) {
+  if (!(pageWidth > 0) || !(pageHeight > 0) || !(boxWidth > 0) || !(boxHeight > 0)) return 0;
+  return Math.min(boxWidth / pageWidth, boxHeight / pageHeight) / PDF_FIT_PAD * zoom;
+}
+
 // Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
 export function engineBand(inner) {
   const src = `${B}/assets/img`;
@@ -66,6 +74,8 @@ export function engineBand(inner) {
 
 // Proof viewer. version = { kind:'pdf'|'image'|'zip', url, originalName, files?, downloadAll? }
 // A zip is not shown as pages. Several JPG/PNG files in one version are pages: files = [{ name, url }].
+// A multi-page PDF is one vertical stack — scroll the stage to read every page. The default
+// scale fits each page in the stage, then pulls back (pdfFitScale) so the page is not edge to edge.
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
@@ -108,7 +118,8 @@ export async function mountViewer(root, version, opts = {}) {
   const expandBtn = $('[data-expand]', root), zin = $('[data-zin]', root), zout = $('[data-zout]', root);
   const hint = $('[data-hint]', root), dock = $('[data-dock]', root), dockText = $('[data-dock-text]', root), dockN = $('[data-dock-n]', root);
   const nameEl = $('[data-name]', root), openEl = $('[data-open]', root);
-  let zoomLevel = 0, expanded = false, render = null, page = 1, n = 1, lastKey = '';
+  let zoomLevel = 0, expanded = false, render = null, page = 1, n = 1;
+  let cancelPdf = () => {};
   let turn = async () => {};
   let touchX = 0, touchY = 0, touchOn = false, swallowClick = false;
   let pins = (opts.pins || []).slice(), active = opts.active || null;
@@ -118,7 +129,7 @@ export async function mountViewer(root, version, opts = {}) {
     zin.disabled = zoomLevel >= ZOOMS.length - 1;
     zout.disabled = zoomLevel <= 0;
     stage.classList.toggle('is-zoomed', zoomLevel > 0);
-    const label = zoomLevel === 0 ? 'Fit width' : Math.round(ZOOMS[zoomLevel] * 100) + '%';
+    const label = zoomLevel === 0 ? (version.kind === 'pdf' ? 'Fit page' : 'Fit width') : Math.round(ZOOMS[zoomLevel] * 100) + '%';
     zin.title = `Zoom in (${label})`;
     zout.title = `Zoom out (${label})`;
   };
@@ -195,15 +206,22 @@ export async function mountViewer(root, version, opts = {}) {
     clearTimeout(roTimer);
     ro.disconnect();
     document.body.classList.remove('viewer-open');
+    cancelPdf();
     window.__ybiViewerClean = null;
   };
 
-  const sheetOf = () => $('[data-sheet]', stage);
+  function pinButton(id) {
+    return stage.querySelector(`.pin[data-id="${CSS.escape(id)}"]`);
+  }
   function layoutPins() {
-    const sheet = sheetOf();
-    if (!sheet) return;
-    $$('.pin', sheet).forEach(el => el.remove());
-    pins.filter(p => (p.page || 1) === page).forEach(p => {
+    const list = $$('[data-sheet]', stage);
+    if (!list.length) return;
+    $$('.pin', stage).forEach(el => el.remove());
+    const stacked = list.some(s => s.dataset.page);
+    pins.forEach(p => {
+      const pg = p.page || 1;
+      const sheet = stacked ? list.find(s => +s.dataset.page === pg) : (pg === page ? list[0] : null);
+      if (!sheet) return;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'pin' + (p.id === active ? ' on' : '');
@@ -220,7 +238,7 @@ export async function mountViewer(root, version, opts = {}) {
     syncDock();
   }
   function focusPin(id) {
-    const el = sheetOf()?.querySelector(`.pin[data-id="${CSS.escape(id)}"]`);
+    const el = pinButton(id);
     if (!el) return;
     const sr = stage.getBoundingClientRect(), er = el.getBoundingClientRect();
     if (er.top < sr.top + 8 || er.bottom > sr.bottom - 8) stage.scrollTop += er.top - sr.top - sr.height / 2 + er.height / 2;
@@ -266,7 +284,7 @@ export async function mountViewer(root, version, opts = {}) {
   const api = {
     setPins(list) { pins = (list || []).slice(); if (active && !pins.some(p => p.id === active)) active = null; layoutPins(); },
     select,
-    setText(id, text) { const p = pins.find(x => x.id === id); if (p) p.text = text; const el = sheetOf()?.querySelector(`.pin[data-id="${CSS.escape(id)}"]`); if (el) el.title = text ? `${p.n}. ${text}` : `Note ${p.n}`; if (id === active) syncDock(); },
+    setText(id, text) { const p = pins.find(x => x.id === id); if (p) p.text = text; const el = pinButton(id); if (el && p) el.title = text ? `${p.n}. ${text}` : `Note ${p.n}`; if (id === active) syncDock(); },
     focusDock() { if (!expanded) return; dock.hidden = false; syncDock(); dockText.focus(); }
   };
   // Hand the api over before the first await so a click during thumbnail load uses this viewer.
@@ -281,7 +299,7 @@ export async function mountViewer(root, version, opts = {}) {
       if (!img || !img.naturalWidth || !stage.clientWidth) return;
       const box = availBox();
       const fitW = box.w / img.naturalWidth, fitH = box.h / img.naturalHeight;
-      // Inline shows the whole image. Full screen (and zoom) fit the width, same as PDFs, so a tall proof can be read large.
+      // Inline shows the whole image. Full screen (and zoom) fit the width so a tall proof can be read large.
       const fit = (expanded || zoomLevel > 0) ? fitW : Math.min(fitW, fitH);
       img.style.width = Math.max(1, Math.round(img.naturalWidth * fit * ZOOMS[zoomLevel])) + 'px';
       img.style.height = 'auto';
@@ -329,47 +347,246 @@ export async function mountViewer(root, version, opts = {}) {
     return api;
   }
 
+  stage.classList.add('is-pdf');
   const lib = await pdfjs();
+  if (!root.isConnected) return api;
   const doc = await lib.getDocument(version.url).promise;
-  n = doc.numPages; let busy = 0;
-  render = async () => {
-    const my = ++busy;
-    const p = await doc.getPage(page);
-    if (my !== busy || !stage.clientWidth) return;
-    const base = p.getViewport({ scale: 1 });
-    const box = availBox();
-    let css = (box.w / base.width) * ZOOMS[zoomLevel];
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const long = Math.max(base.width, base.height) * css * dpr;
-    if (long > 4500) css *= 4500 / long;
-    const key = page + ':' + Math.round(css * dpr * 10);
-    if (key === lastKey && stage.querySelector('canvas')) { pg.textContent = `Page ${page} / ${n}`; return; }
-    const vp = p.getViewport({ scale: css * dpr });
+  if (!root.isConnected) return api;
+  n = doc.numPages;
+  const metas = [];
+  const stack = document.createElement('div');
+  stack.className = 'pdf-pages';
+  stack.dataset.pages = '';
+  for (let i = 1; i <= n; i++) {
+    const pdfPage = await doc.getPage(i);
+    if (!root.isConnected) return api;
+    const base = pdfPage.getViewport({ scale: 1 });
+    const slot = document.createElement('div');
+    slot.className = 'pdf-slot';
+    slot.dataset.pageSlot = String(i);
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+    sheet.dataset.sheet = '';
+    sheet.dataset.page = String(i);
+    sheet.classList.toggle('is-place', placing);
+    sheet.addEventListener('click', e => {
+      if (swallowClick) { swallowClick = false; return; }
+      if (!placing || e.target.closest('.pin')) return;
+      const r = sheet.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      if (x < 0 || y < 0 || x > 1 || y > 1) return;
+      page = i;
+      updatePager();
+      opts.onPlace && opts.onPlace({ page: i, x, y });
+    });
     const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(vp.width)); c.height = Math.max(1, Math.round(vp.height));
-    c.style.width = (c.width / dpr) + 'px'; c.style.height = 'auto';
-    await p.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-    if (my !== busy) return;
-    lastKey = key;
-    ensureSheet(c);
-    pg.textContent = `Page ${page} / ${n}`; prev.disabled = page <= 1; next.disabled = page >= n;
+    c.setAttribute('role', 'img');
+    c.setAttribute('aria-label', `Page ${i} of ${n}`);
+    sheet.append(c);
+    slot.append(sheet);
+    stack.append(slot);
+    metas.push({ pdfPage, base, canvas: c, slot, key: '', task: null });
+  }
+  stage.replaceChildren(stack);
+
+  const PDF_MAX_EDGE = 4500;
+  let renderGen = 0, scrollLock = false, laidOut = false, paintTimer = 0;
+  const updatePager = () => {
+    pg.textContent = `Page ${page} / ${n}`;
+    prev.disabled = page <= 1;
+    next.disabled = page >= n;
     $$('canvas', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
   };
-  turn = async target => { page = target; lastKey = ''; await render(); };
-  prev.onclick = () => { if (page > 1) turn(page - 1); };
-  next.onclick = () => { if (page < n) turn(page + 1); };
-  if (n === 1) prev.hidden = next.hidden = true;
-  await render();
-  if (n > 1) {
-    thumbs.hidden = false;
-    for (let i = 1; i <= Math.min(n, 60); i++) {
-      const p = await doc.getPage(i); const vp = p.getViewport({ scale: 168 / p.getViewport({ scale: 1 }).height });
-      const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height; c.title = 'Page ' + i;
-      c.onclick = () => { page = i; lastKey = ''; render(); };
-      thumbs.append(c); await p.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-      if (i === page) c.classList.add('on');
+  const cssFor = meta => pdfFitScale(meta.base.width, meta.base.height, availBox().w, availBox().h, ZOOMS[zoomLevel]);
+  const sizeCanvas = (meta, css) => {
+    meta.canvas.style.width = Math.max(1, Math.round(meta.base.width * css)) + 'px';
+    meta.canvas.style.height = Math.max(1, Math.round(meta.base.height * css)) + 'px';
+  };
+  function layoutSlots() {
+    const h = Math.max(200, stage.clientHeight);
+    for (const m of metas) m.slot.style.minHeight = h + 'px';
+  }
+  function captureAnchor() {
+    const sr = stage.getBoundingClientRect();
+    for (const m of metas) {
+      const r = m.slot.getBoundingClientRect();
+      if (r.bottom > sr.top + 24) {
+        return { page: +m.slot.dataset.pageSlot, frac: r.height ? (sr.top - r.top) / r.height : 0 };
+      }
     }
-    if (expanded) { lastKey = ''; render(); }
+    return null;
+  }
+  function restoreAnchor(a) {
+    if (!a) return;
+    const slot = stage.querySelector(`[data-page-slot="${a.page}"]`);
+    if (!slot) return;
+    const r = slot.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    stage.scrollTop += (r.top + a.frac * r.height) - sr.top;
+  }
+  function visibleIdx() {
+    if (n <= 8) return metas.map((_, i) => i);
+    const sr = stage.getBoundingClientRect();
+    const pad = sr.height || 0;
+    const out = [];
+    metas.forEach((m, i) => {
+      const r = m.slot.getBoundingClientRect();
+      if (r.bottom >= sr.top - pad && r.top <= sr.bottom + pad) out.push(i);
+    });
+    const cur = Math.min(n, Math.max(1, page)) - 1;
+    if (!out.includes(cur)) out.push(cur);
+    return out;
+  }
+  async function paintMeta(meta, gen) {
+    const css = cssFor(meta);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let renderScale = css * dpr;
+    const long = Math.max(meta.base.width, meta.base.height) * renderScale;
+    if (long > PDF_MAX_EDGE) renderScale *= PDF_MAX_EDGE / long;
+    const key = Math.round(css * 100) + ':' + Math.round(renderScale * 100);
+    sizeCanvas(meta, css);
+    if (meta.key === key) return;
+    if (meta.task && meta.task.cancel) { try { meta.task.cancel(); } catch {} meta.task = null; }
+    const vp = meta.pdfPage.getViewport({ scale: renderScale });
+    // Paint offscreen so a zoom or resize keeps the current page until the new one is ready.
+    const off = document.createElement('canvas');
+    off.width = Math.max(1, Math.round(vp.width));
+    off.height = Math.max(1, Math.round(vp.height));
+    const task = meta.pdfPage.render({ canvasContext: off.getContext('2d'), viewport: vp });
+    meta.task = task;
+    try { await task.promise; }
+    catch (e) {
+      if (gen !== renderGen) return;
+      if (e && (e.name === 'RenderingCancelledException' || /cancel/i.test(String(e.message || '')))) return;
+      throw e;
+    }
+    if (gen !== renderGen || !meta.canvas.isConnected) return;
+    if (meta.task === task) meta.task = null;
+    off.style.width = meta.canvas.style.width;
+    off.style.height = meta.canvas.style.height;
+    off.setAttribute('role', 'img');
+    off.setAttribute('aria-label', meta.canvas.getAttribute('aria-label') || '');
+    meta.canvas.replaceWith(off);
+    meta.canvas = off;
+    meta.key = key;
+  }
+  // One paint runs at a time. A scroll or zoom during it sets paintAgain so the
+  // next pass picks up whatever is visible at the newer scale.
+  let paintAgain = false, paintPromise = null;
+  function requestPaint() {
+    paintAgain = true;
+    if (!paintPromise) {
+      paintPromise = (async () => {
+        try {
+          while (paintAgain && root.isConnected) {
+            paintAgain = false;
+            const gen = renderGen;
+            for (const i of visibleIdx()) {
+              if (!root.isConnected || gen !== renderGen) { paintAgain = true; break; }
+              await paintMeta(metas[i], gen);
+            }
+          }
+        } finally {
+          paintPromise = null;
+          if (paintAgain && root.isConnected) requestPaint();
+        }
+      })();
+    }
+    return paintPromise;
+  }
+  async function renderPdf() {
+    const gen = ++renderGen;
+    if (!root.isConnected || !stage.clientWidth || !stage.clientHeight) return;
+    const anchor = laidOut ? captureAnchor() : null;
+    layoutSlots();
+    for (const m of metas) sizeCanvas(m, cssFor(m));
+    laidOut = true;
+    if (anchor) {
+      scrollLock = true;
+      restoreAnchor(anchor);
+      scrollLock = false;
+    }
+    updatePager();
+    layoutPins();
+    await requestPaint();
+    if (gen !== renderGen || !root.isConnected) return;
+    layoutPins();
+    updatePager();
+  }
+  function scrollToSlot(target, behavior = 'auto') {
+    const slot = stage.querySelector(`[data-page-slot="${target}"]`);
+    if (!slot) return Promise.resolve();
+    const delta = slot.getBoundingClientRect().top - stage.getBoundingClientRect().top;
+    if (Math.abs(delta) < 2) return requestPaint();
+    scrollLock = true;
+    const gen = renderGen;
+    return new Promise(resolve => {
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        scrollLock = false;
+        const job = gen === renderGen ? requestPaint() : Promise.resolve();
+        job.then(resolve, resolve);
+      };
+      if (behavior === 'smooth') {
+        stage.addEventListener('scrollend', done, { once: true });
+        setTimeout(done, 700);
+      }
+      stage.scrollTo({ top: Math.max(0, stage.scrollTop + delta), behavior });
+      if (behavior !== 'smooth') done();
+    });
+  }
+  function goTo(target, behavior = 'smooth') {
+    if (target < 1 || target > n) return Promise.resolve();
+    page = target;
+    updatePager();
+    layoutPins();
+    return scrollToSlot(target, behavior);
+  }
+  const onStageScroll = () => {
+    if (scrollLock || !metas.length) return;
+    const sr = stage.getBoundingClientRect();
+    const mark = sr.top + Math.min(72, sr.height * 0.3);
+    let best = page;
+    for (const m of metas) {
+      const r = m.slot.getBoundingClientRect();
+      if (r.top <= mark && r.bottom > mark + 4) best = +m.slot.dataset.pageSlot;
+    }
+    if (best !== page) { page = best; updatePager(); }
+    clearTimeout(paintTimer);
+    paintTimer = setTimeout(() => { if (root.isConnected) requestPaint(); }, 80);
+  };
+  stage.addEventListener('scroll', onStageScroll, { passive: true });
+  cancelPdf = () => {
+    renderGen++;
+    clearTimeout(paintTimer);
+    stage.removeEventListener('scroll', onStageScroll);
+    for (const m of metas) { try { m.task && m.task.cancel && m.task.cancel(); } catch {} }
+    doc.destroy && doc.destroy().catch(() => {});
+  };
+  render = () => { renderPdf().catch(e => { if (root.isConnected) console.error('[proof pdf]', e); }); };
+  turn = target => goTo(target, 'auto');
+  prev.onclick = () => { if (page > 1) goTo(page - 1); };
+  next.onclick = () => { if (page < n) goTo(page + 1); };
+  if (n === 1) prev.hidden = next.hidden = true;
+  await renderPdf();
+  if (!root.isConnected) return api;
+  if (n > 1 && root.isConnected) {
+    thumbs.hidden = false;
+    try {
+      for (let i = 1; i <= Math.min(n, 60); i++) {
+        if (!root.isConnected) return api;
+        const p = await doc.getPage(i); const vp = p.getViewport({ scale: 168 / p.getViewport({ scale: 1 }).height });
+        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height; c.title = 'Page ' + i;
+        c.onclick = () => goTo(i);
+        thumbs.append(c);
+        await p.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        if (i === page) c.classList.add('on');
+      }
+    } catch (e) {
+      if (!root.isConnected) return api;
+      throw e;
+    }
   }
   return api;
 }

@@ -182,6 +182,12 @@ main{flex:1;padding-top:var(--hdr)}
 .note__body{min-width:0}
 .note__t{display:block;white-space:pre-wrap;overflow-wrap:break-word;line-height:1.45}
 .note__meta{display:block;margin-top:6px;font:500 .68rem/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.stage.is-pdf{height:78vh;max-height:78vh;padding:0;display:block}
+.viewer.is-fs .stage.is-pdf{height:auto;max-height:none;padding:0}
+.pdf-pages{display:flex;flex-direction:column;align-items:stretch;width:max-content;min-width:100%}
+.pdf-slot{box-sizing:border-box;width:max-content;min-width:100%;display:flex;align-items:center;justify-content:center}
+.stage.is-pdf .sheet{flex:none;max-width:none}
+.stage.is-pdf canvas{max-width:none}
 .stage.is-image{align-items:center}
 .stage.is-image.is-zoomed{align-items:flex-start}
 .stage .loading{color:var(--dim);align-self:center}
