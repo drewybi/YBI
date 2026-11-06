@@ -42,12 +42,21 @@ with sync_playwright() as p:
           if (!canvas || canvas.width < 10) return false;
           const cr = canvas.getBoundingClientRect();
           const sr = stage.getBoundingClientRect();
-          const slot = canvas.closest('[data-page-slot]').getBoundingClientRect();
-          const tight = Math.min((sr.width - cr.width) / sr.width, (slot.height - cr.height) / slot.height);
+          const tight = Math.min((stage.clientWidth - cr.width) / stage.clientWidth, (stage.clientHeight - cr.height) / stage.clientHeight);
           const inside = cr.top >= sr.top - 1 && cr.bottom <= sr.bottom + 1 && cr.left >= sr.left - 1 && cr.right <= sr.right + 1;
-          return inside && tight >= 0.12 && tight <= 0.22;
+          const centered = Math.abs((cr.top + cr.bottom) / 2 - (sr.top + sr.bottom) / 2) < 8;
+          return inside && centered && tight >= 0.12 && tight <= 0.22;
         }""", arg=scope)
     assert_page_fits('.stage.is-pdf')
+    gap = c.evaluate("""() => {
+      const stage = document.querySelector('.stage.is-pdf');
+      const a = stage.querySelector('[data-page-slot="1"] canvas').getBoundingClientRect();
+      const b = stage.querySelector('[data-page-slot="2"] canvas').getBoundingClientRect();
+      const oldGap = Math.max(0, stage.clientHeight - a.height) / 2 + Math.max(0, stage.clientHeight - b.height) / 2;
+      const between = b.top - a.bottom;
+      return { between, oldGap, ratio: between / oldGap };
+    }""")
+    assert 0.45 <= gap['ratio'] <= 0.55, gap
     c.eval_on_selector('.stage.is-pdf', 'el => { el.scrollTop = el.scrollHeight; }')
     c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 3 / 3')")
     box3 = c.locator('.stage.is-pdf [data-page-slot="3"] canvas').bounding_box()
@@ -57,8 +66,9 @@ with sync_playwright() as p:
     c.click('[data-prev]'); c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 1 / 3')")
     c.wait_for_function("""() => {
       const stage = document.querySelector('.stage.is-pdf');
-      const slot = stage.querySelector('[data-page-slot="1"]');
-      return Math.abs(slot.getBoundingClientRect().top - stage.getBoundingClientRect().top) < 4;
+      const cr = stage.querySelector('[data-page-slot="1"] canvas').getBoundingClientRect();
+      const sr = stage.getBoundingClientRect();
+      return Math.abs((cr.top + cr.bottom) / 2 - (sr.top + sr.bottom) / 2) < 6;
     }""")
     c.click('[data-expand]'); c.wait_for_selector('.viewer.is-fs')
     assert_page_fits('.viewer.is-fs .stage.is-pdf')
@@ -71,7 +81,11 @@ with sync_playwright() as p:
     assert 'Page 2 / 3' in c.text_content('[data-pg]')
     assert '30434' in c.inner_text('main') and 'Spring catalogue' in c.inner_text('main') and 'Jo Retailer' in c.inner_text('main')
     c.screenshot(path=f'{OUT}/04-client-review-V1.png', full_page=True)
-    c.click('.seg [data-a=changes]'); c.wait_for_selector('.sheet.is-place'); c.wait_for_selector('[data-viewer] .stage [data-page-slot="1"] canvas')
+    c.click('.seg [data-a=changes]'); c.wait_for_selector('.sheet.is-place')
+    c.wait_for_function("""() => {
+      const cv = document.querySelector('[data-viewer] .stage [data-page-slot="1"] canvas');
+      return cv && cv.width > 400;
+    }""")
     page1 = c.locator('[data-viewer] .stage [data-page-slot="1"] canvas')
     page1.scroll_into_view_if_needed()
     box = page1.bounding_box()
