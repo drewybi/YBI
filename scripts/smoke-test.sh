@@ -8,6 +8,7 @@ RUN=$RANDOM; NA="T${RUN}A"; NB="T${RUN}B"; NP="T${RUN}P"; NC="T${RUN}C"; NCOL="T
 j() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s);console.log(eval('o'+process.argv[1]))})" "$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 pass() { echo "  ✓ $*"; }; fail() { echo "  ✗ $*"; exit 1; }
+node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$(dirname "$0")/pdf-fit.test.mjs" >/dev/null && pass "pdf page fit scale" || fail "pdf page fit scale"
 chk() { [ "$1" = "$2" ] && pass "$3" || fail "$3 (got '$1', want '$2')"; }
 [ -f "$S/poster-A2.jpg" ] || python3 "$(dirname "$0")/make-samples.py" >/dev/null
 
