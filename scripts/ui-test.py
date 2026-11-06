@@ -56,7 +56,7 @@ with sync_playwright() as p:
       const between = b.top - a.bottom;
       return { between, oldGap, ratio: between / oldGap };
     }""")
-    assert 0.45 <= gap['ratio'] <= 0.55, gap
+    assert 0.20 <= gap['ratio'] <= 0.30, gap
     c.eval_on_selector('.stage.is-pdf', 'el => { el.scrollTop = el.scrollHeight; }')
     c.wait_for_function("document.querySelector('[data-pg]').textContent.includes('Page 3 / 3')")
     box3 = c.locator('.stage.is-pdf [data-page-slot="3"] canvas').bounding_box()

@@ -17,7 +17,7 @@ const wideW = 1000 * wide;
 assert.ok(Math.abs(wideW / 800 - 1 / PDF_FIT_PAD) < 0.001, 'a wide page fits the width, then pulls back');
 const H = 780, P = 780 / PDF_FIT_PAD;
 const oldBand = pdfStackEdgePad(H, P) * 2;
-assert.equal(pdfStackGap(H, P), oldBand / 2);
+assert.equal(pdfStackGap(H, P), oldBand / 4);
 assert.ok(Math.abs(pdfStackEdgePad(H, P) - (H - P) / 2) < 0.01, 'edge pad still centres the fitted page');
 assert.equal(pdfStackGap(H, H + 40), 0);
 console.log('pdf fit scale ok');
