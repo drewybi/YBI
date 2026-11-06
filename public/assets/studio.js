@@ -142,13 +142,14 @@ async function jobPage(key, showV) {
     const pinFb = [...sel.feedback].reverse().find(f => f.stickies?.length);
     mountViewer($('[data-viewer]', app), sel, {
       pins: pinsFrom(pinFb),
-      onSelect: id => $$('.note', app).forEach(li => li.classList.toggle('on', !!li.querySelector(`[data-sid="${id}"]`)))
-    }).then(api => {
-      $$('[data-sid]', app).forEach(btn => btn.onclick = () => {
-        const fb = sel.feedback.find(f => f.id === btn.dataset.fb);
-        if (fb) api.setPins(pinsFrom(fb));
-        api.select(btn.dataset.sid);
-      });
+      onSelect: id => $$('.note', app).forEach(li => li.classList.toggle('on', !!li.querySelector(`[data-sid="${id}"]`))),
+      onReady: api => {
+        $$('[data-sid]', app).forEach(btn => btn.onclick = () => {
+          const fb = sel.feedback.find(f => f.id === btn.dataset.fb);
+          if (fb) api.setPins(pinsFrom(fb));
+          api.select(btn.dataset.sid);
+        });
+      }
     }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Could not render: ${esc(e.message)}</div>`);
   }
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => jobPage(key, vs.value);

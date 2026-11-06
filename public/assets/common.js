@@ -62,6 +62,15 @@ export function pdfFitScale(pageWidth, pageHeight, boxWidth, boxHeight, zoom = 1
   if (!(pageWidth > 0) || !(pageHeight > 0) || !(boxWidth > 0) || !(boxHeight > 0)) return 0;
   return Math.min(boxWidth / pageWidth, boxHeight / pageHeight) / PDF_FIT_PAD * zoom;
 }
+// Space above and below a page so it sits centred in the stage. That is the fit padding.
+export function pdfStackEdgePad(stageHeight, pageHeight) {
+  return Math.max(0, (stageHeight - pageHeight) / 2);
+}
+// Gap between two stacked pages. A viewport-tall slot used to leave edge-pad above and below
+// each page, so the band between pages was the sum of those. This is half of that band.
+export function pdfStackGap(stageHeight, pageHeight, nextPageHeight = pageHeight) {
+  return (pdfStackEdgePad(stageHeight, pageHeight) + pdfStackEdgePad(stageHeight, nextPageHeight)) / 2;
+}
 
 // Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
 export function engineBand(inner) {
@@ -403,8 +412,15 @@ export async function mountViewer(root, version, opts = {}) {
     meta.canvas.style.height = Math.max(1, Math.round(meta.base.height * css)) + 'px';
   };
   function layoutSlots() {
-    const h = Math.max(200, stage.clientHeight);
-    for (const m of metas) m.slot.style.minHeight = h + 'px';
+    const H = availBox().h;
+    const heightOf = m => parseFloat(m.canvas.style.height) || 0;
+    metas.forEach((m, i) => {
+      const h = heightOf(m);
+      const last = i === metas.length - 1;
+      m.slot.style.minHeight = '';
+      m.slot.style.marginTop = (i === 0 ? pdfStackEdgePad(H, h) : 0) + 'px';
+      m.slot.style.marginBottom = (last ? pdfStackEdgePad(H, h) : pdfStackGap(H, h, heightOf(metas[i + 1]))) + 'px';
+    });
   }
   function captureAnchor() {
     const sr = stage.getBoundingClientRect();
@@ -497,8 +513,8 @@ export async function mountViewer(root, version, opts = {}) {
     const gen = ++renderGen;
     if (!root.isConnected || !stage.clientWidth || !stage.clientHeight) return;
     const anchor = laidOut ? captureAnchor() : null;
-    layoutSlots();
     for (const m of metas) sizeCanvas(m, cssFor(m));
+    layoutSlots();
     laidOut = true;
     if (anchor) {
       scrollLock = true;
@@ -515,7 +531,10 @@ export async function mountViewer(root, version, opts = {}) {
   function scrollToSlot(target, behavior = 'auto') {
     const slot = stage.querySelector(`[data-page-slot="${target}"]`);
     if (!slot) return Promise.resolve();
-    const delta = slot.getBoundingClientRect().top - stage.getBoundingClientRect().top;
+    const cr = slot.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    // A page shorter than the stage stays centred, so the fit padding is unchanged.
+    // A zoomed page taller than the stage lines up at the top so you read from the start.
+    const delta = cr.height >= sr.height - 1 ? cr.top - sr.top : (cr.top + cr.height / 2) - (sr.top + sr.height / 2);
     if (Math.abs(delta) < 2) return requestPaint();
     scrollLock = true;
     const gen = renderGen;
@@ -546,11 +565,13 @@ export async function mountViewer(root, version, opts = {}) {
   const onStageScroll = () => {
     if (scrollLock || !metas.length) return;
     const sr = stage.getBoundingClientRect();
-    const mark = sr.top + Math.min(72, sr.height * 0.3);
-    let best = page;
+    const mid = (sr.top + sr.bottom) / 2;
+    let best = page, bestDist = Infinity;
     for (const m of metas) {
       const r = m.slot.getBoundingClientRect();
-      if (r.top <= mark && r.bottom > mark + 4) best = +m.slot.dataset.pageSlot;
+      if (r.top <= mid && r.bottom >= mid) { best = +m.slot.dataset.pageSlot; break; }
+      const dist = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (dist < bestDist) { bestDist = dist; best = +m.slot.dataset.pageSlot; }
     }
     if (best !== page) { page = best; updatePager(); }
     clearTimeout(paintTimer);
