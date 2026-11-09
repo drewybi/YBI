@@ -105,9 +105,12 @@ export async function mountViewer(root, version, opts = {}) {
   }
   const fileUrl = version.url;
   const imageFiles = version.kind === 'image' && Array.isArray(version.files) ? version.files.filter(f => f && f.url) : [];
+  const pdfFiles = version.kind === 'pdf' && Array.isArray(version.files) ? version.files.filter(f => f && f.url) : [];
   const multiImage = imageFiles.length > 1;
-  const dl = multiImage && version.downloadAll ? version.downloadAll : fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
-  const dlLabel = multiImage ? 'Download all' : 'Download file';
+  const multiPdf = pdfFiles.length > 1;
+  const multiPack = (multiImage || multiPdf) && version.downloadAll;
+  const dl = multiPack ? version.downloadAll : fileUrl + (fileUrl.includes('?') ? '&' : '?') + 'download';
+  const dlLabel = multiPack ? 'Download all' : 'Download file';
   root.innerHTML = `<div class="viewer" data-viewer-root>
     <div class="viewer__bar">
       <div class="grp"><button class="ibtn" type="button" data-prev aria-label="Previous page">‹</button><span class="pg" data-pg>—</span><button class="ibtn" type="button" data-next aria-label="Next page">›</button></div>
@@ -360,42 +363,58 @@ export async function mountViewer(root, version, opts = {}) {
   stage.classList.add('is-pdf');
   const lib = await pdfjs();
   if (!root.isConnected) return api;
-  const doc = await lib.getDocument(version.url).promise;
-  if (!root.isConnected) return api;
-  n = doc.numPages;
+  const pdfSources = multiPdf ? pdfFiles : [{ name: version.originalName || 'Proof', url: version.url }];
+  const docs = [];
+  for (const src of pdfSources) {
+    const doc = await lib.getDocument(src.url).promise;
+    if (!root.isConnected) return api;
+    docs.push({ doc, name: src.name || 'Proof', url: src.url });
+  }
+  n = docs.reduce((sum, d) => sum + d.doc.numPages, 0);
   const metas = [];
   const stack = document.createElement('div');
   stack.className = 'pdf-pages';
   stack.dataset.pages = '';
-  for (let i = 1; i <= n; i++) {
-    const pdfPage = await doc.getPage(i);
-    if (!root.isConnected) return api;
-    const base = pdfPage.getViewport({ scale: 1 });
-    const slot = document.createElement('div');
-    slot.className = 'pdf-slot';
-    slot.dataset.pageSlot = String(i);
-    const sheet = document.createElement('div');
-    sheet.className = 'sheet';
-    sheet.dataset.sheet = '';
-    sheet.dataset.page = String(i);
-    sheet.classList.toggle('is-place', placing);
-    sheet.addEventListener('click', e => {
-      if (swallowClick) { swallowClick = false; return; }
-      if (!placing || e.target.closest('.pin')) return;
-      const r = sheet.getBoundingClientRect();
-      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-      if (x < 0 || y < 0 || x > 1 || y > 1) return;
-      page = i;
-      updatePager();
-      opts.onPlace && opts.onPlace({ page: i, x, y });
-    });
-    const c = document.createElement('canvas');
-    c.setAttribute('role', 'img');
-    c.setAttribute('aria-label', `Page ${i} of ${n}`);
-    sheet.append(c);
-    slot.append(sheet);
-    stack.append(slot);
-    metas.push({ pdfPage, base, canvas: c, slot, key: '', task: null });
+  let globalPage = 0;
+  for (const d of docs) {
+    for (let i = 1; i <= d.doc.numPages; i++) {
+      globalPage++;
+      const pdfPage = await d.doc.getPage(i);
+      if (!root.isConnected) return api;
+      const base = pdfPage.getViewport({ scale: 1 });
+      const slot = document.createElement('div');
+      slot.className = 'pdf-slot';
+      slot.dataset.pageSlot = String(globalPage);
+      if (multiPdf && i === 1 && globalPage > 1) {
+        const label = document.createElement('div');
+        label.className = 'pdf-break';
+        label.textContent = d.name;
+        stack.append(label);
+      }
+      const sheet = document.createElement('div');
+      sheet.className = 'sheet';
+      sheet.dataset.sheet = '';
+      sheet.dataset.page = String(globalPage);
+      sheet.classList.toggle('is-place', placing);
+      const pageNo = globalPage;
+      sheet.addEventListener('click', e => {
+        if (swallowClick) { swallowClick = false; return; }
+        if (!placing || e.target.closest('.pin')) return;
+        const r = sheet.getBoundingClientRect();
+        const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+        if (x < 0 || y < 0 || x > 1 || y > 1) return;
+        page = pageNo;
+        updatePager();
+        opts.onPlace && opts.onPlace({ page: pageNo, x, y });
+      });
+      const c = document.createElement('canvas');
+      c.setAttribute('role', 'img');
+      c.setAttribute('aria-label', multiPdf ? `Page ${globalPage} of ${n}, ${d.name}` : `Page ${globalPage} of ${n}`);
+      sheet.append(c);
+      slot.append(sheet);
+      stack.append(slot);
+      metas.push({ pdfPage, base, canvas: c, slot, key: '', task: null, docName: d.name, docUrl: d.url });
+    }
   }
   stage.replaceChildren(stack);
 
@@ -405,6 +424,9 @@ export async function mountViewer(root, version, opts = {}) {
     pg.textContent = `Page ${page} / ${n}`;
     prev.disabled = page <= 1;
     next.disabled = page >= n;
+    const here = metas[page - 1];
+    if (here && nameEl) nameEl.textContent = here.docName || '';
+    if (here && openEl) openEl.href = here.docUrl || fileUrl;
     $$('canvas', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
   };
   const cssFor = meta => pdfFitScale(meta.base.width, meta.base.height, availBox().w, availBox().h, ZOOMS[zoomLevel]);
@@ -584,7 +606,7 @@ export async function mountViewer(root, version, opts = {}) {
     clearTimeout(paintTimer);
     stage.removeEventListener('scroll', onStageScroll);
     for (const m of metas) { try { m.task && m.task.cancel && m.task.cancel(); } catch {} }
-    doc.destroy && doc.destroy().catch(() => {});
+    for (const d of docs) d.doc.destroy && d.doc.destroy().catch(() => {});
   };
   render = () => { renderPdf().catch(e => { if (root.isConnected) console.error('[proof pdf]', e); }); };
   turn = target => goTo(target, 'auto');
@@ -596,14 +618,16 @@ export async function mountViewer(root, version, opts = {}) {
   if (n > 1 && root.isConnected) {
     thumbs.hidden = false;
     try {
-      for (let i = 1; i <= Math.min(n, 60); i++) {
+      for (let i = 0; i < Math.min(metas.length, 60); i++) {
         if (!root.isConnected) return api;
-        const p = await doc.getPage(i); const vp = p.getViewport({ scale: 168 / p.getViewport({ scale: 1 }).height });
-        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height; c.title = 'Page ' + i;
-        c.onclick = () => goTo(i);
+        const m = metas[i];
+        const vp = m.pdfPage.getViewport({ scale: 168 / m.base.height });
+        const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+        c.title = multiPdf ? `Page ${i + 1} · ${m.docName}` : 'Page ' + (i + 1);
+        c.onclick = () => goTo(i + 1);
         thumbs.append(c);
-        await p.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-        if (i === page) c.classList.add('on');
+        await m.pdfPage.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        if (i + 1 === page) c.classList.add('on');
       }
     } catch (e) {
       if (!root.isConnected) return api;

@@ -14,6 +14,15 @@ let job, showN, mode = null, files = [], stickies = [], activeSticky = null, vie
 const numbered = list => list.map((s, i) => ({ ...s, n: i + 1 }));
 const pinId = () => Math.random().toString(36).slice(2, 8);
 const saved = () => localStorage.getItem('ybi-proof-name') || '';
+function downloadRow(v) {
+  if (!v || !v.downloadAll || !v.files || v.files.length < 2) return '';
+  const word = v.kind === 'pdf' ? 'PDFs' : 'images';
+  const each = v.kind === 'pdf' ? v.files.map(f => {
+    const href = f.url + (String(f.url).includes('?') ? '&' : '?') + 'download';
+    return `<a class="btn btn--sm btn--ghost" href="${esc(href)}">${esc(f.name)}</a>`;
+  }).join('') : '';
+  return `<div class="dlall"><a class="btn btn--sm" href="${esc(v.downloadAll)}">Download all</a>${each}<span class="small dim">${v.files.length} ${word} · ${fmtSize(v.size)}</span></div>`;
+}
 
 async function load() {
   try { job = await api(API + (kq ? '?' + kq : '')); }
@@ -44,10 +53,10 @@ function render() {
      ${!isLatest ? `<div class="banner">You’re viewing an earlier version (V${v.n}). <button class="lnk" data-latest style="color:var(--warn)">View latest V${latest.n}</button></div>` : ''}
      ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
      <div data-viewer></div>
-     ${v.downloadAll ? `<div class="dlall"><a class="btn btn--sm" href="${esc(v.downloadAll)}">Download all</a><span class="small dim">${v.files.length} images · ${fmtSize(v.size)}</span></div>` : ''}
+     ${downloadRow(v)}
      ${v.kind === 'zip'
        ? `<p class="small dim" style="margin-top:12px">This version is a ZIP file. Download it to review what YBI sent.</p>`
-       : `<p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : v.kind === 'pdf' ? 'Scroll to read every page. ‹ › and the arrow keys jump a page.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>`}
+       : `<p class="small dim" style="margin-top:12px">Tip: ⤢ opens the proof full screen. When you request changes, click the proof to drop a numbered note. ${v.kind === 'pdf' && v.files && v.files.length > 1 ? 'Scroll to read every page. A label marks where the next PDF starts. ‹ › and the arrow keys jump a page.' : v.files && v.files.length > 1 ? 'Use ‹ ›, the arrow keys, or swipe to move between images.' : v.kind === 'pdf' ? 'Scroll to read every page. ‹ › and the arrow keys jump a page.' : 'Use ‹ › or the arrow keys to flip pages.'} Colours on screen may vary slightly from print.</p>`}
     </div>
     <aside class="stack">${panel(latest)}${history()}</aside>
    </div></div>`;
@@ -102,7 +111,7 @@ function history() {
   const all = job.versions.flatMap(v => v.feedback.map(f => ({ v, f }))).reverse();
   if (!all.length && job.versions.length < 2) return '';
   return `<div class="panel"><p class="eyebrow" style="margin-bottom:6px">History</p>
-   ${[...job.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag" style="font-size:1rem">V${v.n}</span><span class="small dim">${v.files && v.files.length > 1 ? `${v.files.length} images · ` : ''}${fmtDate(v.uploadedAt)}</span></div>
+   ${[...job.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="vtag" style="font-size:1rem">V${v.n}</span><span class="small dim">${v.files && v.files.length > 1 ? `${v.files.length} ${v.kind === 'pdf' ? 'PDFs' : 'images'} · ` : ''}${fmtDate(v.uploadedAt)}</span></div>
     ${v.feedback.map(f => `<p class="small mute" style="margin:8px 0 0">${f.type === 'approve' ? '✓ Approved' : '✎ Changes'} by ${esc(f.name)} · ${fmtDate(f.at)}${f.stickies?.length ? ` · ${f.stickies.length} note${f.stickies.length > 1 ? 's' : ''} on the proof` : ''}${f.attachments.length ? ` · ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}` : ''}</p>`).join('')}</div>`).join('')}</div>`;
 }
 

@@ -95,7 +95,7 @@ function checkProofSet(files) {
   const kinds = files.map(f => PROOF_TYPES[extOf(f.originalName)] || null);
   if (kinds.some(k => !k)) return { error: PROOF_TYPE_ERROR, status: 415 };
   if (kinds.some(k => k === 'zip') && files.length > 1) return { error: ZIP_ALONE, status: 400 };
-  if (kinds.some(k => k === 'pdf') && files.length > 1) return { error: 'A PDF is one file per version. Upload it on its own, or upload JPG and PNG files together.', status: 400 };
+  if (kinds.includes('pdf') && kinds.some(k => k !== 'pdf')) return { error: 'Upload PDFs together, or JPG and PNG files together — not both in one version.', status: 400 };
   const total = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
   if (files.some(f => f.size > MAX_PROOF) || total > MAX_PROOF) return { error: 'A version can be up to 300 MB.', status: 413 };
   return { kind: kinds[0] };
@@ -1318,7 +1318,7 @@ function reviewUrl(req, job) { return origin(req) + numPath(job); }
 function secureUrl(req, job) { return `${origin(req)}${numPath(job)}?k=${job.token}`; }
 function publicVersion(job, v, q) {
   const pages = versionPages(v);
-  const multi = v.kind === 'image' && pages.length > 1;
+  const multi = (v.kind === 'image' || v.kind === 'pdf') && pages.length > 1;
   const base = `${numPath(job)}/file/v${v.n}`;
   return {
     n: v.n, kind: v.kind, originalName: v.originalName, size: v.size, uploadedAt: v.uploadedAt, studioNote: v.studioNote || '',
@@ -1539,6 +1539,10 @@ async function handle(req, res) {
           const images = [];
           for (const f of pages) images.push({ bytes: await fsp.readFile(path.join(FILES, job.id, f.stored)), ext: extOf(f.stored) });
           pdf = await buildChangesPdf({ kind: 'image', images, stickies: fb.stickies, meta });
+        } else if (v.kind === 'pdf' && pages.length > 1) {
+          const pdfs = [];
+          for (const f of pages) pdfs.push(await fsp.readFile(path.join(FILES, job.id, f.stored)));
+          pdf = await buildChangesPdf({ kind: 'pdf', pdfs, stickies: fb.stickies, meta });
         } else {
           pdf = await buildChangesPdf({
             kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
@@ -1671,7 +1675,7 @@ async function handle(req, res) {
     if (!version || !pages.length) return err(res, 404, 'Not found');
     const part = r[4] || '';
     if (part === 'zip') {
-      if (!(version.kind === 'image' && pages.length > 1)) return err(res, 404, 'Not found');
+      if (!((version.kind === 'image' || version.kind === 'pdf') && pages.length > 1)) return err(res, 404, 'Not found');
       const root = path.resolve(FILES, job.id);
       const entries = [];
       for (const f of pages) {

@@ -186,6 +186,7 @@ main{flex:1;padding-top:var(--hdr)}
 .viewer.is-fs .stage.is-pdf{height:auto;max-height:none;padding:0}
 .pdf-pages{display:flex;flex-direction:column;align-items:stretch;width:max-content;min-width:100%}
 .pdf-slot{box-sizing:border-box;width:max-content;min-width:100%;display:flex;align-items:center;justify-content:center}
+.pdf-break{width:100%;margin:0;padding:8px 16px 0;text-align:center;font:500 .66rem/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
 .stage.is-pdf .sheet{flex:none;max-width:none}
 .stage.is-pdf canvas{max-width:none}
 .stage.is-image{align-items:center}
