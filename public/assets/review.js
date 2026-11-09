@@ -52,6 +52,7 @@ function render() {
      </div>
      ${!isLatest ? `<div class="banner">You’re viewing an earlier version (V${v.n}). <button class="lnk" data-latest style="color:var(--warn)">View latest V${latest.n}</button></div>` : ''}
      ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
+     ${isLatest ? '' : versionChanges(v)}
      <div data-viewer></div>
      ${downloadRow(v)}
      ${v.kind === 'zip'
@@ -66,7 +67,7 @@ function render() {
     place: placing,
     pins: placing ? numbered(stickies) : pinsFrom(pinFb),
     active: placing ? activeSticky : null,
-    onReady: api => { viewerApi = api; },
+    onReady: api => { viewerApi = api; if (!placing && !isLatest) wireVersionChanges(api, v); },
     onPlace: pos => addSticky(pos),
     onSelect: id => { activeSticky = placing ? id : activeSticky; markNotes(id); },
     onText: text => setStickyText(activeSticky, text),
@@ -115,6 +116,20 @@ function history() {
     ${v.feedback.map(f => `<p class="small mute" style="margin:8px 0 0">${f.type === 'approve' ? '✓ Approved' : '✎ Changes'} by ${esc(f.name)} · ${fmtDate(f.at)}${f.stickies?.length ? ` · ${f.stickies.length} note${f.stickies.length > 1 ? 's' : ''} on the proof` : ''}${f.attachments.length ? ` · ${f.attachments.length} file${f.attachments.length > 1 ? 's' : ''}` : ''}</p>`).join('')}</div>`).join('')}</div>`;
 }
 
+function changeFiles(f) {
+  if (!f.attachments?.length) return '';
+  const imgs = f.attachments.filter(a => /\.(png|jpe?g|webp|gif)$/i.test(a.name));
+  const thumbs = imgs.length ? `<div class="thumbatt">${imgs.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener"><img src="${esc(a.url)}" alt="${esc(a.name)}"></a>`).join('')}</div>` : '';
+  const links = `<div class="att">${f.attachments.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${ICO.clip.replace('<svg', '<svg width="12" height="12"')} ${esc(a.name)}</a>`).join('')}</div>`;
+  return thumbs + links;
+}
+function versionChanges(v) {
+  const changes = (v.feedback || []).filter(f => f.type === 'changes');
+  if (!changes.length) return '';
+  return `<div data-version-changes style="margin:0 0 14px"><p class="eyebrow" style="margin-bottom:4px">Changes requested</p><p class="small mute" style="margin:0">On V${v.n}</p>
+    ${changes.map(f => `<div class="fb fb--changes"><div class="small dim">${esc(f.name)} · ${fmtDate(f.at)}</div>${f.note ? `<p>${esc(f.note)}</p>` : ''}${roNotes(f)}${changeFiles(f)}</div>`).join('')}
+  </div>`;
+}
 function roNotes(f) {
   if (!f.stickies?.length) return '';
   return `<ol class="notelist notelist--ro">${f.stickies.map(s => `<li class="note"><button type="button" class="note__hit" data-sid="${f.id}-${s.n}" data-fb="${f.id}"><span class="note__n" aria-hidden="true">${s.n}</span><span class="note__body"><span class="note__t">${esc(s.text)}</span><span class="note__meta">Page ${s.page}</span></span></button></li>`).join('')}</ol>`;
@@ -159,6 +174,14 @@ function removeSticky(id) {
 }
 function wireSaved(api, version) {
   $$('[data-sid]', app).forEach(btn => btn.onclick = () => {
+    const fb = version.feedback.find(f => f.id === btn.dataset.fb);
+    if (!fb) return;
+    api.setPins(pinsFrom(fb));
+    api.select(btn.dataset.sid);
+  });
+}
+function wireVersionChanges(api, version) {
+  $$('[data-version-changes] [data-sid]', app).forEach(btn => btn.onclick = () => {
     const fb = version.feedback.find(f => f.id === btn.dataset.fb);
     if (!fb) return;
     api.setPins(pinsFrom(fb));
