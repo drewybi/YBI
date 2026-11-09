@@ -134,7 +134,20 @@ with sync_playwright() as p:
     c.reload(); c.wait_for_selector('[data-viewer] .stage canvas')
     assert c.text_content('.vtag').strip().startswith('V2'); assert 'Back cover phone number corrected' in c.inner_text('main')
     c.screenshot(path=f'{OUT}/09-client-sees-V2.png', full_page=True)
-    c.select_option('[data-vsel]', '1'); c.wait_for_selector('.banner'); c.select_option('[data-vsel]', '2'); c.wait_for_selector('.seg')
+    c.select_option('[data-vsel]', '1'); c.wait_for_selector('.banner'); c.wait_for_selector('[data-version-changes]')
+    v1changes = c.inner_text('[data-version-changes]').casefold()
+    assert 'changes requested' in v1changes and 'on v1' in v1changes
+    assert 'back cover: phone number is wrong' in v1changes
+    assert 'move the logo up' in v1changes and 'phone should be 03 5444 2127' in v1changes and 'jo retailer' in v1changes
+    c.wait_for_selector('[data-version-changes] .thumbatt img')
+    c.locator('[data-version-changes] .note__hit', has_text='Phone should').click()
+    c.wait_for_selector('[data-version-changes] .note.on')
+    c.wait_for_selector('.pin.on')
+    assert 'Download changes PDF' not in c.inner_text('[data-version-changes]')
+    assert 'Back cover phone number corrected' not in c.inner_text('main')
+    c.screenshot(path=f'{OUT}/17-client-earlier-version-changes.png', full_page=True)
+    c.select_option('[data-vsel]', '2'); c.wait_for_selector('.seg')
+    assert c.locator('[data-version-changes]').count() == 0
     c.click('.seg [data-a=approve]'); c.click('[data-go]'); assert 'tick the box' in c.text_content('[data-msg]')
     c.check('#c-ok'); c.click('[data-go]'); c.wait_for_selector('[data-state=approved]'); c.wait_for_selector('[data-viewer] .stage canvas')
     assert 'Spotted something' not in c.inner_text('[data-state=approved]')
