@@ -144,11 +144,18 @@ async function loadProof(pdf, kind, bytes, ext) {
   return doc;
 }
 
-async function buildChangesPdf({ kind, bytes, ext, images, stickies, meta }) {
+async function buildChangesPdf({ kind, bytes, ext, images, pdfs, stickies, meta }) {
   let pdf;
   if (images && images.length) {
     pdf = await PDFDocument.create();
     for (const im of images) await embedFittedImage(pdf, im.bytes, im.ext);
+  } else if (pdfs && pdfs.length) {
+    pdf = await PDFDocument.create();
+    for (const buf of pdfs) {
+      const src = await PDFDocument.load(buf, { ignoreEncryption: false });
+      const copied = await pdf.copyPages(src, src.getPageIndices());
+      copied.forEach(p => pdf.addPage(p));
+    }
   } else {
     pdf = await loadProof(null, kind, bytes, ext);
   }

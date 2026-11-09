@@ -1,5 +1,6 @@
 'use strict';
-// Several JPG/PNG files share one proof version. A PDF stays one file.
+// Several JPG/PNG files share one proof version. Several PDFs share one version too.
+// A single PDF stays one file. Legacy jobs that only have originalName/stored/kind still download.
 // Legacy jobs that only have originalName/stored/kind still download.
 const assert = require('assert');
 const fs = require('fs');
@@ -204,9 +205,29 @@ async function parseInPieces(body, contentType) {
   const bad = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({ jobNumber: num + 'B', clientName: 'Bad', description: 'Rejects' }) });
   const mix = formBody([{ name: 'page.pdf', body: PDF }, { name: 'page.png', body: PNG }]);
   const mixed = await req(server, 'POST', `/api/jobs/${bad.json.id}/versions`, { headers: { 'Content-Type': mix.type }, body: mix.body });
-  check(mixed.status === 400 && /PDF is one file/.test(mixed.json.error), 'a PDF is not mixed into an image set');
-  const twoPdf = formBody([{ name: 'a.pdf', body: PDF }, { name: 'b.pdf', body: PDF }]);
-  check((await req(server, 'POST', `/api/jobs/${bad.json.id}/versions`, { headers: { 'Content-Type': twoPdf.type }, body: twoPdf.body })).status === 400, 'two PDFs are not one version');
+  check(mixed.status === 400 && /not both in one version/.test(mixed.json.error), 'a PDF is not mixed into an image set');
+  const pdfJob = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({ jobNumber: num + 'F', clientName: 'Files', description: 'Two PDFs' }) });
+  const twoPdf = formBody([{ name: 'cover.pdf', body: PDF }, { name: 'spread.pdf', body: PDF }]);
+  const pdfSet = await req(server, 'POST', `/api/jobs/${pdfJob.json.id}/versions`, { headers: { 'Content-Type': twoPdf.type }, body: twoPdf.body });
+  check(pdfSet.status === 201 && pdfSet.json.versions.length === 1 && pdfSet.json.versions[0].kind === 'pdf', 'two PDFs are one version');
+  check(pdfSet.json.versions[0].files.map(f => f.name).join(',') === 'cover.pdf,spread.pdf', 'PDF order follows the upload');
+  check(pdfSet.json.versions[0].originalName === 'cover.pdf' && pdfSet.json.versions[0].downloadAll.endsWith('/file/v1/zip?k=' + encodeURIComponent(pdfJob.json.token)), 'a PDF set offers download all and keeps the first name');
+  const pdfZip = await req(server, 'GET', pdfSet.json.versions[0].downloadAll, { studio: false });
+  const pdfNames = pdfZip.status === 200 ? readZip(pdfZip.body).map(f => f.name) : [];
+  check(pdfZip.status === 200 && pdfNames.join(',') === 'cover.pdf,spread.pdf', 'download all zips the PDFs in order');
+  const firstPdf = await req(server, 'GET', pdfSet.json.versions[0].files[0].url + '&download', { studio: false });
+  const secondPdf = await req(server, 'GET', pdfSet.json.versions[0].files[1].url + '&download', { studio: false });
+  check(firstPdf.status === 200 && firstPdf.body.equals(PDF) && secondPdf.status === 200 && secondPdf.body.equals(PDF), 'each PDF downloads on its own');
+  const marked = await req(server, 'POST', `/api/review/${pdfJob.json.jobNumber}/decision?k=${encodeURIComponent(pdfJob.json.token)}`, {
+    studio: false,
+    body: JSON.stringify({ type: 'changes', name: 'Sam', note: '', version: 1, attachments: [], stickies: [{ page: 1, x: 0.2, y: 0.3, text: 'Cover logo' }, { page: 4, x: 0.5, y: 0.5, text: 'Second file' }] })
+  });
+  check(marked.status === 200, 'notes can land on a later PDF in the set');
+  const changesPdf = await req(server, 'GET', `/api/jobs/${pdfJob.json.id}/changes.pdf?v=1&f=${encodeURIComponent(marked.json.versions[0].feedback[0].id)}`);
+  const merged = changesPdf.status === 200 ? await PDFDocument.load(changesPdf.body) : null;
+  check(changesPdf.status === 200 && merged.getPageCount() === 7, 'changes PDF keeps every page of both files plus the checklist');
+  const pdfLog = fs.existsSync(path.join(dataDir, 'notifications.log')) ? fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8') : '';
+  check(!pdfLog.includes('cover.pdf') && !pdfLog.includes('spread.pdf'), 'uploading a PDF set does not notify staff');
   const exe = formBody([{ name: 'a.png', body: PNG }, { name: 'run.exe', body: Buffer.from('MZ') }]);
   check((await req(server, 'POST', `/api/jobs/${bad.json.id}/versions`, { headers: { 'Content-Type': exe.type }, body: exe.body })).status === 415, 'a non-proof file is rejected');
   const many = formBody(Array.from({ length: 41 }, (_, i) => ({ name: `p${i}.png`, body: Buffer.from('x') })));
