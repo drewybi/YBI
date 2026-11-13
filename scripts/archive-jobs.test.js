@@ -19,19 +19,25 @@ const { createAppServer, ARCHIVE_AFTER_MS, archivedAtFor } = require('../server'
 
 assert.strictEqual(ARCHIVE_AFTER_MS, 2 * 24 * 60 * 60 * 1000);
 const approvedAt = '2026-01-01T00:00:00.000Z';
-const approvedJob = { versions: [{ feedback: [{ type: 'approve', at: approvedAt }] }] };
+const approvedJob = { production: 'no_production', versions: [{ feedback: [{ type: 'approve', at: approvedAt }] }] };
 const due = Date.parse(approvedAt) + ARCHIVE_AFTER_MS;
 assert.strictEqual(archivedAtFor(approvedJob, due - 1), null, 'a job approved for just under two days stays active');
-assert.strictEqual(archivedAtFor(approvedJob, due), new Date(due).toISOString(), 'two days after approval is the archive time');
+assert.strictEqual(archivedAtFor(approvedJob, due), new Date(due).toISOString(), 'two days after approval is the archive time when production is set');
+assert.strictEqual(archivedAtFor({ production: 'approved_for_production', versions: [{ feedback: [{ type: 'approve', at: approvedAt }] }] }, due), new Date(due).toISOString(), 'approved for production archives on the same timer');
+assert.strictEqual(archivedAtFor({ production: 'awaiting_approval', versions: [{ feedback: [{ type: 'approve', at: approvedAt }] }] }, due), null, 'awaiting approval stays in the open list');
+assert.strictEqual(archivedAtFor({ versions: [{ feedback: [{ type: 'approve', at: approvedAt }] }] }, due), null, 'a job with no production value stays awaiting approval');
 assert.strictEqual(archivedAtFor({ versions: [] }, due), null);
 assert.strictEqual(archivedAtFor({ versions: [{ feedback: [{ type: 'approve', at: 'not-a-date' }] }] }, due), null);
 assert.strictEqual(archivedAtFor({
+  production: 'no_production',
   versions: [{ feedback: [{ type: 'approve', at: '2020-01-01T00:00:00.000Z' }, { type: 'changes', at: '2020-01-02T00:00:00.000Z' }] }],
 }, Date.now()), null, 'a later change request is not an approval');
 assert.strictEqual(archivedAtFor({
+  production: 'approved_for_production',
   versions: [{ feedback: [{ type: 'changes', at: '2020-01-01T00:00:00.000Z' }, { type: 'approve', at: '2026-06-01T00:00:00.000Z' }] }],
 }, Date.parse('2026-06-03T00:00:00.000Z')), '2026-06-03T00:00:00.000Z', 'archive is counted from the latest approval');
 assert.strictEqual(archivedAtFor({
+  production: 'no_production',
   versions: [
     { feedback: [{ type: 'approve', at: '2020-01-01T00:00:00.000Z' }] },
     { feedback: [] },
@@ -41,6 +47,8 @@ assert.strictEqual(archivedAtFor({
 const studioJs = fs.readFileSync(path.join(__dirname, '../public/assets/studio.js'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '../public/assets/app.css'), 'utf8');
 const serverSrc = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
+assert.ok(studioJs.includes('Artwork status'), 'jobs page names the artwork status column');
+assert.ok(studioJs.includes('>Production<'), 'jobs page has a Production column');
 assert.ok(studioJs.includes("['archive', 'Archive']"), 'jobs page has an Archive filter');
 assert.ok(studioJs.includes('!j.archivedAt'), 'All excludes archived jobs');
 assert.ok(studioJs.includes("filter === 'archive'"), 'Archive is its own list');
@@ -94,7 +102,7 @@ function setLatestDecisionAt(id, iso) {
 
   const num = 'A' + Date.now().toString(36);
   const created = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({ jobNumber: num, clientName: 'Sam Client', description: 'Poster' }) });
-  check(created.status === 201 && created.json.archivedAt === null, 'a new job is not archived');
+  check(created.status === 201 && created.json.archivedAt === null && created.json.production === 'awaiting_approval', 'a new job is not archived and starts awaiting approval');
   const job = created.json;
   const up = await req(server, 'POST', `/api/jobs/${job.id}/versions?name=poster.pdf`, { headers: { 'Content-Type': 'application/pdf' }, body: pdf });
   check(up.status === 201, 'proof uploaded');
@@ -102,7 +110,7 @@ function setLatestDecisionAt(id, iso) {
     studio: false,
     body: JSON.stringify({ type: 'approve', name: 'Sam Client', note: 'Yes', version: 1 }),
   });
-  check(approved.status === 200 && approved.json.status === 'approved' && !Object.prototype.hasOwnProperty.call(approved.json, 'archivedAt'), 'the client approval response has no archive field');
+  check(approved.status === 200 && approved.json.status === 'approved' && !Object.prototype.hasOwnProperty.call(approved.json, 'archivedAt') && !Object.prototype.hasOwnProperty.call(approved.json, 'production'), 'the client approval response has no archive or production field');
 
   let list = await req(server, 'GET', '/api/jobs');
   let row = list.json.find(j => j.id === job.id);
@@ -120,8 +128,14 @@ function setLatestDecisionAt(id, iso) {
   const expectArchive = new Date(Date.parse(old) + ARCHIVE_AFTER_MS).toISOString();
   list = await req(server, 'GET', '/api/jobs');
   row = list.json.find(j => j.id === job.id);
+  check(row.archivedAt === null && row.production === 'awaiting_approval' && row.status === 'approved', 'two days after approval still stays open while production is awaiting approval');
+  const held = readJob(job.id);
+  held.production = 'no_production';
+  writeJob(held);
+  list = await req(server, 'GET', '/api/jobs');
+  row = list.json.find(j => j.id === job.id);
   const disk = readJob(job.id);
-  check(row.archivedAt === expectArchive && row.status === 'approved' && disk.archivedAt === expectArchive, 'two days after approval stores archivedAt from that approval');
+  check(row.archivedAt === expectArchive && row.status === 'approved' && disk.archivedAt === expectArchive, 'two days after approval stores archivedAt once production is no production required');
   check(row.updatedAt === updatedAt && disk.updatedAt === updatedAt, 'archiving does not change updatedAt');
   check(list.json.some(j => j.id === job.id), 'the jobs API still returns an archived job');
   const snap = fs.readFileSync(jobFile(job.id));
@@ -131,7 +145,7 @@ function setLatestDecisionAt(id, iso) {
   const one = await req(server, 'GET', `/api/jobs/${job.id}`);
   check(one.status === 200 && one.json.archivedAt === expectArchive, 'opening the job reports the same archive time');
   const client = await req(server, 'GET', `/api/review/${num}?k=${job.token}`, { studio: false });
-  check(client.status === 200 && client.json.status === 'approved' && !Object.prototype.hasOwnProperty.call(client.json, 'archivedAt'), 'the client proof stays available and does not see the archive');
+  check(client.status === 200 && client.json.status === 'approved' && !Object.prototype.hasOwnProperty.call(client.json, 'archivedAt') && !Object.prototype.hasOwnProperty.call(client.json, 'production'), 'the client proof stays available and does not see the archive or production');
 
   const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const stale = readJob(job.id);
@@ -168,6 +182,13 @@ function setLatestDecisionAt(id, iso) {
   check(waitingRow.archivedAt === null && waitingRow.status === 'changes_requested', 'an old change request is not archived');
   check(archived.some(j => j.id === job.id) && !active.some(j => j.id === job.id), 'All hides the archived approval');
   check(active.some(j => j.id === waiting.json.id), 'the change-request job stays in All');
+
+  const back = await req(server, 'PATCH', `/api/jobs/${job.id}`, { body: JSON.stringify({ production: 'awaiting_approval' }) });
+  check(back.status === 200 && back.json.production === 'awaiting_approval' && back.json.archivedAt === null, 'setting production back to awaiting approval returns the job to the open list');
+  const green = await req(server, 'PATCH', `/api/jobs/${job.id}`, { body: JSON.stringify({ production: 'approved_for_production' }) });
+  check(green.status === 200 && green.json.production === 'approved_for_production' && green.json.archivedAt === expectArchive, 'approved for production archives on the same 48-hour timer');
+  const badProd = await req(server, 'PATCH', `/api/jobs/${job.id}`, { body: JSON.stringify({ production: 'printing' }) });
+  check(badProd.status === 400, 'an unknown production value is refused');
 
   server.close();
   console.log('archive jobs ok');

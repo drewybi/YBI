@@ -7,6 +7,41 @@ const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review], ['changes_requested', STATUS.changes_requested], ['approved', STATUS.approved], ['archive', 'Archive']];
+const PRODUCTION = [
+  ['awaiting_approval', 'Awaiting approval'],
+  ['no_production', 'No production required'],
+  ['approved_for_production', 'Approved for production'],
+];
+function productionValue(j) {
+  return PRODUCTION.some(([k]) => k === j.production) ? j.production : 'awaiting_approval';
+}
+function productionSelect(j) {
+  const v = productionValue(j);
+  const label = j.jobNumber ? `Production for ${j.jobNumber}` : 'Production';
+  return `<select class="prod prod--${v}" data-prod="${esc(j.id)}" data-value="${v}" aria-label="${esc(label)}">${PRODUCTION.map(([k, name]) => `<option value="${k}"${k === v ? ' selected' : ''}>${name}</option>`).join('')}</select>`;
+}
+function bindProduction(scope, after) {
+  $$('[data-prod]', scope).forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('mousedown', e => e.stopPropagation());
+    sel.addEventListener('change', async e => {
+      e.stopPropagation();
+      const id = sel.dataset.prod;
+      const prev = sel.dataset.value;
+      sel.disabled = true;
+      try {
+        await api(`${B}/api/jobs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ production: sel.value }) });
+        toast('Production updated');
+        after();
+      } catch (err) {
+        toast(err.message || 'Could not update production');
+        sel.value = prev;
+        sel.className = `prod prod--${prev}`;
+        sel.disabled = false;
+      }
+    });
+  });
+}
 
 function band(eyebrow, title, sub = '', right = '') {
   return engineBand(`<div class="eband__row"><div><p class="eyebrow">${eyebrow}</p><h1 class="h1">${title}</h1>${sub ? `<p class="lede">${sub}</p>` : ''}</div>${right}</div>`);
@@ -70,7 +105,7 @@ async function dashboard() {
   `<div class="wrap">
    <div class="toolbar"><div class="tabs">${JOB_FILTERS.map(([s, label]) => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${label} ${counts[s] || 0}</button>`).join('')}</div>
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
-   <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
+   <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Artwork status</th><th>Production</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
   </div>`;
   const tb = $('tbody', app);
   const draw = () => {
@@ -81,10 +116,11 @@ async function dashboard() {
     const list = query
       ? jobs.filter(j => hay(j).includes(query))
       : (filter === 'archive' ? jobs.filter(j => j.archivedAt) : active).filter(inView);
-    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it.' : 'No jobs match.');
-    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
-      : `<tr><td colspan="6" class="empty">${empty}</td></tr>`;
+    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it, once production is No production required or Approved for production.' : 'No jobs match.');
+    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td><td class="prodcell">${productionSelect(j)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
+      : `<tr><td colspan="7" class="empty">${empty}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
+    bindProduction(tb, () => dashboard());
   };
   draw();
   $$('[data-f]', app).forEach(b => b.onclick = () => { filter = b.dataset.f; $$('[data-f]', app).forEach(x => x.classList.toggle('on', x === b)); draw(); });
@@ -121,7 +157,7 @@ async function jobPage(key, showV) {
   const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\nYBI Creative`)}` : '';
   const phone = j.clientPhone ? `<br><a href="tel:${esc(j.clientPhone)}" class="mute">${esc(j.clientPhone)}</a>` : '';
   const heading = j.jobNumber || String(j.description || '').split('\n')[0].trim().slice(0, 80);
-  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div>${chip(j.status)}</div>`) +
+  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div class="jobflags"><div class="prodlabel"><span class="k">Artwork status</span>${chip(j.status)}</div><div class="prodlabel"><span class="k">Production</span>${productionSelect(j)}</div></div>`) +
   `<div class="wrap">
    <div class="panel" style="margin-top:36px"><div class="ver__h"><span class="k" style="margin:0">Client page — send this to ${esc(j.clientName)}</span><button type="button" class="btn btn--sm btn--ghost" data-edit>Edit job</button></div>
     <div class="linkbox"><input readonly value="${esc(j.secureUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
@@ -151,6 +187,7 @@ async function jobPage(key, showV) {
      <div style="text-align:right"><button class="lnk" data-del>Delete job</button></div>
     </div></div></div>`;
   $('[data-copy]', app).onclick = () => copy($('[data-main]', app).value);
+  bindProduction(app, () => jobPage(key, sel && sel.n));
   if (sel) {
     const pinFb = [...sel.feedback].reverse().find(f => f.stickies?.length);
     mountViewer($('[data-viewer]', app), sel, {
