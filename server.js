@@ -420,10 +420,16 @@ function status(job) {
   const d = latestDecision(job);
   return d ? (d.type === 'approve' ? 'approved' : 'changes_requested') : 'awaiting_review';
 }
+// Staff-only. Missing values stay Awaiting approval so older jobs remain in the open list.
+const PRODUCTION_VALUES = ['awaiting_approval', 'no_production', 'approved_for_production'];
+function productionOf(job) {
+  return PRODUCTION_VALUES.includes(job && job.production) ? job.production : 'awaiting_approval';
+}
 // Archive is studio-only. Two days (48 hours) after the client approves the latest
-// version, the job leaves All and stays under Archive. archivedAt is that approval
-// time plus 48 hours. A newer version, or a latest version that is no longer approved,
-// clears it. The job file is kept.
+// version, the job leaves All and stays under Archive — but only once staff have set
+// Production to No production required or Approved for production. Awaiting approval
+// keeps the job in the open list. archivedAt is that approval time plus 48 hours.
+// A newer version, or a latest version that is no longer approved, clears it.
 const ARCHIVE_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
 function latestDecision(job) {
   const versions = job && job.versions;
@@ -433,6 +439,8 @@ function latestDecision(job) {
 }
 function archivedAtFor(job, atMs = Date.now()) {
   const d = latestDecision(job);
+  const production = productionOf(job);
+  if (production !== 'no_production' && production !== 'approved_for_production') return null;
   if (!d || d.type !== 'approve' || !d.at) return null;
   const approved = Date.parse(d.at);
   if (!Number.isFinite(approved)) return null;
@@ -1264,6 +1272,7 @@ async function createJobFromQuote(quote) {
     clientPhone: '',
     quoteId: quote.id,
     access: 'private',
+    production: 'awaiting_approval',
     createdAt: now(),
     versions: []
   };
@@ -1336,7 +1345,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1565,7 +1574,7 @@ async function handle(req, res) {
       if (dateField.error) return err(res, 400, dateField.error);
       const dupe = await jobByNumber(num);
       if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
-      const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', createdAt: now(), versions: [] };
+      const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', production: 'awaiting_approval', createdAt: now(), versions: [] };
       await fsp.mkdir(path.join(FILES, job.id), { recursive: true }); await saveJob(job);
       if ((colourField.sent && colourField.colour !== 'grey') || dateField.sent) {
         try {
@@ -1608,9 +1617,15 @@ async function handle(req, res) {
           if ('clientCompany' in b) job.clientCompany = String(b.clientCompany ?? '').trim().slice(0, 120);
           if ('clientEmail' in b) job.clientEmail = String(b.clientEmail ?? '').trim().slice(0, 200);
           if ('clientPhone' in b) job.clientPhone = String(b.clientPhone ?? '').trim().slice(0, 60);
+          if ('production' in b) {
+            const production = String(b.production || '');
+            if (!PRODUCTION_VALUES.includes(production)) return err(res, 400, 'Production must be awaiting approval, no production required, or approved for production.');
+            job.production = production;
+          }
           job.access = 'private';
           if (b.rotateToken) job.token = token();
           if (b.markSeen) { job.unread = false; job.seenAt = now(); }
+          applyArchive(job);
           await saveJob(job); return send(res, 200, studioJob(req, job));
         }
         if (m === 'DELETE') { await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true }); await fsp.rm(jobPath(job.id), { force: true }); await forgetJobOverride(job.id); return send(res, 200, { ok: true }); }
@@ -1727,5 +1742,5 @@ if (require.main === module) {
 module.exports = {
   handle, createAppServer, parseNotifyAddresses, DEFAULT_NOTIFY_EMAIL, DEFAULT_NOTIFY_EMAILS,
   loadSettings, notifyRecipients, setMailerForTests, readMultipartFiles,
-  ARCHIVE_AFTER_MS, archivedAtFor,
+  ARCHIVE_AFTER_MS, archivedAtFor, productionOf,
 };

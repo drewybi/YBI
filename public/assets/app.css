@@ -110,6 +110,15 @@ main{flex:1;padding-top:var(--hdr)}
 .chip--awaiting_review::before{background:var(--g)}
 .chip--changes_requested{color:var(--warn);border-color:rgba(231,194,122,.4)}.chip--changes_requested::before{background:var(--warn)}
 .chip--approved{color:var(--ok);border-color:rgba(159,211,168,.4)}.chip--approved::before{background:var(--ok)}
+.jobflags{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-end;justify-content:flex-end}
+.prodlabel{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.prodlabel .k{margin:0}
+.prod{appearance:none;-webkit-appearance:none;height:30px;max-width:100%;padding:0 30px 0 14px;border-radius:999px;border:1px solid var(--line2);background-color:transparent;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23f3f1ec' stroke-width='1.2'/></svg>");background-repeat:no-repeat;background-position:right 10px center;font:600 .62rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;cursor:pointer;color:var(--mute)}
+.prod:focus-visible{outline:2px solid var(--g);outline-offset:3px}
+.prod--awaiting_approval{color:#ffb0aa;border-color:rgba(255,107,99,.55);background-color:rgba(255,107,99,.16)}
+.prod--no_production{color:#d7d8da;border-color:rgba(167,169,172,.55);background-color:rgba(167,169,172,.18)}
+.prod--approved_for_production{color:var(--ok);border-color:rgba(159,211,168,.55);background-color:rgba(159,211,168,.16)}
+.prodcell{min-width:220px}
 .chip--draft::before{background:transparent;border:1px solid var(--dim)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);margin-left:8px;vertical-align:middle}
 
@@ -236,6 +245,7 @@ body.viewer-open{overflow:hidden}
   :root{--hdr:64px}.logo img{width:54px}.logo span{display:none}
   .grid2{grid-template-columns:1fr}
   .jobs thead{display:none}.jobs tr.row{display:grid;grid-template-columns:1fr auto;padding:12px 0}.jobs td{padding:4px 6px;border:0}.jobs tr.row{border-bottom:1px solid var(--line)}
+  .jobs td.prodcell{grid-column:1 / -1}
   .jobs td.hide-m{display:none}
   .stage{min-height:46vh}
   .viewer__bar .grp:nth-child(2) .dim{display:none}
