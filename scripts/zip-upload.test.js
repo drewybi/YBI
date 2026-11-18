@@ -120,10 +120,10 @@ function req(server, method, urlPath, { headers = {}, body, studio = true } = {}
   check(up.status === 201, 'a zip upload creates a version');
   const v1 = up.json.versions[0];
   check(up.json.versions.length === 1 && v1.kind === 'zip', 'the version is a zip, not an image set');
-  check(v1.originalName === 'My-pack.zip', 'the original file name is kept');
+  check(v1.originalName === 'My pack.zip', 'the original file name is kept, including spaces');
   check(v1.size === packed.length, 'the version size is the zip itself');
   check(!v1.downloadAll, 'a stored zip is not the image download-all link');
-  check(v1.files.length === 1 && v1.files[0].name === 'My-pack.zip', 'the version lists the zip, not the files inside it');
+  check(v1.files.length === 1 && v1.files[0].name === 'My pack.zip', 'the version lists the zip, not the files inside it');
   check(v1.studioNote === 'Files attached', 'studio note is kept');
   const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'jobs', job.id + '.json'), 'utf8'));
   check(!Object.prototype.hasOwnProperty.call(onDisk.versions[0], 'files'), 'a zip is stored as one file, without files[]');
@@ -133,7 +133,7 @@ function req(server, method, urlPath, { headers = {}, body, studio = true } = {}
   const file = await req(server, 'GET', `/${num}/file/v1?k=${encodeURIComponent(job.token)}`, { studio: false });
   check(file.status === 200 && file.headers['content-type'] === 'application/zip', 'the client can download the zip');
   check(file.body.equals(packed), 'the download is the original zip, byte for byte');
-  check(String(file.headers['content-disposition'] || '').includes('filename="My-pack.zip"'), 'the download uses the original file name');
+  check(String(file.headers['content-disposition'] || '').includes('filename="My pack.zip"'), 'the download uses the original file name');
   check(String(file.headers['content-disposition'] || '').startsWith('attachment'), 'the zip is a download, not an inline preview');
   const again = await req(server, 'GET', v1.url + '&download', { studio: false });
   check(again.status === 200 && again.body.equals(packed), 'Download zip returns the same file');
@@ -160,12 +160,12 @@ function req(server, method, urlPath, { headers = {}, body, studio = true } = {}
 
   const form = formBody([{ name: 'Next pack.zip', body: packed }]);
   const viaForm = await req(server, 'POST', `/api/jobs/${job.id}/versions`, { headers: { 'Content-Type': form.type }, body: form.body });
-  check(viaForm.status === 201 && viaForm.json.versions[1].kind === 'zip' && viaForm.json.versions[1].originalName === 'Next-pack.zip', 'a multipart zip is stored the same way');
+  check(viaForm.status === 201 && viaForm.json.versions[1].kind === 'zip' && viaForm.json.versions[1].originalName === 'Next pack.zip', 'a multipart zip keeps its original name');
   const v2file = await req(server, 'GET', viaForm.json.versions[1].url, { studio: false });
   check(v2file.body.equals(packed), 'the second zip is also the original bytes');
   const log = fs.readFileSync(path.join(dataDir, 'notifications.log'), 'utf8');
   check(!log.includes(`UPDATED — Job ${num}`), 'a new zip version does not notify staff');
-  check(!log.includes('2-mid.png') && !log.includes('Next-pack.zip'), 'the notification log does not list the uploaded zip or the files inside it');
+  check(!log.includes('2-mid.png') && !log.includes('Next pack.zip'), 'the notification log does not list the uploaded zip or the files inside it');
 
   const plain = await req(server, 'POST', `/api/jobs/${job.id}/versions?name=poster.jpg`, { headers: { 'Content-Type': 'image/jpeg' }, body: JPG });
   check(plain.status === 201 && plain.json.versions[2].kind === 'image' && plain.json.versions[2].originalName === 'poster.jpg' && !plain.json.versions[2].downloadAll, 'a raw JPG upload is unchanged');
@@ -174,7 +174,7 @@ function req(server, method, urlPath, { headers = {}, body, studio = true } = {}
   check(pdf.status === 201 && pdf.json.versions[3].kind === 'pdf' && !pdf.json.versions[3].downloadAll, 'a raw PDF upload is unchanged');
   const pair = formBody([{ name: 'front.png', body: PNG }, { name: 'detail.jpg', body: JPG }]);
   const multi = await req(server, 'POST', `/api/jobs/${job.id}/versions`, { headers: { 'Content-Type': pair.type }, body: pair.body });
-  check(multi.status === 201 && multi.json.versions[4].kind === 'image' && multi.json.versions[4].files.map(f => f.name).join(',') === 'front.png,detail.jpg' && multi.json.versions[4].downloadAll, 'several loose images still share one version and offer download all');
+  check(multi.status === 201 && multi.json.versions[4].kind === 'image' && multi.json.versions[4].files.map(f => f.name).join(',') === 'detail.jpg,front.png' && multi.json.versions[4].downloadAll, 'several loose images still share one version, in name order, and offer download all');
   const all = await req(server, 'GET', multi.json.versions[4].downloadAll, { studio: false });
   check(all.status === 200 && all.headers['content-type'] === 'application/zip' && all.body.includes(PNG) && all.body.includes(JPG), 'download all still packs the loose images');
 
