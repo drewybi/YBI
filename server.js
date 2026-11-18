@@ -47,6 +47,20 @@ const token = () => crypto.randomBytes(18).toString('base64url');
 const now = () => new Date().toISOString();
 const safeName = s => (String(s || 'file').normalize('NFKD').replace(/[^\w.\- ]+/g, '').replace(/\s+/g, '-').replace(/^\.+/, '').slice(0, 120) || 'file');
 const extOf = n => path.extname(n || '').toLowerCase();
+// What staff uploaded. Storage keys stay separate. Only strip a path and control characters.
+function displayName(s) {
+  let name = String(s || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+  name = name.replace(/[\u0000-\u001f\u007f]/g, '').replace(/"/g, '').trim();
+  if (!name || name === '.' || name === '..') return 'file';
+  if (name.length > 180) {
+    const ext = extOf(name);
+    name = name.slice(0, Math.max(1, 180 - ext.length)) + ext;
+  }
+  return name;
+}
+function compareFileNames(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'en', { numeric: true, sensitivity: 'base' });
+}
 
 function send(res, code, body, headers = {}) {
   const isObj = body && typeof body === 'object' && !Buffer.isBuffer(body);
@@ -79,15 +93,18 @@ const httpError = (code, msg) => Object.assign(new Error(msg), { code });
 // Old versions are one file: { originalName, stored, kind, size }. A JPG/PNG set
 // keeps those fields for the first image and adds files[] for the whole version.
 function versionPages(v) {
+  let pages = [];
   if (v && Array.isArray(v.files) && v.files.length) {
-    return v.files.filter(f => f && typeof f.stored === 'string' && f.stored).map(f => ({
-      originalName: f.originalName || v.originalName || 'image',
+    pages = v.files.filter(f => f && typeof f.stored === 'string' && f.stored).map(f => ({
+      originalName: f.originalName || v.originalName || 'file',
       stored: f.stored,
       size: Number(f.size) || 0
     }));
+  } else if (v && typeof v.stored === 'string' && v.stored) {
+    pages = [{ originalName: v.originalName || 'file', stored: v.stored, size: Number(v.size) || 0 }];
   }
-  if (v && typeof v.stored === 'string' && v.stored) return [{ originalName: v.originalName || 'file', stored: v.stored, size: Number(v.size) || 0 }];
-  return [];
+  if (pages.length > 1) pages.sort((a, b) => compareFileNames(a.originalName, b.originalName));
+  return pages;
 }
 function checkProofSet(files) {
   if (!files.length) return { error: PROOF_EMPTY_ERROR, status: 400 };
@@ -143,7 +160,7 @@ function readMultipartFiles(req, destDir, { maxFiles, maxEach, maxTotal }) {
     };
     const openFile = name => {
       if (files.length >= maxFiles) throw httpError(400, `A version can include up to ${maxFiles} images.`);
-      const originalName = safeName(name);
+      const originalName = displayName(name);
       const storedPath = path.join(destDir, `incoming-${id(6)}${extOf(originalName)}`);
       current = { originalName, storedPath };
       fileBytes = 0;
@@ -230,12 +247,11 @@ function crc32(buf, seed = 0) {
   return (c ^ 0xffffffff) >>> 0;
 }
 function zipEntryName(name, used) {
-  let base = safeName(name).replace(/[\\/]/g, '') || 'image';
-  const ext = extOf(base) || extOf(name);
-  if (ext && !base.toLowerCase().endsWith(ext)) base += ext;
-  const stem = ext && base.toLowerCase().endsWith(ext) ? base.slice(0, -ext.length) : base;
+  let base = displayName(name);
+  const ext = extOf(base);
+  const stem = ext ? base.slice(0, -ext.length) : base;
   let n = base, i = 2;
-  while (used.has(n.toLowerCase())) { n = `${stem}-${i}${ext}`; i++; }
+  while (used.has(n.toLowerCase())) { n = `${stem} (${i})${ext}`; i++; }
   used.add(n.toLowerCase());
   return n;
 }
@@ -352,9 +368,10 @@ async function addUploadedVersion(req, res, job, note, incoming) {
   const n = (fresh.versions.length ? fresh.versions[fresh.versions.length - 1].n : 0) + 1;
   const dir = path.join(FILES, fresh.id);
   const committed = [];
-  const version = { n, kind: check.kind, originalName: incoming[0].originalName, stored: '', size: 0, uploadedAt: now(), studioNote: note, feedback: [] };
+  const ordered = [...incoming].sort((a, b) => compareFileNames(a.originalName, b.originalName));
+  const version = { n, kind: check.kind, originalName: ordered[0].originalName, stored: '', size: 0, uploadedAt: now(), studioNote: note, feedback: [] };
   try {
-    for (const f of incoming) {
+    for (const f of ordered) {
       const stored = `v${n}-${id(4)}${extOf(f.originalName)}`;
       const dest = path.join(dir, stored);
       await fsp.rename(f.storedPath, dest);
@@ -1641,7 +1658,7 @@ async function handle(req, res) {
           throw e;
         };
         if (!multipart) {
-          const orig = safeName(u.searchParams.get('name'));
+          const orig = displayName(u.searchParams.get('name'));
           if (!PROOF_TYPES[extOf(orig)]) return err(res, 415, PROOF_TYPE_ERROR);
           const storedPath = path.join(dir, `incoming-${id(6)}${extOf(orig)}`);
           let size;

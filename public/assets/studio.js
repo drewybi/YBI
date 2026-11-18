@@ -59,18 +59,22 @@ function proofSetWord(files, v) {
   const pdfs = v ? v.kind === 'pdf' : files.every(f => /\.pdf$/i.test(f.name));
   return pdfs ? 'PDFs' : 'images';
 }
+function byFileName(a, b) {
+  return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+}
 function proofLabel(files) {
-  if (files.length === 1) return `<b>${esc(files[0].name)}</b> · ${fmtSize(files[0].size)}`;
-  const names = files.map(f => esc(f.name));
+  const ordered = [...files].sort(byFileName);
+  if (ordered.length === 1) return `<b>${esc(ordered[0].name)}</b> · ${fmtSize(ordered[0].size)}`;
+  const names = ordered.map(f => esc(f.name));
   const shown = names.slice(0, 4).join(', ');
   const more = names.length > 4 ? ` + ${names.length - 4} more` : '';
-  const total = files.reduce((s, f) => s + f.size, 0);
+  const total = ordered.reduce((s, f) => s + f.size, 0);
   return `<b>${files.length} ${proofSetWord(files)}</b> · ${fmtSize(total)}<span class="small dim" style="display:block;margin-top:4px">${shown}${more}</span>`;
 }
 function versionTitle(v) {
   const files = Array.isArray(v.files) ? v.files : [];
   if (files.length < 2) return v.originalName;
-  const names = files.map(f => f.name || f.originalName).filter(Boolean);
+  const names = files.map(f => f.name || f.originalName).filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
   const shown = names.slice(0, 4).join(', ');
   const more = names.length > 4 ? ` + ${names.length - 4} more` : '';
   return `${files.length} ${proofSetWord(files, v)} · ${shown}${more}`;
@@ -175,7 +179,7 @@ async function jobPage(key, showV) {
       ${j.versions.length > 1 ? `<select class="vsel" data-vsel>${[...j.versions].reverse().map(v => `<option value="${v.n}" ${v === sel ? 'selected' : ''}>V${v.n} — ${fmtDate(v.uploadedAt)}</option>`).join('')}</select>` : ''}</div><div data-viewer></div>${downloadRow(sel)}` : '<div class="panel empty">No proof uploaded yet. Upload V1 →</div>'}</div>
     <div class="stack">
      <div class="panel"><p class="eyebrow" style="margin-bottom:16px">${latest ? `Upload new version (V${latest.n + 1})` : 'Upload V1'}</p>
-      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several PDFs become one version, in the order you add them. Several JPG or PNG files become one version. A ZIP is kept as that file and downloaded as it was uploaded.</p>
+      <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several PDFs, or several JPG or PNG files, become one version in file-name order. Names stay as you uploaded them. A ZIP is kept as that file and downloaded as it was uploaded.</p>
       <div class="drop" tabindex="0" data-vdrop><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span data-vname>${PROOF_EMPTY}</span><input type="file" multiple accept="${PROOF_ACCEPT}"></div>
       <div class="field" style="margin-top:18px"><label>Note to client <span class="opt">(optional — shown on their page)</span></label><textarea data-vnote style="min-height:70px" placeholder="e.g. Logo enlarged, phone number fixed."></textarea></div>
       <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>

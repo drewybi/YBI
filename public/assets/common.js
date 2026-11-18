@@ -425,7 +425,7 @@ export async function mountViewer(root, version, opts = {}) {
     prev.disabled = page <= 1;
     next.disabled = page >= n;
     const here = metas[page - 1];
-    if (here && nameEl) nameEl.textContent = here.docName || '';
+    if (here && nameEl) { nameEl.textContent = here.docName || ''; nameEl.title = here.docName || ''; }
     if (here && openEl) openEl.href = here.docUrl || fileUrl;
     $$('canvas', thumbs).forEach((t, i) => t.classList.toggle('on', i + 1 === page));
   };

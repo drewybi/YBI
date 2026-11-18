@@ -136,9 +136,9 @@ async function parseInPieces(body, contentType) {
   check(up.json.versions.length === 1 && up.json.versions[0].n === 1, 'the images are V1, not two versions');
   check(up.json.versions[0].kind === 'image', 'a JPG/PNG set is an image version');
   check(up.json.versions[0].files.length === 2, 'the version lists both images');
-  check(up.json.versions[0].files[0].name === 'front.png' && up.json.versions[0].files[1].name === 'detail.jpg', 'image order follows the upload');
+  check(up.json.versions[0].files[0].name === 'detail.jpg' && up.json.versions[0].files[1].name === 'front.png', 'image order is by file name');
   check(up.json.versions[0].size === PNG.length + JPG.length, 'version size is the sum of the images');
-  check(up.json.versions[0].originalName === 'front.png', 'originalName stays the first image for older readers');
+  check(up.json.versions[0].originalName === 'detail.jpg', 'originalName is the first file in name order');
   check(up.json.versions[0].studioNote === 'Spread updated', 'studio note is saved on the shared version');
   check(typeof up.json.versions[0].downloadAll === 'string' && up.json.versions[0].downloadAll.endsWith('/file/v1/zip?k=' + encodeURIComponent(job.token)), 'download all points at the version zip');
 
@@ -148,24 +148,24 @@ async function parseInPieces(body, contentType) {
   const page1 = await req(server, 'GET', up.json.versions[0].files[0].url, { studio: false });
   const page2 = await req(server, 'GET', up.json.versions[0].files[1].url, { studio: false });
   const first = await req(server, 'GET', up.json.versions[0].url, { studio: false });
-  check(page1.status === 200 && page1.body.equals(PNG), 'page 1 is the first image');
-  check(page2.status === 200 && page2.body.equals(JPG), 'page 2 is the second image');
-  check(first.body.equals(PNG), 'the original version URL still returns the first image');
+  check(page1.status === 200 && page1.body.equals(JPG), 'page 1 is the first image by name');
+  check(page2.status === 200 && page2.body.equals(PNG), 'page 2 is the second image by name');
+  check(first.body.equals(JPG), 'the version URL returns the first file by name');
 
   const zip = await req(server, 'GET', `/${num}/file/v1/zip?k=${encodeURIComponent(job.token)}`, { studio: false });
   check(zip.status === 200 && zip.headers['content-type'] === 'application/zip', 'client zip download');
   check(Number(zip.headers['content-length']) === zip.body.length, 'zip content-length matches the body');
   check(String(zip.headers['content-disposition'] || '').includes(`YBI-${num}-V1.zip`), 'zip is named for the job and version');
   const zipped = readZip(zip.body);
-  check(zipped.map(f => f.name).join(',') === 'front.png,detail.jpg', 'zip lists both images');
-  check(zipped[0].data.equals(PNG) && zipped[1].data.equals(JPG), 'zip bytes match the uploaded images');
+  check(zipped.map(f => f.name).join(',') === 'detail.jpg,front.png', 'zip lists both images in name order');
+  check(zipped[0].data.equals(JPG) && zipped[1].data.equals(PNG), 'zip bytes match the uploaded images');
   const head = await req(server, 'HEAD', `/${num}/file/v1/zip?k=${encodeURIComponent(job.token)}`, { studio: false });
   check(head.status === 200 && Number(head.headers['content-length']) === zip.body.length, 'HEAD zip advertises the same length');
   const locked = await req(server, 'GET', `/${num}/file/v1/zip`, { studio: false });
   check(locked.status === 404, 'zip without the client key is hidden');
   const studioZip = await req(server, 'GET', `/${num}/file/v1/zip`);
   const studioFiles = studioZip.status === 200 ? readZip(studioZip.body) : [];
-  check(studioZip.status === 200 && studioFiles[0].data.equals(PNG) && studioFiles[1].data.equals(JPG), 'studio can download the same images');
+  check(studioZip.status === 200 && studioFiles[0].data.equals(JPG) && studioFiles[1].data.equals(PNG), 'studio can download the same images');
   check((await req(server, 'GET', `/${num}/file/v1/9?k=${job.token}`, { studio: false })).status === 404, 'a page past the end is missing');
 
   const decision = await req(server, 'POST', `/api/review/${num}/decision?k=${encodeURIComponent(job.token)}`, {
@@ -210,7 +210,7 @@ async function parseInPieces(body, contentType) {
   const twoPdf = formBody([{ name: 'cover.pdf', body: PDF }, { name: 'spread.pdf', body: PDF }]);
   const pdfSet = await req(server, 'POST', `/api/jobs/${pdfJob.json.id}/versions`, { headers: { 'Content-Type': twoPdf.type }, body: twoPdf.body });
   check(pdfSet.status === 201 && pdfSet.json.versions.length === 1 && pdfSet.json.versions[0].kind === 'pdf', 'two PDFs are one version');
-  check(pdfSet.json.versions[0].files.map(f => f.name).join(',') === 'cover.pdf,spread.pdf', 'PDF order follows the upload');
+  check(pdfSet.json.versions[0].files.map(f => f.name).join(',') === 'cover.pdf,spread.pdf', 'PDF order is by file name');
   check(pdfSet.json.versions[0].originalName === 'cover.pdf' && pdfSet.json.versions[0].downloadAll.endsWith('/file/v1/zip?k=' + encodeURIComponent(pdfJob.json.token)), 'a PDF set offers download all and keeps the first name');
   const pdfZip = await req(server, 'GET', pdfSet.json.versions[0].downloadAll, { studio: false });
   const pdfNames = pdfZip.status === 200 ? readZip(pdfZip.body).map(f => f.name) : [];
@@ -218,6 +218,22 @@ async function parseInPieces(body, contentType) {
   const firstPdf = await req(server, 'GET', pdfSet.json.versions[0].files[0].url + '&download', { studio: false });
   const secondPdf = await req(server, 'GET', pdfSet.json.versions[0].files[1].url + '&download', { studio: false });
   check(firstPdf.status === 200 && firstPdf.body.equals(PDF) && secondPdf.status === 200 && secondPdf.body.equals(PDF), 'each PDF downloads on its own');
+  const nameJob = await req(server, 'POST', '/api/jobs', { body: JSON.stringify({ jobNumber: num + 'N', clientName: 'Names', description: 'Original names' }) });
+  const named = formBody([
+    { name: '10 Panel.pdf', body: PDF },
+    { name: '031299 Truck Side LHS.pdf', body: PDF },
+    { name: '2 Panel.pdf', body: Buffer.from('%PDF-1.1\n2\n') },
+    { name: '2 Panel.pdf', body: Buffer.from('%PDF-1.1\n2b\n') },
+  ]);
+  const namedUp = await req(server, 'POST', `/api/jobs/${nameJob.json.id}/versions`, { headers: { 'Content-Type': named.type }, body: named.body });
+  check(namedUp.status === 201, 'spaced PDF names upload');
+  check(namedUp.json.versions[0].files.map(f => f.name).join('|') === '2 Panel.pdf|2 Panel.pdf|10 Panel.pdf|031299 Truck Side LHS.pdf', 'PDFs sort by name, with 2 before 10, and spaces kept');
+  const truck = namedUp.json.versions[0].files[3];
+  const truckFile = await req(server, 'GET', truck.url + '&download', { studio: false });
+  check(truckFile.status === 200 && String(truckFile.headers['content-disposition'] || '').includes('filename="031299 Truck Side LHS.pdf"'), 'the download filename is the original name');
+  const namedZip = await req(server, 'GET', namedUp.json.versions[0].downloadAll, { studio: false });
+  const namedEntries = namedZip.status === 200 ? readZip(namedZip.body).map(f => f.name) : [];
+  check(namedEntries.join('|') === '2 Panel.pdf|2 Panel (2).pdf|10 Panel.pdf|031299 Truck Side LHS.pdf', 'a duplicate name is suffixed only inside the zip');
   const marked = await req(server, 'POST', `/api/review/${pdfJob.json.jobNumber}/decision?k=${encodeURIComponent(pdfJob.json.token)}`, {
     studio: false,
     body: JSON.stringify({ type: 'changes', name: 'Sam', note: '', version: 1, attachments: [], stickies: [{ page: 1, x: 0.2, y: 0.3, text: 'Cover logo' }, { page: 4, x: 0.5, y: 0.5, text: 'Second file' }] })
