@@ -214,7 +214,18 @@ function setVolume(next) {
   if (volume > 0) muted = false;
   applyVolume();
   remember();
-  emit();
+  const root = document.querySelector('[data-rx]');
+  const vol = root && $('[data-vol]', root);
+  if (vol) vol.textContent = `${Math.round(volume * 100)}`;
+  const volKnob = root && $('[data-volknob]', root);
+  if (volKnob) volKnob.setAttribute('aria-valuenow', String(Math.round(volume * 100)));
+  const mute = root && $('[data-mute]', root);
+  if (mute) {
+    mute.classList.toggle('is-on', muted);
+    mute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    mute.textContent = muted ? 'Muted' : 'Mute';
+  }
+  paintMini();
 }
 
 function onAudioError(el, probe) {
@@ -234,10 +245,6 @@ function mark(station) {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
 }
-function hue(id) {
-  return [...id].reduce((n, c) => n + c.charCodeAt(0), 0) % 360;
-}
-
 function drawMeter(canvas, t) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = canvas.clientWidth || 280;
@@ -266,7 +273,7 @@ function drawMeter(canvas, t) {
     const bh = Math.max(3, v * h);
     const x = i * (bw + gap);
     const y = h - bh;
-    g.fillStyle = v > 0.82 ? '#e24b4b' : v > 0.62 ? '#e7c27a' : '#b6e38a';
+    g.fillStyle = v > 0.72 ? '#f3f1ec' : '#A7A9AC';
     g.globalAlpha = playing ? 0.95 : 0.45;
     g.fillRect(x, y, bw, bh);
   }
@@ -339,22 +346,17 @@ function presetsHtml() {
 function paintConsole() {
   const root = document.querySelector('[data-rx]');
   if (!root) return;
-  const art = $('[data-art]', root);
-  if (current) {
-    art.textContent = mark(current);
-    art.style.setProperty('--hue', String(hue(current.id)));
-    art.classList.toggle('is-live', playing);
-  } else {
-    art.textContent = 'YBI';
-    art.style.setProperty('--hue', '80');
-    art.classList.remove('is-live');
-  }
-  $('[data-led]', root).textContent = current ? current.name : 'YBI Radio';
+  const name = current ? current.name : 'YBI Radio';
+  $('[data-led]', root).textContent = name;
   $('[data-sub]', root).textContent = current ? `${current.place} · ${current.genre}` : 'Choose a preset';
+  const cluster = $('[data-cluster]', root);
+  if (cluster) cluster.textContent = name;
   const live = $('[data-live]', root);
   live.hidden = !playing;
   live.textContent = scanning ? 'Live · Scan' : 'Live';
   $('[data-clock]', root).textContent = clock();
+  const vol = $('[data-vol]', root);
+  if (vol) vol.textContent = muted ? 'Mute' : `${Math.round(volume * 100)}`;
   $('[data-sig]', root).classList.toggle('is-live', playing && !muted);
   $('[data-presets]', root).innerHTML = presetsHtml();
   root.querySelectorAll('[data-bank]').forEach(btn => {
@@ -379,13 +381,75 @@ function paintConsole() {
     star.textContent = on ? '★' : '☆';
     star.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
-  if (root._dash) {
-    root._dash.sync({
-      station: current ? current.name : 'YBI RADIO',
-      playing,
-      presetIndex: stationsInBank().findIndex(s => current && s.id === current.id)
-    });
+  const volKnob = $('[data-volknob]', root);
+  if (volKnob) volKnob.setAttribute('aria-valuenow', String(Math.round((muted ? 0 : volume) * 100)));
+  const tuneKnob = $('[data-tuneknob]', root);
+  if (tuneKnob) tuneKnob.setAttribute('aria-valuetext', current ? current.name : 'No station');
+}
+
+const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
+
+function applyPan(root) {
+  const scene = $('[data-scene]', root);
+  if (!scene) return;
+  const pan = root._pan || { x: 0, y: 0 };
+  const scale = root._sceneScale || 1;
+  scene.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${scale})`;
+}
+
+function placeScene(root) {
+  const scene = $('[data-scene]', root);
+  if (!scene) return;
+  const vw = root.clientWidth;
+  const vh = root.clientHeight;
+  const narrow = vw < 760;
+  let w, h, left, top;
+  if (narrow) {
+    w = (vw * 0.9) / 0.10625;
+    h = w * 9 / 16;
+    left = vw / 2 - (0.421875 + 0.053125) * w;
+    top = vh * 0.47 - (0.288889 + 0.166667) * h;
+    root._sceneScale = 1;
+  } else {
+    const s = Math.max(vw / 16, vh / 9);
+    w = 16 * s;
+    h = 9 * s;
+    left = (vw - w) / 2;
+    top = (vh - h) / 2;
+    root._sceneScale = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 1.04;
   }
+  scene.style.width = `${w}px`;
+  scene.style.height = `${h}px`;
+  scene.style.left = `${left}px`;
+  scene.style.top = `${top}px`;
+  applyPan(root);
+}
+
+function bindKnob(el, { onDelta, onClick }) {
+  let lastY = 0;
+  let lastX = 0;
+  let moved = false;
+  el.addEventListener('pointerdown', e => {
+    moved = false;
+    lastY = e.clientY;
+    lastX = e.clientX;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', e => {
+    if (el.hasPointerCapture && !el.hasPointerCapture(e.pointerId)) return;
+    const dx = e.clientX - lastX;
+    const dy = lastY - e.clientY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+    onDelta(dx, dy);
+  });
+  el.addEventListener('pointerup', () => { if (!moved) onClick(); });
+  el.addEventListener('pointercancel', () => { moved = true; });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    onDelta(0, -Math.sign(e.deltaY) * 18);
+  }, { passive: false });
 }
 
 let clockTimer = 0;
@@ -394,43 +458,48 @@ export async function radioPage() {
   if (current) bank = current.bank;
   const app = document.getElementById('app');
   app.innerHTML = `<div class="rx" data-rx>
-    <div class="rx-ui" data-ui>
-      <header class="rx-bar">
-        <span class="rx-brand">YBI</span>
-        <span class="rx-clock" data-clock>--:--</span>
-        <span class="rx-temp" title="Temperature placeholder">22°</span>
-        <span class="rx-sig" data-sig aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-      </header>
-      <section class="rx-now">
-        <div class="rx-art" data-art>YBI</div>
-        <p class="rx-live" data-live hidden>Live</p>
-        <h1 data-led>YBI Radio</h1>
-        <p class="rx-sub" data-sub>Choose a preset</p>
-        <button type="button" class="rx-star" data-fav aria-label="Favourite" aria-pressed="false">☆</button>
-        <canvas class="rx-meter" data-meter width="360" height="28" aria-hidden="true"></canvas>
-      </section>
-      <div class="rx-tabs" role="tablist" aria-label="Bands">
-        ${BANKS.map(name => `<button type="button" role="tab" data-bank="${esc(name)}">${esc(name)}</button>`).join('')}
+    <div class="rx-scene" data-scene>
+      <img class="rx-photo" alt="" src="${B}/assets/img/ybi-dash.jpg">
+      <div class="rx-badge" aria-hidden="true">YBI</div>
+      <div class="rx-cluster" aria-hidden="true">
+        <b>0</b>
+        <span>km/h</span>
+        <em data-cluster>YBI Radio</em>
       </div>
-      <div class="rx-presets" data-presets></div>
-      <div class="rx-controls">
-        <button type="button" data-seek="-1" aria-label="Previous station">‹‹</button>
-        <button type="button" class="rx-play" data-play aria-label="Play">▶</button>
-        <button type="button" data-scan aria-pressed="false">Scan</button>
-        <button type="button" data-seek="1" aria-label="Next station">››</button>
-        <button type="button" data-mute aria-pressed="false">Mute</button>
+      <button type="button" class="rx-hot rx-hot--vol" data-volknob aria-label="Volume" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80"></button>
+      <button type="button" class="rx-hot rx-hot--tune" data-tuneknob aria-label="Tune"></button>
+      <div class="rx-screen">
+        <div class="rx-ui" data-ui>
+          <header class="rx-bar">
+            <span class="rx-brand">YBI</span>
+            <span class="rx-clock" data-clock>--:--</span>
+            <span class="rx-vol" data-vol>80</span>
+            <span class="rx-sig" data-sig aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          </header>
+          <section class="rx-now">
+            <p class="rx-kicker">On <span class="ol">air</span></p>
+            <h1 data-led>YBI Radio</h1>
+            <p class="rx-sub" data-sub>Choose a preset</p>
+            <p class="rx-live" data-live hidden>Live</p>
+            <button type="button" class="rx-star" data-fav aria-label="Favourite" aria-pressed="false">☆</button>
+            <canvas class="rx-meter" data-meter width="320" height="24" aria-hidden="true"></canvas>
+          </section>
+          <div class="rx-tabs" role="tablist" aria-label="Bands">
+            ${BANKS.map(name => `<button type="button" role="tab" data-bank="${esc(name)}" aria-label="${esc(name)}">${esc(BANK_SHORT[name] || name)}</button>`).join('')}
+          </div>
+          <div class="rx-presets" data-presets></div>
+          <div class="rx-controls">
+            <button type="button" data-seek="-1" aria-label="Previous station">‹‹</button>
+            <button type="button" class="rx-play" data-play aria-label="Play">▶</button>
+            <button type="button" data-scan aria-pressed="false">Scan</button>
+            <button type="button" data-seek="1" aria-label="Next station">››</button>
+            <button type="button" data-mute aria-pressed="false">Mute</button>
+          </div>
+        </div>
       </div>
-      <nav class="rx-dock" aria-label="Display">
-        <span class="is-on">Radio</span>
-        <span aria-hidden="true">Map</span>
-        <span aria-hidden="true">Phone</span>
-        <span aria-hidden="true">Climate</span>
-        <span aria-hidden="true">Apps</span>
-      </nav>
     </div>
   </div>`;
   const root = $('[data-rx]');
-  const screen = $('[data-ui]', root);
   watchMeter($('[data-meter]', root));
   root.addEventListener('click', e => {
     const pad = e.target.closest('[data-pad]');
@@ -443,21 +512,36 @@ export async function radioPage() {
     if (e.target.closest('[data-mute]')) { toggleMute(); return; }
     if (e.target.closest('[data-fav]')) { toggleFav(); }
   });
+  bindKnob($('[data-volknob]', root), {
+    onDelta: (_dx, dy) => setVolume(volume + dy / 160),
+    onClick: () => toggleMute()
+  });
+  let tuneAcc = 0;
+  bindKnob($('[data-tuneknob]', root), {
+    onDelta: (dx, dy) => {
+      tuneAcc += dx + dy;
+      if (Math.abs(tuneAcc) < 36) return;
+      stopScan();
+      step(tuneAcc > 0 ? 1 : -1);
+      tuneAcc = 0;
+    },
+    onClick: () => { stopScan(); step(1); }
+  });
+  root.addEventListener('pointermove', e => {
+    if (root.clientWidth < 760) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = root.getBoundingClientRect();
+    root._pan = {
+      x: ((e.clientX - r.left) / r.width - 0.5) * -18,
+      y: ((e.clientY - r.top) / r.height - 0.5) * -12
+    };
+    applyPan(root);
+  });
+  placeScene(root);
+  const ro = new ResizeObserver(() => placeScene(root));
+  ro.observe(root);
   clearInterval(clockTimer);
   clockTimer = setInterval(() => { const c = document.querySelector('[data-rx] [data-clock]'); if (c) c.textContent = clock(); }, 1000);
-  const { mountDash } = await import('./radio-dash.js');
-  if (root._dash) root._dash.dispose();
-  root._dash = mountDash(root, screen, {
-    getVolume: () => volume,
-    onVolume: v => setVolume(v),
-    onMute: () => toggleMute(),
-    onSeek: dir => { stopScan(); step(dir); },
-    onPreset: i => {
-      stopScan();
-      const station = stationsInBank()[i];
-      if (station) choose(station, true);
-    }
-  });
   paintConsole();
   paintMini();
 }
