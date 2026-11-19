@@ -161,6 +161,8 @@ main{flex:1;padding-top:var(--hdr)}
 .viewer{background:#121214;border:1px solid var(--line);border-radius:18px;overflow:hidden;position:relative}
 .viewer__bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:var(--bg2)}
 .viewer__bar .grp{display:flex;align-items:center;gap:8px}
+.viewer__bar .viewer__tools:has(.viewer__dl){flex-wrap:wrap;justify-content:flex-end;max-width:100%}
+.viewer__bar .viewer__dl{height:38px;padding:0 16px;font-size:.66rem;letter-spacing:.14em;flex:none}
 .ibtn{width:38px;height:38px;border-radius:50%;border:1px solid var(--line2);background:transparent;color:var(--ink);display:grid;place-items:center;cursor:pointer;font-size:1rem}
 .ibtn:hover{border-color:var(--g)}.ibtn[disabled]{opacity:.3;pointer-events:none}
 .pg{font:500 .72rem/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--mute);min-width:90px;text-align:center}
@@ -249,6 +251,8 @@ body.viewer-open{overflow:hidden}
   .jobs td.hide-m{display:none}
   .stage{min-height:46vh}
   .viewer__bar .grp:nth-child(2) .dim{display:none}
+  .viewer__bar .viewer__tools:has(.viewer__dl){flex:1 1 100%;justify-content:flex-start}
+  .viewer__bar .viewer__dl{order:1;flex:1 0 100%;height:44px;margin-top:4px;font-size:.74rem;letter-spacing:.16em}
 }
 @media (max-width:640px){
   body.studio{--hdr:96px}
