@@ -7,6 +7,10 @@ const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review], ['changes_requested', STATUS.changes_requested], ['approved', STATUS.approved], ['archive', 'Archive']];
+// Staff tools. Add an entry here to show it in the Tools menu.
+const STUDIO_TOOLS = [
+  { label: 'DTF Halftone Converter', href: `${B}/studio/halftone` },
+];
 const PRODUCTION = [
   ['awaiting_approval', 'Awaiting approval'],
   ['no_production', 'No production required'],
@@ -1191,14 +1195,92 @@ async function quotePage(rawId) {
   else $('#q-client', form).focus({ preventScroll: true });
 }
 
+function mountToolsMenu() {
+  const slot = $('[data-tools]');
+  if (!slot || slot.dataset.ready) return;
+  slot.dataset.ready = '1';
+  const btn = $('.navdrop__btn', slot);
+  const menu = $('.navdrop__menu', slot);
+  menu.innerHTML = STUDIO_TOOLS.map(t => `<a role="menuitem" href="${esc(t.href)}">${esc(t.label)}</a>`).join('');
+  const items = () => $$('[role="menuitem"]', menu);
+  let open = false, pinned = false, openedAt = 0;
+  const fine = () => window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const place = () => {
+    const pad = 8;
+    const b = btn.getBoundingClientRect();
+    const width = Math.min(280, window.innerWidth - pad * 2);
+    let left = b.left;
+    if (left + width > window.innerWidth - pad) left = window.innerWidth - pad - width;
+    if (left < pad) left = pad;
+    menu.style.position = 'fixed';
+    menu.style.top = Math.round(b.bottom + 10) + 'px';
+    menu.style.left = Math.round(left) + 'px';
+    menu.style.right = 'auto';
+    menu.style.width = width + 'px';
+    menu.style.minWidth = '0';
+  };
+  const setOpen = on => {
+    if (on && !open) openedAt = performance.now();
+    open = on;
+    if (!on) pinned = false;
+    slot.classList.toggle('is-open', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    menu.hidden = !on;
+    if (on) place();
+  };
+  slot.addEventListener('mouseenter', () => { if (fine() && !pinned) setOpen(true); });
+  slot.addEventListener('mouseleave', () => { if (fine() && !pinned) setOpen(false); });
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    // Hover opens the menu before this click. Keep that click from closing it at once.
+    if (open && performance.now() - openedAt < 280) { pinned = true; return; }
+    pinned = !open;
+    setOpen(!open);
+  });
+  document.addEventListener('click', e => { if (open && !slot.contains(e.target)) setOpen(false); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); btn.focus(); }
+  });
+  btn.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      pinned = true;
+      setOpen(true);
+      items()[0]?.focus();
+    }
+  });
+  menu.addEventListener('keydown', e => {
+    const list = items();
+    const i = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (i <= 0 ? btn : list[i - 1]).focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); list[0]?.focus(); }
+    else if (e.key === 'End') { e.preventDefault(); list.at(-1)?.focus(); }
+    else if (e.key === ' ' && e.target.matches('a')) { e.preventDefault(); e.target.click(); }
+    else if (e.key === 'Tab') setOpen(false);
+  });
+  slot.addEventListener('focusout', e => { if (!slot.contains(e.relatedTarget)) setOpen(false); });
+  window.addEventListener('resize', () => { if (open) place(); });
+}
 function markNav() {
   const here = location.pathname.replace(/\/$/, '');
+  const toolPaths = STUDIO_TOOLS.map(t => {
+    try { return new URL(t.href, location.origin).pathname.replace(/\/$/, ''); } catch { return ''; }
+  });
   $$('.hdr__r a').forEach(a => {
     const path = a.pathname.replace(/\/$/, '');
-    const on = path.endsWith('/studio/quote') ? (here === path || here.startsWith(path + '/')) : path === here;
+    const nested = path.endsWith('/studio/quote') || toolPaths.includes(path);
+    const on = nested ? (here === path || here.startsWith(path + '/')) : path === here;
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
+  const tools = $('[data-tools]');
+  const btn = tools && $('.navdrop__btn', tools);
+  if (btn) {
+    const on = !!$('.navdrop__menu a.on', tools);
+    btn.classList.toggle('on', on);
+    if (on) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
+  }
 }
 async function route() {
   markNav();
@@ -1218,6 +1300,7 @@ async function route() {
     else await dashboard();
   } catch (e) { if (e.status === 401) location.href = B + '/'; else app.innerHTML = `<div class="wrap" style="padding-top:80px;padding-bottom:80px"><p class="msg err">${esc(e.message)}</p><a class="lnk" href="${B}/studio">Back to jobs</a></div>`; }
 }
+mountToolsMenu();
 route();
 // light polling so new client feedback shows up on the dashboard
 const onDash = () => !location.pathname.slice(B.length).replace(/^\/studio\/?/, '');

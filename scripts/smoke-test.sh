@@ -37,9 +37,10 @@ chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"halftone","clientName":"x"}' 
 calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
 echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
 echo "$calhtml" | grep -q "href=\"$BP/studio/quote\"" && pass "studio nav links to quote" || fail "studio nav missing quote link"
-echo "$calhtml" | grep -q "href=\"$BP/studio/halftone\"" && pass "studio nav links to halftone" || fail "studio nav missing halftone link"
+echo "$calhtml" | grep -q 'data-tools' && pass "studio nav has a tools menu" || fail "studio nav missing tools menu"
 echo "$calhtml" | grep -qi '<iframe' && fail "calendar page must not embed an iframe" || pass "calendar page has no iframe"
 caljs=$(curl -sf "$BASE/assets/studio.js")
+grep -q '/studio/halftone' <<<"$caljs" && grep -q 'DTF Halftone Converter' <<<"$caljs" && pass "tools menu links to the halftone converter" || fail "tools menu missing the halftone converter"
 grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' <<<"$caljs" && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
 grep -q '/api/calendar/events' <<<"$caljs" && pass "studio calendar calls the studio API" || fail "calendar API missing from studio.js"
 curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NA/versions?name=poster-A2.jpg" >/dev/null && pass "V1 JPG uploaded (studio API by job number)"
