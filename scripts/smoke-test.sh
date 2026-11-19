@@ -20,6 +20,7 @@ chk "$(code "$BASE/studio")" 302 "$BP/studio redirects to login when signed out"
 chk "$(code "$BASE/studio/calendar")" 302 "$BP/studio/calendar redirects to login when signed out"
 chk "$(code "$BASE/studio/quote")" 302 "$BP/studio/quote redirects to login when signed out"
 chk "$(code "$BASE/studio/halftone")" 302 "$BP/studio/halftone redirects to login when signed out"
+chk "$(code "$BASE/studio/radio")" 302 "$BP/studio/radio redirects to login when signed out"
 cal_loc=$(curl -s -D - -o /dev/null "$BASE/studio/calendar" | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r')
 echo "$cal_loc" | grep -q 'studio%2Fcalendar' && pass "calendar login redirect returns to the calendar page" || fail "calendar login redirect (got '$cal_loc')"
 chk "$(code "$BASE/api/jobs")" 401 "studio API blocked without password"
@@ -34,6 +35,7 @@ chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"studio","clientName":"x"}' "$
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"calendar","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved calendar job number refused"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"quote","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved quote job number refused"
 chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"halftone","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved halftone job number refused"
+chk "$(code "${H[@]}" "${JS[@]}" -d '{"jobNumber":"radio","clientName":"x"}' "$BASE/api/jobs")" 400 "reserved radio job number refused"
 calhtml=$(curl -sf "${H[@]}" "$BASE/studio/calendar")
 echo "$calhtml" | grep -q "href=\"$BP/studio/calendar\"" && pass "studio nav links to calendar" || fail "studio nav missing calendar link"
 echo "$calhtml" | grep -q "href=\"$BP/studio/quote\"" && pass "studio nav links to quote" || fail "studio nav missing quote link"
@@ -41,6 +43,7 @@ echo "$calhtml" | grep -q 'data-tools' && pass "studio nav has a tools menu" || 
 echo "$calhtml" | grep -qi '<iframe' && fail "calendar page must not embed an iframe" || pass "calendar page has no iframe"
 caljs=$(curl -sf "$BASE/assets/studio.js")
 grep -q '/studio/halftone' <<<"$caljs" && grep -q 'DTF Halftone Converter' <<<"$caljs" && pass "tools menu links to the halftone converter" || fail "tools menu missing the halftone converter"
+grep -q '/studio/radio' <<<"$caljs" && grep -q 'YBI Radio' <<<"$caljs" && pass "tools menu links to YBI Radio" || fail "tools menu missing YBI Radio"
 grep -qi 'calendar.google.com\|STAFF_CALENDAR_URL\|<iframe' <<<"$caljs" && fail "studio calendar still points at Google or an embed" || pass "studio calendar does not use Google or an embed"
 grep -q '/api/calendar/events' <<<"$caljs" && pass "studio calendar calls the studio API" || fail "calendar API missing from studio.js"
 curl -sf "${H[@]}" -H 'Content-Type: image/jpeg' --data-binary @"$S/poster-A2.jpg" "$BASE/api/jobs/$NA/versions?name=poster-A2.jpg" >/dev/null && pass "V1 JPG uploaded (studio API by job number)"

@@ -1,4 +1,5 @@
 import { B, $, $$, esc, chip, fmtDate, fmtSize, api, upload, uploadFiles, toast, copy, dropzone, mountViewer, engineBand, pinsFrom, STATUS } from './common.js';
+import { bootRadio, radioPage, syncRadio } from './radio.js';
 import { addDays, compareEvents, hhmm, isoParts, mergeOrder, minutesOf, movedOrder, movedTimes, sameSpan } from './cal-move.mjs';
 import { QUOTE_LINES, QUOTE_VALIDITY, centsToInput, milliToQty, priceToCents, qtyToMilli, quoteTotals } from './quote-math.mjs';
 const app = $('#app');
@@ -10,6 +11,7 @@ const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review]
 // Staff tools. Add an entry here to show it in the Tools menu.
 const STUDIO_TOOLS = [
   { label: 'DTF Halftone Converter', href: `${B}/studio/halftone` },
+  { label: 'YBI Radio', href: `${B}/studio/radio` },
 ];
 const PRODUCTION = [
   ['awaiting_approval', 'Awaiting approval'],
@@ -127,7 +129,7 @@ async function dashboard() {
     const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it, once production is No production required or Approved for production.' : 'No jobs match.');
     tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td>${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td><td class="prodcell">${productionSelect(j)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
       : `<tr><td colspan="7" class="empty">${empty}</td></tr>`;
-    $$('tr.row', tb).forEach(r => r.onclick = () => location.href = r.dataset.href);
+    $$('tr.row', tb).forEach(r => r.onclick = () => go(r.dataset.href));
     bindProduction(tb, () => dashboard());
   };
   draw();
@@ -224,7 +226,7 @@ async function jobPage(key, showV) {
     try { await sendProof(id, picked, $('[data-vnote]', app).value, p => msg.textContent = `${label} ${Math.round(p * 100)}%`); toast('New version uploaded'); jobPage(key); }
     catch (e) { msg.className = 'msg err'; msg.textContent = e.message; go.disabled = false; }
   };
-  $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); location.href = B + '/studio'; };
+  $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); go(B + '/studio'); };
   $('[data-edit]', app).onclick = () => openEdit(j);
   $$('[data-rmv]', app).forEach(btn => btn.onclick = async () => {
     const n = +btn.dataset.rmv;
@@ -915,7 +917,7 @@ form.onsubmit = async e => {
       const label = newFiles.length > 1 ? `Uploading ${newFiles.length} images…` : 'Uploading…';
       await sendProof(j.id, newFiles, '', p => m.textContent = `${label} ${Math.round(p * 100)}%`);
     }
-    modal.hidden = true; toast('Proof created — copy the link to send'); location.href = jobHref(j);
+    modal.hidden = true; toast('Proof created — copy the link to send'); go(jobHref(j));
   } catch (er) { m.className = 'msg err'; m.textContent = er.message; } finally { go.disabled = false; }
 };
 bindNew();
@@ -1134,12 +1136,12 @@ async function quotePage(rawId) {
   const snapshot = () => JSON.stringify(readQuoteForm(form));
   const savedSnap = snapshot();
   const leave = () => snapshot() === savedSnap || confirm('Leave this quote? Changes that aren’t saved will be dropped.');
-  $$('tr.row', app).forEach(r => r.onclick = () => { if (!leave()) return; location.href = r.dataset.href; });
+  $$('tr.row', app).forEach(r => r.onclick = () => { if (!leave()) return; go(r.dataset.href); });
   $('[data-q-new]', app).onclick = () => {
     if (!leave()) return;
     const here = location.pathname.replace(/\/$/, '');
     if (here === `${B}/studio/quote`) { quotePage('').catch(e => { if (e.status === 401) location.href = B + '/'; }); return; }
-    location.href = `${B}/studio/quote`;
+    go(`${B}/studio/quote`);
   };
   form.addEventListener('input', () => paintQuoteTotals(form));
   form.addEventListener('focusout', e => {
@@ -1161,7 +1163,7 @@ async function quotePage(rawId) {
     try {
       await api(`${B}/api/quotes/${quote.id}`, { method: 'DELETE' });
       toast('Quote deleted');
-      location.href = `${B}/studio/quote`;
+      go(`${B}/studio/quote`);
     } catch (err) {
       const msg = $('#q-msg', form);
       msg.className = 'msg err';
@@ -1288,6 +1290,7 @@ async function route() {
   const rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
   document.body.classList.toggle('is-quote', rest === 'quote' || rest.startsWith('quote/'));
   document.body.classList.toggle('is-halftone', rest === 'halftone');
+  document.body.classList.toggle('is-radio', rest === 'radio');
   try {
     if (rest === 'settings') await settings();
     else if (rest === 'calendar') await calendar();
@@ -1297,10 +1300,35 @@ async function route() {
       const { halftonePage } = await import('./halftone.js');
       await halftonePage();
     }
+    else if (rest === 'radio') await radioPage();
     else if (rest) await jobPage(rest);
     else await dashboard();
   } catch (e) { if (e.status === 401) location.href = B + '/'; else app.innerHTML = `<div class="wrap" style="padding-top:80px;padding-bottom:80px"><p class="msg err">${esc(e.message)}</p><a class="lnk" href="${B}/studio">Back to jobs</a></div>`; }
+  syncRadio();
 }
+function go(href) {
+  const url = new URL(href, location.origin);
+  const path = url.pathname.replace(/\/$/, '');
+  const studio = `${B}/studio`;
+  if (url.origin === location.origin && (path === studio || path.startsWith(studio + '/'))) {
+    const next = url.pathname + url.search + url.hash;
+    if (next !== location.pathname + location.search + location.hash) history.pushState(null, '', next);
+    return route();
+  }
+  location.href = url.href;
+}
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a || a.target === '_blank' || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.defaultPrevented) return;
+  const url = new URL(a.href, location.origin);
+  const path = url.pathname.replace(/\/$/, '');
+  const studio = `${B}/studio`;
+  if (url.origin !== location.origin || (path !== studio && !path.startsWith(studio + '/'))) return;
+  e.preventDefault();
+  go(url.pathname + url.search + url.hash);
+});
+window.addEventListener('popstate', () => route());
+bootRadio();
 mountToolsMenu();
 route();
 // light polling so new client feedback shows up on the dashboard

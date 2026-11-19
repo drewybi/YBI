@@ -22,7 +22,7 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin 
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
-const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'halftone', 'login', 'logout', 'favicon.ico', 'robots.txt']);
+const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'halftone', 'radio', 'login', 'logout', 'favicon.ico', 'robots.txt']);
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
