@@ -88,7 +88,7 @@ export function engineBand(inner) {
 // scale fits each page in the stage, then pulls back (pdfFitScale) so the page is not edge to edge.
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
-// opts.labelledDownload (client page) swaps the toolbar arrow for a DOWNLOAD FILE button.
+// opts.labelledDownload (client proof page and staff studio) swaps the toolbar arrow for a DOWNLOAD FILE button.
 // The link is unchanged: one file downloads itself, several files download the zip.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
 export function pinsFrom(f) {

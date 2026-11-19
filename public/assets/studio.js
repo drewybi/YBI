@@ -195,6 +195,7 @@ async function jobPage(key, showV) {
   if (sel) {
     const pinFb = [...sel.feedback].reverse().find(f => f.stickies?.length);
     mountViewer($('[data-viewer]', app), sel, {
+      labelledDownload: true,
       pins: pinsFrom(pinFb),
       onSelect: id => $$('.note', app).forEach(li => li.classList.toggle('on', !!li.querySelector(`[data-sid="${id}"]`))),
       onReady: api => {

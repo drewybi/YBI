@@ -114,8 +114,8 @@ async function parseInPieces(body, contentType) {
   assert.ok(studioJs.includes('type="file" multiple'), 'version upload accepts several files');
   assert.ok(reviewJs.includes('Download all'), 'client review offers download all');
   assert.ok(reviewJs.includes('labelledDownload: true'), 'the client proof page asks for a labelled download control');
-  assert.ok(commonJs.includes('>DOWNLOAD FILE</a>'), 'the client toolbar button reads DOWNLOAD FILE');
-  assert.ok(commonJs.includes('opts.labelledDownload') && commonJs.includes('>↓</a>'), 'staff studio keeps the download arrow');
+  assert.ok(studioJs.includes('labelledDownload: true'), 'the studio viewer asks for a labelled download control');
+  assert.ok(commonJs.includes('>DOWNLOAD FILE</a>'), 'the toolbar button reads DOWNLOAD FILE');
 
   const pieces = formBody([{ name: 'front.png', body: PNG }, { name: 'detail.jpg', body: JPG }]);
   const parsed = await parseInPieces(pieces.body, pieces.type);
