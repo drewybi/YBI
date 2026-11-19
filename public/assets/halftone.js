@@ -1,5 +1,5 @@
 import { $, esc, toast } from './common.js';
-import { DEFAULTS, MAX_SIDE, SUBSTRATES, TONE, autoTolerance, detectBackground, formatLength, hexOf, outputPixels, parseHex, pngWithDpi, processHalftone, qualityLabel, substrateById, trueDpi } from './halftone-core.mjs';
+import { DEFAULTS, MAX_SIDE, SUBSTRATES, TONE, autoTolerance, detectBackground, formatLength, hexOf, outputPixels, parseHex, pngWithDpi, processHalftone, qualityLabel, resampleRGBA, substrateById, trueDpi } from './halftone-core.mjs';
 
 const app = $('#app');
 const GUIDE_KEY = 'ybi-halftone-guide';
@@ -189,6 +189,7 @@ function shell() {
         <button type="button" class="ibtn" data-ht-z="out" aria-label="Zoom out">−</button>
         <button type="button" class="ibtn" data-ht-z="in" aria-label="Zoom in">+</button>
         <button type="button" class="ibtn" data-ht-z="fit" aria-label="Fit">Fit</button>
+        <button type="button" class="ibtn" data-ht-z="100" aria-label="100 percent">100%</button>
         <span class="small mute" data-ht-zlabel>Fit</span>
         <span class="small" data-ht-busy hidden>Working…</span>
       </div>
@@ -495,61 +496,65 @@ function schedule() {
 function fullSize() {
   return outputPixels(state.widthIn, heightIn(), state.dpi);
 }
-function atPrintScale() {
-  return zoom === 1 || (typeof zoom === 'number' && zoom >= 1);
+let plate = null;
+function storePlate(data, w, h) {
+  if (!plate) plate = document.createElement('canvas');
+  plate.width = w;
+  plate.height = h;
+  plate.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
 }
-function renderSize(full) {
-  const exact = fullSize();
-  if (full || atPrintScale()) return { ...exact, proxy: false, dpi: state.dpi };
-  const edge = Math.max(exact.w, exact.h);
-  const scale = Math.min(1, 1600 / edge);
-  const w = Math.max(1, Math.round(exact.w * scale));
-  const h = Math.max(1, Math.round(exact.h * scale));
-  return { w, h, proxy: scale < 0.999, dpi: state.dpi * (w / exact.w) };
+function viewScale(printW, printH) {
+  if (zoom === 'fit') {
+    const scroll = $('[data-ht-scroll]');
+    if (!scroll) return 1;
+    return Math.max(0.05, Math.min(1, (scroll.clientWidth - 48) / printW, (scroll.clientHeight - 48) / printH));
+  }
+  return zoom;
 }
-async function render(opts = {}) {
+async function render() {
   if (!source) return;
   clearTimeout(timer);
-  const size = renderSize(!!opts.full);
+  const size = fullSize();
   const id = ++job;
-  const settings = { ...payload(), dpi: size.dpi };
+  const settings = { ...payload(), dpi: state.dpi };
   const engine = getWorker();
   if (!engine) {
-    const canvas = document.createElement('canvas');
-    canvas.width = size.w; canvas.height = size.h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(source, 0, 0, size.w, size.h);
-    const src = ctx.getImageData(0, 0, size.w, size.h);
-    const placed = new Uint8ClampedArray(src.data);
-    const result = processHalftone(src.data, size.w, size.h, settings);
+    const sw = source.width, sh = source.height;
+    const raw = new Uint8ClampedArray(sw * sh * 4);
+    const grab = document.createElement('canvas');
+    const band = 256;
+    for (let y = 0; y < sh; y += band) {
+      const n = Math.min(band, sh - y);
+      grab.width = sw; grab.height = n;
+      const g = grab.getContext('2d', { willReadFrequently: true });
+      g.drawImage(source, 0, y, sw, n, 0, 0, sw, n);
+      raw.set(g.getImageData(0, 0, sw, n).data, y * sw * 4);
+    }
+    const pixels = sw === size.w && sh === size.h ? raw : resampleRGBA(raw, sw, sh, size.w, size.h);
+    const placed = new Uint8ClampedArray(pixels);
+    const result = processHalftone(pixels, size.w, size.h, settings);
     if (id !== job) return;
-    last = { width: size.w, height: size.h, placed, rgba: result.rgba, cutout: result.cutout, semi: result.semi, bg: result.bg, ms: result.ms, full: !size.proxy, proxy: size.proxy };
+    last = { width: size.w, height: size.h, placed, rgba: result.rgba, cutout: result.cutout, semi: result.semi, bg: result.bg, ms: result.ms, full: true, proxy: false };
     paint();
     return last;
   }
   const bitmap = await createImageBitmap(source);
   if (id !== job) { bitmap.close(); return; }
   const done = new Promise(resolve => { waiters[id] = resolve; });
-  engine.postMessage({ jobId: id, bitmap, width: size.w, height: size.h, settings, purpose: opts.full ? 'export' : 'preview' }, [bitmap]);
+  engine.postMessage({ jobId: id, bitmap, width: size.w, height: size.h, settings, purpose: 'print' }, [bitmap]);
   return done;
 }
 function paint() {
   if (!last) return;
-  const canvas = $('[data-ht-view]');
-  if (!canvas) return;
   const which = showBefore || view === 'original' ? last.placed : view === 'cutout' ? last.cutout : last.rgba;
-  canvas.width = last.width;
-  canvas.height = last.height;
-  canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(which), last.width, last.height), 0, 0);
+  storePlate(which, last.width, last.height);
   applyZoom();
   const src = $('[data-ht-source]');
   const printable = $('[data-ht-print]');
   const quality = $('[data-ht-quality]');
   if (source && src) src.textContent = `${source.width} × ${source.height} px`;
   if (printable) printable.textContent = `${formatLength(state.widthIn, state.unit)} × ${formatLength(heightIn(), state.unit)} ${state.unit}`;
-  if (quality && source) quality.textContent = qualityLabel(trueDpi(source.width, state.widthIn)) + (last.proxy ? ' · preview' : '');
+  if (quality && source) quality.textContent = qualityLabel(trueDpi(source.width, state.widthIn));
   const root = $('[data-ht]');
   if (root) root.dataset.ready = '1';
   document.querySelectorAll('[data-ht-export],[data-ht-preflight]').forEach(btn => { btn.disabled = false; });
@@ -567,21 +572,42 @@ function applyZoom() {
   const canvas = $('[data-ht-view]');
   const frame = $('[data-ht-frame]');
   const scroll = $('[data-ht-scroll]');
-  if (!canvas || !canvas.width || !frame || !scroll) return;
-  let scale = zoom;
-  if (zoom === 'fit') scale = Math.max(0.05, Math.min(1, (scroll.clientWidth - 48) / canvas.width, (scroll.clientHeight - 48) / canvas.height));
-  frame.style.width = Math.round(canvas.width * scale) + 'px';
-  frame.style.height = Math.round(canvas.height * scale) + 'px';
+  if (!canvas || !plate || !plate.width || !frame || !scroll) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const scale = viewScale(plate.width, plate.height);
+  const cssW = Math.max(1, Math.round(plate.width * scale));
+  const cssH = Math.max(1, Math.round(plate.height * scale));
+  frame.style.width = cssW + 'px';
+  frame.style.height = cssH + 'px';
   frame.style.background = garmentCss();
-  scroll.classList.toggle('is-pixel', scale >= 1);
+  const srect = scroll.getBoundingClientRect();
+  const frect = frame.getBoundingClientRect();
+  const left = Math.max(0, srect.left - frect.left);
+  const top = Math.max(0, srect.top - frect.top);
+  const right = Math.min(cssW, srect.right - frect.left);
+  const bottom = Math.min(cssH, srect.bottom - frect.top);
+  const vw = Math.max(1, Math.round(right - left));
+  const vh = Math.max(1, Math.round(bottom - top));
+  canvas.style.left = left + 'px';
+  canvas.style.top = top + 'px';
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+  canvas.width = Math.max(1, Math.round(vw * dpr));
+  canvas.height = Math.max(1, Math.round(vh * dpr));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  const sx = left / scale;
+  const sy = top / scale;
+  const sw = Math.min(plate.width - sx, vw / scale);
+  const sh = Math.min(plate.height - sy, vh / scale);
+  if (sw > 0 && sh > 0) ctx.drawImage(plate, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   const label = $('[data-ht-zlabel]');
   if (label) label.textContent = `${Math.round(scale * 100)}%`;
 }
 function fitScale() {
-  const canvas = $('[data-ht-view]');
-  const scroll = $('[data-ht-scroll]');
-  if (!canvas || !canvas.width || !scroll) return 1;
-  return Math.max(0.05, Math.min(1, (scroll.clientWidth - 48) / canvas.width, (scroll.clientHeight - 48) / canvas.height));
+  const dims = plate && plate.width ? { w: plate.width, h: plate.height } : fullSize();
+  return viewScale(dims.w, dims.h);
 }
 
 async function useFile(file) {
@@ -800,8 +826,8 @@ function bind() {
     if (state.knockout) { commit(); schedule(); }
   });
   document.querySelectorAll('[data-ht-z]').forEach(btn => btn.addEventListener('click', () => {
-    const wasFull = atPrintScale();
     if (btn.dataset.htZ === 'fit') zoom = 'fit';
+    else if (btn.dataset.htZ === '100') zoom = 1;
     else {
       const current = zoom === 'fit' ? fitScale() : zoom;
       const next = btn.dataset.htZ === 'in'
@@ -809,8 +835,7 @@ function bind() {
         : [...ZOOMS].reverse().find(z => z < current - 0.01) || ZOOMS[0];
       zoom = next;
     }
-    if (wasFull !== atPrintScale()) schedule();
-    else applyZoom();
+    applyZoom();
   }));
   $('[data-ht-substrate]').addEventListener('change', e => applySubstrate(e.target.value));
   $('[data-ht-preflight]').addEventListener('click', openReport);
@@ -826,7 +851,12 @@ function bind() {
   const scroll = $('[data-ht-scroll]');
   ['dragenter', 'dragover', 'drop'].forEach(ev => scroll.addEventListener(ev, e => e.preventDefault()));
   scroll.addEventListener('drop', e => useFile(e.dataTransfer.files && e.dataTransfer.files[0]));
-  if (!resizeBound) { resizeBound = true; window.addEventListener('resize', applyZoom); }
+  if (!resizeBound) {
+    resizeBound = true;
+    window.addEventListener('resize', applyZoom);
+    const scroll = $('[data-ht-scroll]');
+    if (scroll) scroll.addEventListener('scroll', applyZoom, { passive: true });
+  }
   savedSnap = snap();
   renderPanel();
   if (!localStorage.getItem(GUIDE_KEY)) {
