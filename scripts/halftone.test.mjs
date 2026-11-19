@@ -181,9 +181,11 @@ while (off < png.length) {
 assert.ok(saw && idat);
 
 const studio = readFileSync(new URL('../public/studio.html', import.meta.url), 'utf8');
+const studioJs = readFileSync(new URL('../public/assets/studio.js', import.meta.url), 'utf8');
 const review = readFileSync(new URL('../public/review.html', import.meta.url), 'utf8');
 const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-assert.ok(studio.includes('/studio/halftone'));
+assert.ok(studio.includes('data-tools'), 'studio header has a tools menu');
+assert.ok(studioJs.includes('/studio/halftone') && studioJs.includes('DTF Halftone Converter'), 'tools menu links to the halftone converter');
 assert.ok(!review.includes('halftone'));
 assert.ok(server.includes("'halftone'"));
 
