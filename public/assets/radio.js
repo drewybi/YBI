@@ -254,13 +254,27 @@ function mark(station) {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
 }
-function channelLabel() {
-  if (!current) return 'CH --';
-  const here = stationsInBank();
-  let i = here.findIndex(s => s.id === current.id);
-  if (i < 0) i = stationsInBank(current.bank).findIndex(s => s.id === current.id);
-  if (i < 0) i = STATIONS.findIndex(s => s.id === current.id);
-  return `CH ${String(i + 1).padStart(2, '0')}`;
+function stationLine() {
+  return (current ? current.name : 'YBI Radio').toUpperCase();
+}
+function fitStation(root) {
+  const el = $('[data-ch]', root || document);
+  if (!el || !el.clientWidth) return;
+  const text = $('[data-ch-text]', el);
+  const ghost = $('[data-ch-ghost]', el);
+  if (!text || !ghost) return;
+  const line = stationLine();
+  text.textContent = line;
+  ghost.textContent = line;
+  const cap = el.clientHeight || 16;
+  let size = Math.min(cap * 0.92, 28);
+  const floor = Math.max(7, cap * 0.48);
+  const apply = px => { el.style.fontSize = `${px}px`; };
+  apply(size);
+  while (size > floor && text.scrollWidth > el.clientWidth + 0.5) {
+    size = Math.round((size - 0.4) * 10) / 10;
+    apply(size);
+  }
 }
 function barTargets() {
   let levels = null;
@@ -359,8 +373,6 @@ function paintConsole() {
   const name = current ? current.name : 'YBI Radio';
   $('[data-led]', root).textContent = name;
   $('[data-sub]', root).textContent = current ? `${current.place} · ${current.genre}` : 'Choose a preset';
-  const ch = $('[data-ch]', root);
-  if (ch) ch.textContent = channelLabel();
   const live = $('[data-live]', root);
   live.hidden = !playing;
   live.textContent = scanning ? 'Live · Scan' : 'Live';
@@ -403,10 +415,11 @@ function paintConsole() {
   if (volKnob) volKnob.setAttribute('aria-valuenow', String(Math.round((muted ? 0 : volume) * 100)));
   const tuneKnob = $('[data-tuneknob]', root);
   if (tuneKnob) tuneKnob.setAttribute('aria-valuetext', current ? current.name : 'No station');
+  fitStation(root);
 }
 
 const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
-const GLASS = { x: 0.4234, y: 0.2917, w: 0.1078, h: 0.3306 };
+const GLASS = { x: 492 / 1280, y: 165 / 720, w: 214 / 1280, h: 300 / 720 };
 
 function placeScene(root) {
   const scene = $('[data-scene]', root);
@@ -416,10 +429,13 @@ function placeScene(root) {
   const narrow = vw < 760;
   let w, h, left, top;
   if (narrow) {
-    w = (vw * 0.92) / GLASS.w;
-    h = w * 9 / 16;
+    const maxW = vw * 0.94;
+    const maxH = vh * 0.94;
+    const s = Math.min(maxW / (GLASS.w * 16), maxH / (GLASS.h * 9));
+    w = 16 * s;
+    h = 9 * s;
     left = vw / 2 - (GLASS.x + GLASS.w / 2) * w;
-    top = vh * 0.46 - (GLASS.y + GLASS.h / 2) * h;
+    top = vh / 2 - (GLASS.y + GLASS.h / 2) * h;
   } else {
     const s = Math.max(vw / 16, vh / 9) * 1.14;
     w = 16 * s;
@@ -432,6 +448,7 @@ function placeScene(root) {
   scene.style.left = `${left}px`;
   scene.style.top = `${top}px`;
   scene.style.transform = 'none';
+  fitStation(root);
 }
 
 function bindKnob(el, { onDelta, onClick }) {
@@ -487,7 +504,7 @@ export async function radioPage() {
             </div>
             <button type="button" class="rx-star" data-fav aria-label="Favourite" aria-pressed="false">☆</button>
             <div class="rx-tune">
-              <p class="rx-ch" data-ch>CH --</p>
+              <p class="rx-ch" data-ch><span class="rx-ch-ghost" data-ch-ghost aria-hidden="true">YBI RADIO</span><span class="rx-ch-text" data-ch-text>YBI RADIO</span></p>
               <p class="rx-live" data-live hidden>Live</p>
             </div>
             <div class="rx-meter" data-meter aria-hidden="true">${'<i></i>'.repeat(BAR_COUNT)}</div>
@@ -537,6 +554,7 @@ export async function radioPage() {
     onClick: () => { stopScan(); step(1); }
   });
   placeScene(root);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (root.isConnected) fitStation(root); });
   const ro = new ResizeObserver(() => placeScene(root));
   ro.observe(root);
   clearInterval(clockTimer);
