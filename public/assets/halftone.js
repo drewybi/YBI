@@ -54,6 +54,7 @@ let future = [];
 let savedSnap = '';
 let historyLock = false;
 let resizeBound = false;
+const waiters = {};
 
 function garmentCss() {
   const [r, g, b] = state.garment;
@@ -99,6 +100,9 @@ function payload(previewErase = state.previewErase) {
     previewErase,
     knockout: state.knockout,
     knockoutStrength: state.knockoutStrength,
+    knockoutTarget: state.knockoutTarget,
+    blackRange: state.blackRange,
+    protectColours: state.protectColours,
     garment: state.garment,
     dpi: state.dpi,
     screen: state.screen,
@@ -273,6 +277,11 @@ function screenPanel() {
   const shapes = ['circle', 'ellipse', 'diamond', 'square', 'euclidean'].map(name => `<option value="${name}"${state.shape === name || (name === 'circle' && state.shape === 'round') ? ' selected' : ''}>${name[0].toUpperCase() + name.slice(1)}</option>`).join('');
   return `<label class="check"><input data-ht-check="halftone" type="checkbox"${state.halftone ? ' checked' : ''}> Apply halftone <span class="opt">Off: only the edge is cleaned</span></label>
     <div class="ht-pills"><button type="button" data-ht-shape="round" class="${state.shape === 'round' || state.shape === 'circle' ? 'on' : ''}">Round</button><button type="button" data-ht-shape="line" class="${state.shape === 'line' ? 'on' : ''}">Line</button></div>
+    <p class="k">Knockout target</p>
+    <div class="ht-pills"><button type="button" data-ht-target="blacks" class="${state.knockoutTarget !== 'tones' ? 'on' : ''}">Blacks only</button><button type="button" data-ht-target="tones" class="${state.knockoutTarget === 'tones' ? 'on' : ''}">All tones</button></div>
+    <p class="ht-help">Blacks only turns near-black and fades into black into dots. Solid blue, red and white stay solid.</p>
+    ${slider('blackRange', 'Black range', 0, 100, 1, 'How dark a colour must be before it starts screening.')}
+    ${slider('protectColours', 'Protect colours', 0, 100, 1, 'Colours more saturated than this stay solid.')}
     ${slider('lpi', 'Frequency (LPI)', 10, 100, 1)}
     ${slider('angle', 'Angle', 0, 90, 0.5)}
     <label class="check"><input data-ht-check="doubleScreen" type="checkbox"${state.doubleScreen ? ' checked' : ''}> Double screen <span class="opt">A second, rotated and denser screen</span></label>
@@ -333,7 +342,7 @@ function bindPanel() {
       if (read) read.textContent = el.value;
       if (el.dataset.htRange === 'tolerance') state.toleranceAuto = false;
       if (['gain', 'contrast', 'gamma', 'saturation'].includes(el.dataset.htRange)) markCustom();
-      if (['dpi', 'lpi', 'angle', 'shrink', 'specks', 'minDotMm', 'smoothEdge'].includes(el.dataset.htRange)) markCustom();
+      if (['dpi', 'lpi', 'angle', 'shrink', 'specks', 'minDotMm', 'smoothEdge', 'blackRange', 'protectColours'].includes(el.dataset.htRange)) markCustom();
       schedule();
     });
     el.addEventListener('change', commit);
@@ -388,6 +397,13 @@ function bindPanel() {
   }));
   document.querySelectorAll('[data-ht-shape]').forEach(btn => btn.addEventListener('click', () => {
     state.shape = btn.dataset.htShape;
+    markCustom();
+    commit();
+    renderPanel();
+    schedule();
+  }));
+  document.querySelectorAll('[data-ht-target]').forEach(btn => btn.addEventListener('click', () => {
+    state.knockoutTarget = btn.dataset.htTarget;
     markCustom();
     commit();
     renderPanel();
@@ -455,9 +471,13 @@ function getWorker() {
   worker = new Worker(new URL('./halftone-worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = (e) => {
     if (e.data.jobId !== job) return;
-    if (e.data.error) { setBusy(false); toast(e.data.error); return; }
+    if (e.data.error) { setBusy(false); toast(e.data.error); if (waiters[e.data.jobId]) waiters[e.data.jobId](null); return; }
+    const exact = fullSize();
     last = e.data;
+    last.full = e.data.width === exact.w && e.data.height === exact.h;
+    last.proxy = !last.full;
     paint();
+    if (waiters[e.data.jobId]) waiters[e.data.jobId](last);
   };
   worker.onerror = () => { setBusy(false); toast('The halftone worker stopped. Reload the page and try again.'); };
   return worker;
@@ -472,28 +492,48 @@ function schedule() {
   setBusy(true);
   timer = setTimeout(() => { render().catch(err => { setBusy(false); toast(err.message || 'Could not render'); }); }, 140);
 }
-async function render() {
+function fullSize() {
+  return outputPixels(state.widthIn, heightIn(), state.dpi);
+}
+function atPrintScale() {
+  return zoom === 1 || (typeof zoom === 'number' && zoom >= 1);
+}
+function renderSize(full) {
+  const exact = fullSize();
+  if (full || atPrintScale()) return { ...exact, proxy: false, dpi: state.dpi };
+  const edge = Math.max(exact.w, exact.h);
+  const scale = Math.min(1, 1600 / edge);
+  const w = Math.max(1, Math.round(exact.w * scale));
+  const h = Math.max(1, Math.round(exact.h * scale));
+  return { w, h, proxy: scale < 0.999, dpi: state.dpi * (w / exact.w) };
+}
+async function render(opts = {}) {
   if (!source) return;
-  const fit = outputPixels(state.widthIn, heightIn(), state.dpi);
+  clearTimeout(timer);
+  const size = renderSize(!!opts.full);
   const id = ++job;
-  const settings = payload();
+  const settings = { ...payload(), dpi: size.dpi };
   const engine = getWorker();
   if (!engine) {
     const canvas = document.createElement('canvas');
-    canvas.width = fit.w; canvas.height = fit.h;
+    canvas.width = size.w; canvas.height = size.h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(source, 0, 0, fit.w, fit.h);
-    const src = ctx.getImageData(0, 0, fit.w, fit.h);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, size.w, size.h);
+    const src = ctx.getImageData(0, 0, size.w, size.h);
     const placed = new Uint8ClampedArray(src.data);
-    const result = processHalftone(src.data, fit.w, fit.h, settings);
+    const result = processHalftone(src.data, size.w, size.h, settings);
     if (id !== job) return;
-    last = { width: fit.w, height: fit.h, placed, rgba: result.rgba, cutout: result.cutout, semi: result.semi, bg: result.bg, ms: result.ms, capped: fit.capped };
+    last = { width: size.w, height: size.h, placed, rgba: result.rgba, cutout: result.cutout, semi: result.semi, bg: result.bg, ms: result.ms, full: !size.proxy, proxy: size.proxy };
     paint();
-    return;
+    return last;
   }
   const bitmap = await createImageBitmap(source);
   if (id !== job) { bitmap.close(); return; }
-  engine.postMessage({ jobId: id, bitmap, width: fit.w, height: fit.h, settings, capped: fit.capped }, [bitmap]);
+  const done = new Promise(resolve => { waiters[id] = resolve; });
+  engine.postMessage({ jobId: id, bitmap, width: size.w, height: size.h, settings, purpose: opts.full ? 'export' : 'preview' }, [bitmap]);
+  return done;
 }
 function paint() {
   if (!last) return;
@@ -509,7 +549,7 @@ function paint() {
   const quality = $('[data-ht-quality]');
   if (source && src) src.textContent = `${source.width} × ${source.height} px`;
   if (printable) printable.textContent = `${formatLength(state.widthIn, state.unit)} × ${formatLength(heightIn(), state.unit)} ${state.unit}`;
-  if (quality && source) quality.textContent = qualityLabel(trueDpi(source.width, state.widthIn)) + (last.capped ? ' · capped' : '');
+  if (quality && source) quality.textContent = qualityLabel(trueDpi(source.width, state.widthIn)) + (last.proxy ? ' · preview' : '');
   const root = $('[data-ht]');
   if (root) root.dataset.ready = '1';
   document.querySelectorAll('[data-ht-export],[data-ht-preflight]').forEach(btn => { btn.disabled = false; });
@@ -616,10 +656,12 @@ function exportPixels() {
   return processHalftone(last.placed, last.width, last.height, payload(false)).rgba;
 }
 async function exportKind(kind) {
-  if (!last) return;
+  if (!source) return;
   setBusy(true);
   await new Promise(r => setTimeout(r, 20));
   try {
+    await render({ full: true });
+    if (!last || !last.full) throw new Error('The print file is not ready yet.');
     const pixels = exportPixels();
     const canvas = canvasFrom(pixels, last.width, last.height, state.mirror);
     const base = fileBase() + '_halftone';
@@ -704,6 +746,9 @@ function applySubstrate(id) {
   state.shape = 'round';
   state.screen = sub.screen || 'am';
   state.knockout = !!sub.knockout;
+  state.knockoutTarget = sub.knockoutTarget || (sub.garment === 'light' ? 'tones' : 'blacks');
+  state.blackRange = sub.blackRange == null ? 45 : sub.blackRange;
+  state.protectColours = sub.protectColours == null ? 32 : sub.protectColours;
   if (sub.ink) state.ink = sub.ink.slice();
   if (sub.bgColor) { state.bgColor = sub.bgColor.slice(); state.bgAuto = false; }
   if (sub.garment === 'light') { state.garmentKey = 'white'; state.garment = GARMENTS.white.slice(); }
@@ -755,6 +800,7 @@ function bind() {
     if (state.knockout) { commit(); schedule(); }
   });
   document.querySelectorAll('[data-ht-z]').forEach(btn => btn.addEventListener('click', () => {
+    const wasFull = atPrintScale();
     if (btn.dataset.htZ === 'fit') zoom = 'fit';
     else {
       const current = zoom === 'fit' ? fitScale() : zoom;
@@ -763,7 +809,8 @@ function bind() {
         : [...ZOOMS].reverse().find(z => z < current - 0.01) || ZOOMS[0];
       zoom = next;
     }
-    applyZoom();
+    if (wasFull !== atPrintScale()) schedule();
+    else applyZoom();
   }));
   $('[data-ht-substrate]').addEventListener('change', e => applySubstrate(e.target.value));
   $('[data-ht-preflight]').addEventListener('click', openReport);

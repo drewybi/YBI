@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { readFileSync } from 'fs';
-import { autoTolerance, detectBackground, formatLength, outputPixels, processHalftone, pngWithDpi, qualityLabel, substrateById, trueDpi } from '../public/assets/halftone-core.mjs';
+import { autoTolerance, cellPixels, detectBackground, formatLength, outputPixels, processHalftone, pngWithDpi, qualityLabel, substrateById, trueDpi } from '../public/assets/halftone-core.mjs';
 
 function fill(w, h, pixel) {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -35,6 +35,8 @@ assert.strictEqual(dark.gain, 0);
 assert.strictEqual(dark.gamma, 1);
 assert.strictEqual(dark.smoothEdge, 0);
 assert.strictEqual(dark.screen, 'am');
+assert.strictEqual(dark.knockoutTarget, 'blacks');
+assert.strictEqual(substrateById('dtf-light').knockoutTarget, 'tones');
 assert.strictEqual(substrateById('dtf-cmyk-light').lpi, 45);
 assert.strictEqual(substrateById('fm-blue').screen, 'fm');
 assert.strictEqual(substrateById('ink-white').ink[0], 255);
@@ -45,6 +47,11 @@ const widthIn = 2362 / 300;
 assert.strictEqual(formatLength(widthIn, 'in'), '7.87');
 assert.strictEqual(outputPixels(widthIn, widthIn, 300).w, 2362);
 assert.strictEqual(outputPixels(widthIn, widthIn, 300).h, 2362);
+const upscaled = outputPixels(12.5, 12.5, 300);
+assert.strictEqual(upscaled.w, 3750, '12.5 in at 300 dpi is 3750 px, with no silent downscale');
+assert.strictEqual(upscaled.h, 3750);
+assert.strictEqual(upscaled.capped, false);
+assert.ok(Math.abs(cellPixels(300, 35) - 8.571428) < 0.001, '35 LPI at 300 dpi is about 8.6 px');
 assert.strictEqual(Math.round(trueDpi(3000, widthIn)), 381);
 assert.strictEqual(qualityLabel(trueDpi(3000, widthIn)), 'Excellent · 381 dpi');
 
@@ -179,5 +186,35 @@ const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 assert.ok(studio.includes('/studio/halftone'));
 assert.ok(!review.includes('halftone'));
 assert.ok(server.includes("'halftone'"));
+
+const art = fill(180, 100, (x, y) => {
+  if (x >= 16 && x < 70 && y >= 20 && y < 80) return [20, 70, 220, 255];
+  if (x >= 80 && x < 150 && y >= 20 && y < 80) {
+    const t = (x - 80) / 69;
+    return [Math.round(20 * (1 - t)), Math.round(70 * (1 - t)), Math.round(220 * (1 - t)), 255];
+  }
+  const dx = x - 40, dy = y - 90;
+  const glow = Math.max(0, 1 - Math.hypot(dx, dy) / 18);
+  if (glow > 0 && y > 82) return [Math.round(50 * glow), Math.round(50 * glow), Math.round(50 * glow), 255];
+  return [0, 0, 0, 255];
+});
+const screened = processHalftone(art, 180, 100, {
+  ...dark, knockoutTarget: 'blacks', blackRange: 45, protectColours: 32, dpi: 300, lpi: 35, tolerance: 0.03, protect: true, removeBg: true,
+});
+assertBinary(screened.rgba);
+const blueArea = 40 * 40;
+const blueInk = opaqueCount(screened.rgba, 24, 64, 30, 70, 180);
+assert.ok(blueInk > blueArea * 0.98, `solid blue stays solid (${blueInk}/${blueArea})`);
+const fadeColour = opaqueCount(screened.rgba, 82, 100, 30, 70, 180);
+const fadeBlack = opaqueCount(screened.rgba, 130, 148, 30, 70, 180);
+assert.ok(fadeColour > fadeBlack, `a blue-to-black fade screens toward black (${fadeColour} > ${fadeBlack})`);
+assert.ok(fadeBlack < 18 * 40 * 0.85, 'the black end of the fade is not a solid plate');
+const glowInk = opaqueCount(screened.rgba, 28, 52, 84, 99, 180);
+assert.ok(glowInk > 8 && glowInk < 24 * 15, `the black glow becomes dots (${glowInk})`);
+const toned = processHalftone(art, 180, 100, {
+  ...dark, knockoutTarget: 'tones', dpi: 300, lpi: 35, tolerance: 0.03, protect: true, removeBg: true,
+});
+const tonedBlue = opaqueCount(toned.rgba, 24, 64, 30, 70, 180);
+assert.ok(tonedBlue < blueInk, 'all tones screens the solid blue that blacks-only keeps');
 
 console.log('halftone: ok');

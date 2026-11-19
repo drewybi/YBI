@@ -1,7 +1,6 @@
 // In-browser DTF halftone. No network and no DOM. Output alpha is only 0 or 255.
 
 export const MAX_SIDE = 12000;
-export const MAX_PIXELS = 40e6;
 const MAX_DIST = 441.6729559300637;
 
 export const TONE = {
@@ -33,6 +32,9 @@ export const DEFAULTS = {
   previewErase: false,
   knockout: false,
   knockoutStrength: 80,
+  knockoutTarget: 'blacks',
+  blackRange: 45,
+  protectColours: 32,
   garment: [8, 8, 10],
   dpi: 360,
   screen: 'am',
@@ -52,16 +54,16 @@ const FLAT = {
 
 export const SUBSTRATES = [
   { id: 'custom', name: 'Custom' },
-  { id: 'dtf-dark', name: 'DTF · dark garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark' },
-  { id: 'dtf-light', name: 'DTF · light garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'light' },
-  { id: 'remove-garment', name: 'Remove garment color', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockout: true },
-  { id: 'dtf-cmyk-dark', name: 'DTF CMYK · dark', ...FLAT, dpi: 600, lpi: 40, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', bgColor: [0, 0, 0], bgAuto: false },
-  { id: 'dtf-cmyk-light', name: 'DTF CMYK · light', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'light', bgColor: [0, 0, 0], bgAuto: false },
-  { id: 'dtg-white', name: 'DTG · white garment', ...FLAT, dpi: 300, lpi: 35, angle: 45, output: 'cmyk', minDotMm: 0.20, shrink: 0, specks: 12, garment: 'light' },
-  { id: 'dtg-dark', name: 'DTG · dark garment', ...FLAT, dpi: 300, lpi: 35, angle: 45, output: 'cmyk', minDotMm: 0.20, shrink: 1, specks: 12, garment: 'dark' },
-  { id: 'ink-black', name: 'Single black ink', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [0, 0, 0], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'light' },
-  { id: 'ink-white', name: 'Single white ink', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [255, 255, 255], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark' },
-  { id: 'fm-blue', name: 'FM blue noise', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [255, 255, 255], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', screen: 'fm' },
+  { id: 'dtf-dark', name: 'DTF · dark garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockoutTarget: 'blacks', blackRange: 45, protectColours: 32 },
+  { id: 'dtf-light', name: 'DTF · light garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'light', knockoutTarget: 'tones' },
+  { id: 'remove-garment', name: 'Remove garment color', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockout: true, knockoutTarget: 'blacks', blackRange: 45, protectColours: 32 },
+  { id: 'dtf-cmyk-dark', name: 'DTF CMYK · dark', ...FLAT, dpi: 600, lpi: 40, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', bgColor: [0, 0, 0], bgAuto: false, knockoutTarget: 'blacks' },
+  { id: 'dtf-cmyk-light', name: 'DTF CMYK · light', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'light', bgColor: [0, 0, 0], bgAuto: false, knockoutTarget: 'tones' },
+  { id: 'dtg-white', name: 'DTG · white garment', ...FLAT, dpi: 300, lpi: 35, angle: 45, output: 'cmyk', minDotMm: 0.20, shrink: 0, specks: 12, garment: 'light', knockoutTarget: 'tones' },
+  { id: 'dtg-dark', name: 'DTG · dark garment', ...FLAT, dpi: 300, lpi: 35, angle: 45, output: 'cmyk', minDotMm: 0.20, shrink: 1, specks: 12, garment: 'dark', knockoutTarget: 'blacks' },
+  { id: 'ink-black', name: 'Single black ink', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [0, 0, 0], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'light', knockoutTarget: 'tones' },
+  { id: 'ink-white', name: 'Single white ink', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [255, 255, 255], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', knockoutTarget: 'blacks' },
+  { id: 'fm-blue', name: 'FM blue noise', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'single', ink: [255, 255, 255], minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', screen: 'fm', knockoutTarget: 'blacks' },
 ];
 
 export function substrateById(id) {
@@ -69,16 +71,13 @@ export function substrateById(id) {
 }
 
 export function outputPixels(widthIn, heightIn, dpi) {
-  let w = Math.max(1, Math.round(widthIn * dpi));
-  let h = Math.max(1, Math.round(heightIn * dpi));
-  let capped = false;
-  if (w * h > MAX_PIXELS) {
-    const s = Math.sqrt(MAX_PIXELS / (w * h));
-    w = Math.max(1, Math.floor(w * s));
-    h = Math.max(1, Math.floor(h * s));
-    capped = true;
-  }
-  return { w, h, capped };
+  const w = Math.max(1, Math.round(widthIn * dpi));
+  const h = Math.max(1, Math.round(heightIn * dpi));
+  return { w, h, capped: false };
+}
+
+export function cellPixels(dpi, lpi) {
+  return dpi / Math.max(1, lpi);
 }
 
 export function formatLength(inches, unit) {
@@ -244,10 +243,11 @@ function blur3(src, w, h) {
   return out;
 }
 
-function keyMask(rgb, w, h, bg, tolerance, protect) {
+function keyMask(rgb, w, h, bg, tolerance, protect, edges) {
   const n = w * h;
   const kill = new Uint8Array(n);
   const near = (p) => dist01(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], bg[0], bg[1], bg[2]) <= tolerance;
+  const edge = edges || { top: true, right: true, bottom: true, left: true };
   if (!protect) {
     for (let p = 0; p < n; p++) if (near(p)) kill[p] = 1;
     return kill;
@@ -261,8 +261,12 @@ function keyMask(rgb, w, h, bg, tolerance, protect) {
     kill[p] = 1;
     qx[qe] = x; qy[qe] = y; qe++;
   };
-  for (let x = 0; x < w; x++) { push(x, 0); if (h > 1) push(x, h - 1); }
-  for (let y = 1; y < h - 1; y++) { push(0, y); if (w > 1) push(w - 1, y); }
+  if (edge.top) for (let x = 0; x < w; x++) push(x, 0);
+  if (edge.bottom && h > 1) for (let x = 0; x < w; x++) push(x, h - 1);
+  for (let y = 0; y < h; y++) {
+    if (edge.left) push(0, y);
+    if (edge.right && w > 1) push(w - 1, y);
+  }
   while (qs < qe) {
     const x = qx[qs], y = qy[qs]; qs++;
     if (x > 0) push(x - 1, y);
@@ -395,7 +399,8 @@ function cleanupMask(rgb, alpha, w, h, s) {
   }
   const erase = new Uint8Array(n);
   let work = alpha;
-  if (s.smoothEdge > 0) work = boxBlurAlpha(alpha, w, h, s.smoothEdge);
+  const feather = Math.max(Number(s.smoothEdge) || 0, 0.85);
+  if (feather > 0) work = boxBlurAlpha(alpha, w, h, feather);
   const threshold = s.eraseThreshold;
   for (let p = 0; p < n; p++) {
     const v = work === alpha ? alpha[p] : work[p];
@@ -493,8 +498,31 @@ function buildBlueNoise(size) {
   return out;
 }
 
+function lumaOf(r, g, b) {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+function chromaOf(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max < 1 ? 0 : (max - min) / max;
+}
+function blacksCoverage(r, g, b, s) {
+  const target = s.knockout && s.garment ? s.garment : [0, 0, 0];
+  const lum = lumaOf(r, g, b);
+  const sat = chromaOf(r, g, b);
+  const near = 1 - dist01(r, g, b, target[0], target[1], target[2]);
+  const darkness = s.knockout ? Math.max(1 - lum, near) : Math.max(1 - lum, near * 0.85);
+  const range = Math.max(0.05, (s.blackRange == null ? 45 : s.blackRange) / 100);
+  const protect = Math.max(0, (s.protectColours == null ? 32 : s.protectColours) / 100);
+  const floor = sat >= protect ? range * (0.42 + 0.2 * (1 - Math.min(1, sat))) : range;
+  const start = 1 - floor;
+  if (darkness <= start) return 1;
+  const t = (darkness - start) / Math.max(0.04, 1 - start);
+  return Math.max(0, Math.min(1, 1 - t));
+}
+
 function coverageOf(r, g, b, a, bg, s) {
   if (a < 128) return 0;
+  if (s.output !== 'single' && s.output !== 'cmyk' && s.knockoutTarget !== 'tones') return blacksCoverage(r, g, b, s);
   if (!s.removeBg) return 1;
   const d = dist01(r, g, b, bg[0], bg[1], bg[2]);
   const peak = Math.max(r, g, b) / 255;
@@ -613,23 +641,33 @@ function stamp(rgb, alpha, w, h, s, bg, out, hit, cell, cos, sin, scale, minCov,
       const fx = (gx - (ix + 0.5) * cell) / (cell * 0.5);
       const fy = (gy - (iy + 0.5) * cell) / (cell * 0.5);
       let on = false;
+      const scaled = Math.min(1, cov * scale);
+      const radius = 2 * Math.sqrt(Math.max(scaled, 0) / Math.PI);
+      const inside = (px, py) => {
+        if (shape === 'line') return Math.abs(px) <= scaled;
+        if (shape === 'ellipse') return (px / 1.35) ** 2 + (py / 0.72) ** 2 <= radius * radius;
+        if (shape === 'diamond') return Math.abs(px) + Math.abs(py) <= radius * 1.15;
+        if (shape === 'square') return Math.max(Math.abs(px), Math.abs(py)) <= radius;
+        if (shape === 'euclidean') {
+          if (scaled < 0.5) return px * px + py * py <= (Math.sqrt((scaled * 2) / Math.PI)) ** 2;
+          const hole = Math.sqrt(((1 - scaled) * 2) / Math.PI);
+          return px * px + py * py > hole * hole;
+        }
+        return px * px + py * py <= radius * radius;
+      };
       if (cov >= solidAt) on = true;
       else {
-        const scaled = Math.min(1, cov * scale);
-        const radius = 2 * Math.sqrt(scaled / Math.PI);
         const dpx = radius * cell;
         if (dpx < (s.minDotMm / 25.4) * (s.dpi || 300)) continue;
-        if (shape === 'line') on = Math.abs(fx) <= scaled;
-        else if (shape === 'ellipse') on = (fx / 1.35) ** 2 + (fy / 0.72) ** 2 <= radius * radius;
-        else if (shape === 'diamond') on = Math.abs(fx) + Math.abs(fy) <= radius * 1.15;
-        else if (shape === 'square') on = Math.max(Math.abs(fx), Math.abs(fy)) <= radius;
-        else if (shape === 'euclidean') {
-          if (scaled < 0.5) on = fx * fx + fy * fy <= (Math.sqrt((scaled * 2) / Math.PI)) ** 2;
-          else {
-            const hole = Math.sqrt(((1 - scaled) * 2) / Math.PI);
-            on = fx * fx + fy * fy > hole * hole;
-          }
-        } else on = fx * fx + fy * fy <= radius * radius;
+        if (shape === 'round' || shape === 'circle') {
+          const o = 0.7 / cell;
+          let hits = 0;
+          if (inside(fx - o, fy - o)) hits++;
+          if (inside(fx + o, fy - o)) hits++;
+          if (inside(fx - o, fy + o)) hits++;
+          if (inside(fx + o, fy + o)) hits++;
+          on = hits >= 2;
+        } else on = inside(fx, fy);
       }
       if (!on) continue;
       hit[p] = 1;
@@ -667,7 +705,7 @@ function screenCmyk(rgb, alpha, w, h, s, minCov, solidAt) {
   return out;
 }
 
-export function processHalftone(src, w, h, settings) {
+export function processHalftone(src, w, h, settings, opt = {}) {
   const s = { ...DEFAULTS, ...settings };
   const started = (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const n = w * h;
@@ -698,8 +736,9 @@ export function processHalftone(src, w, h, settings) {
   }
   const bg = s.bgColor || [0, 0, 0];
   if (s.removeBg) {
-    const kill = keyMask(rgb, w, h, bg, s.tolerance, s.protect !== false);
-    for (let p = 0; p < n; p++) if (kill[p]) alpha[p] = 0;
+    const kill = opt.kill || keyMask(rgb, w, h, bg, s.tolerance, s.protect !== false, opt.edges);
+    const origin = opt.rowOffset || 0;
+    for (let p = 0; p < n; p++) if (kill[origin * w + p]) alpha[p] = 0;
   }
   const cleaned = cleanupMask(rgb, alpha, w, h, s);
   const cutout = new Uint8ClampedArray(n * 4);
