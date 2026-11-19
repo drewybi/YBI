@@ -1204,11 +1204,16 @@ async function route() {
   markNav();
   const rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
   document.body.classList.toggle('is-quote', rest === 'quote' || rest.startsWith('quote/'));
+  document.body.classList.toggle('is-halftone', rest === 'halftone');
   try {
     if (rest === 'settings') await settings();
     else if (rest === 'calendar') await calendar();
     else if (rest === 'quote') await quotePage('');
     else if (rest.startsWith('quote/')) await quotePage(rest.slice('quote/'.length));
+    else if (rest === 'halftone') {
+      const { halftonePage } = await import('./halftone.js');
+      await halftonePage();
+    }
     else if (rest) await jobPage(rest);
     else await dashboard();
   } catch (e) { if (e.status === 401) location.href = B + '/'; else app.innerHTML = `<div class="wrap" style="padding-top:80px;padding-bottom:80px"><p class="msg err">${esc(e.message)}</p><a class="lnk" href="${B}/studio">Back to jobs</a></div>`; }
