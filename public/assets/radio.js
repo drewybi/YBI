@@ -419,30 +419,25 @@ function paintConsole() {
 }
 
 const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
-const GLASS = { x: 492 / 1280, y: 166 / 720, w: 213 / 1280, h: 298 / 720 };
+const GLASS = { x: 570 / 1280, y: 290 / 720, w: 125 / 1280, h: 217 / 720 };
 
 function placeScene(root) {
   const scene = $('[data-scene]', root);
   if (!scene) return;
   const vw = root.clientWidth;
   const vh = root.clientHeight;
-  const narrow = vw < 760;
-  let w, h, left, top;
-  if (narrow) {
-    const maxW = vw * 0.94;
-    const maxH = vh * 0.94;
-    const s = Math.min(maxW / (GLASS.w * 16), maxH / (GLASS.h * 9));
-    w = 16 * s;
-    h = 9 * s;
-    left = vw / 2 - (GLASS.x + GLASS.w / 2) * w;
-    top = vh / 2 - (GLASS.y + GLASS.h / 2) * h;
-  } else {
-    const s = Math.max(vw / 16, vh / 9) * 1.14;
-    w = 16 * s;
-    h = 9 * s;
-    left = (vw - w) / 2;
-    top = (vh - h) / 2;
-  }
+  // Cover the radio viewport with the night cabin, keeping source y 30–640
+  // (skyline through the lower dash) and the centre glass in frame.
+  const scale = Math.max(vw / 1280, vh / 610);
+  const w = 1280 * scale;
+  const h = 720 * scale;
+  const screenCx = (GLASS.x + GLASS.w / 2) * w;
+  let left = vw / 2 - screenCx;
+  if (left > 0) left = 0;
+  if (left + w < vw) left = vw - w;
+  let top = -30 * scale;
+  if (top > 0) top = 0;
+  if (top + h < vh) top = vh - h;
   scene.style.width = `${w}px`;
   scene.style.height = `${h}px`;
   scene.style.left = `${left}px`;
