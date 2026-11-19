@@ -88,6 +88,8 @@ export function engineBand(inner) {
 // scale fits each page in the stage, then pulls back (pdfFitScale) so the page is not edge to edge.
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
+// opts.labelledDownload (client page) swaps the toolbar arrow for a DOWNLOAD FILE button.
+// The link is unchanged: one file downloads itself, several files download the zip.
 const ZOOMS = [1, 1.35, 1.8, 2.4];
 export function pinsFrom(f) {
   return (f?.stickies || []).map(s => ({ id: `${f.id}-${s.n}`, n: s.n, page: s.page || 1, x: +s.x, y: +s.y, text: s.text || '' }));
@@ -115,11 +117,13 @@ export async function mountViewer(root, version, opts = {}) {
     <div class="viewer__bar">
       <div class="grp"><button class="ibtn" type="button" data-prev aria-label="Previous page">‹</button><span class="pg" data-pg>—</span><button class="ibtn" type="button" data-next aria-label="Next page">›</button></div>
       <div class="grp"><span class="small dim" data-name style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(multiImage ? imageFiles[0].name : version.originalName)}</span><span class="pin-hint" data-hint hidden>Click or tap the proof to mark a change</span></div>
-      <div class="grp">
+      <div class="grp viewer__tools">
         <button class="ibtn" type="button" data-zout aria-label="Zoom out" title="Zoom out">−</button>
         <button class="ibtn" type="button" data-zin aria-label="Zoom in" title="Zoom in">+</button>
         <button class="ibtn" type="button" data-expand aria-pressed="false" aria-label="Full screen" title="Full screen">⤢</button>
-        <a class="ibtn" data-dl href="${esc(dl)}" aria-label="${dlLabel}" title="${dlLabel}" style="text-decoration:none">↓</a>
+        ${opts.labelledDownload
+          ? `<a class="btn btn--sm viewer__dl" data-dl href="${esc(dl)}" aria-label="Download file">DOWNLOAD FILE</a>`
+          : `<a class="ibtn" data-dl href="${esc(dl)}" aria-label="${dlLabel}" title="${dlLabel}" style="text-decoration:none">↓</a>`}
         <a class="ibtn" data-open href="${esc(fileUrl)}" target="_blank" rel="noopener" aria-label="Open in new tab" title="Open in new tab" style="text-decoration:none">↗</a>
       </div>
     </div>

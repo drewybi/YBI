@@ -64,6 +64,7 @@ function render() {
   const placing = mode === 'changes' && isLatest && v.kind !== 'zip';
   const pinFb = !placing && [...v.feedback].reverse().find(f => f.stickies?.length);
   mountViewer($('[data-viewer]', app), v, {
+    labelledDownload: true,
     place: placing,
     pins: placing ? numbered(stickies) : pinsFrom(pinFb),
     active: placing ? activeSticky : null,

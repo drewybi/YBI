@@ -107,11 +107,15 @@ async function parseInPieces(body, contentType) {
 (async () => {
   const studioJs = fs.readFileSync(path.join(__dirname, '../public/assets/studio.js'), 'utf8');
   const reviewJs = fs.readFileSync(path.join(__dirname, '../public/assets/review.js'), 'utf8');
+  const commonJs = fs.readFileSync(path.join(__dirname, '../public/assets/common.js'), 'utf8');
   const studioHtml = fs.readFileSync(path.join(__dirname, '../public/studio.html'), 'utf8');
   assert.ok(studioJs.includes('uploadFiles'), 'studio uploads a set through one multipart request');
   assert.ok(studioHtml.includes('multiple'), 'new-job file input accepts several files');
   assert.ok(studioJs.includes('type="file" multiple'), 'version upload accepts several files');
   assert.ok(reviewJs.includes('Download all'), 'client review offers download all');
+  assert.ok(reviewJs.includes('labelledDownload: true'), 'the client proof page asks for a labelled download control');
+  assert.ok(commonJs.includes('>DOWNLOAD FILE</a>'), 'the client toolbar button reads DOWNLOAD FILE');
+  assert.ok(commonJs.includes('opts.labelledDownload') && commonJs.includes('>↓</a>'), 'staff studio keeps the download arrow');
 
   const pieces = formBody([{ name: 'front.png', body: PNG }, { name: 'detail.jpg', body: JPG }]);
   const parsed = await parseInPieces(pieces.body, pieces.type);
