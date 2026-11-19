@@ -513,8 +513,8 @@ body.rx-dock{padding-bottom:84px}
 .rx-hot--vol{left:37.2%;top:44.55%;width:3.28%;height:5.83%;cursor:ns-resize}
 .rx-hot--tune{left:54.15%;top:45.35%;width:3.28%;height:5.83%;cursor:ew-resize}
 .rx-hot:focus-visible{outline:2px solid #E10600;outline-offset:2px}
-.rx-screen{position:absolute;left:38.4375%;top:22.9167%;width:16.7188%;height:41.6667%;container-type:size;overflow:hidden;border-radius:2.4%;background:#000}
-.rx-screen::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(243,241,236,.05),transparent 18%)}
+.rx-screen{position:absolute;left:39.0625%;top:24.1667%;width:15.3906%;height:39.1667%;container-type:size;overflow:hidden;border-radius:4cqw;background:#000}
+.rx-screen::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.025) 13%,transparent 30%),linear-gradient(118deg,transparent 46%,rgba(255,255,255,.05) 50%,transparent 54%)}
 .rx-ui{box-sizing:border-box;height:100%;display:flex;flex-direction:column;overflow:hidden;background:#09090a;color:#f3f1ec;font-family:var(--sans);padding:2.6cqw 2.4cqw 2.2cqw;gap:1.5cqw}
 .rx-bar{display:flex;align-items:center;gap:2cqw;min-height:5.2cqw;font:500 clamp(8px,2.8cqw,13px)/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:#a7a49e}
 .rx-logo{height:4.6cqw;width:auto;max-width:34%;object-fit:contain;display:block}

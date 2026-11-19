@@ -419,7 +419,7 @@ function paintConsole() {
 }
 
 const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
-const GLASS = { x: 492 / 1280, y: 165 / 720, w: 214 / 1280, h: 300 / 720 };
+const GLASS = { x: 492 / 1280, y: 166 / 720, w: 213 / 1280, h: 298 / 720 };
 
 function placeScene(root) {
   const scene = $('[data-scene]', root);
