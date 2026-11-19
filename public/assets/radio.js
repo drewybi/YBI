@@ -45,8 +45,15 @@ let scanTimer = 0;
 let playGen = 0;
 let volume = 0.8;
 let ctx, analyser, freq;
-let raf = 0;
+let meterTimer = 0;
+let meterPhase = 0;
 const meters = new Set();
+const BAR_COUNT = 24;
+const barShown = new Array(BAR_COUNT).fill(0.1);
+
+function prefersStill() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 function savedVolume() {
   const raw = localStorage.getItem(KEY_VOLUME);
@@ -247,60 +254,75 @@ function mark(station) {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
 }
-function drawMeter(canvas, t) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = canvas.clientWidth || 280;
-  const h = canvas.clientHeight || 48;
-  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
+function stationLine() {
+  return (current ? current.name : 'YBI Radio').toUpperCase();
+}
+function fitStation(root) {
+  const el = $('[data-ch]', root || document);
+  if (!el || !el.clientWidth) return;
+  const text = $('[data-ch-text]', el);
+  const ghost = $('[data-ch-ghost]', el);
+  if (!text || !ghost) return;
+  const line = stationLine();
+  text.textContent = line;
+  ghost.textContent = line;
+  const cap = el.clientHeight || 16;
+  let size = Math.min(cap * 0.92, 28);
+  const floor = Math.max(7, cap * 0.48);
+  const apply = px => { el.style.fontSize = `${px}px`; };
+  apply(size);
+  while (size > floor && text.scrollWidth > el.clientWidth + 0.5) {
+    size = Math.round((size - 0.4) * 10) / 10;
+    apply(size);
   }
-  const g = canvas.getContext('2d');
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, w, h);
-  const n = 28;
-  const gap = 3;
-  const bw = (w - gap * (n - 1)) / n;
+}
+function barTargets() {
   let levels = null;
   if (playing && usingProbe && analyser && freq) {
     analyser.getByteFrequencyData(freq);
-    const sum = freq.reduce((a, b) => a + b, 0);
+    let sum = 0;
+    for (let i = 0; i < freq.length; i++) sum += freq[i];
     if (sum > 0) levels = freq;
   }
-  for (let i = 0; i < n; i++) {
-    let v;
-    if (levels) v = levels[Math.floor(i / n * levels.length)] / 255;
-    else if (playing) v = 0.18 + 0.55 * Math.abs(Math.sin(t / 180 + i * 0.55)) * (0.45 + 0.55 * Math.abs(Math.sin(t / 90 + i)));
-    else v = 0.04;
-    const bh = Math.max(3, v * h);
-    const x = i * (bw + gap);
-    const y = h - bh;
-    g.fillStyle = v > 0.78 ? '#d8ffe8' : '#00C853';
-    g.globalAlpha = playing ? 0.95 : 0.45;
-    g.fillRect(x, y, bw, bh);
+  const out = new Array(BAR_COUNT);
+  for (let i = 0; i < BAR_COUNT; i++) {
+    if (!playing) out[i] = 0.1;
+    else if (levels) out[i] = 0.16 + 0.78 * (levels[Math.min(levels.length - 1, Math.floor(i / BAR_COUNT * levels.length))] / 255);
+    else out[i] = 0.28 + 0.34 * (0.5 + 0.5 * Math.sin(meterPhase + i * 0.62));
   }
-  g.globalAlpha = 1;
+  return out;
 }
-
+function paintMeters() {
+  const still = prefersStill();
+  const targets = barTargets();
+  meters.forEach(el => {
+    if (!el.isConnected) { meters.delete(el); return; }
+    const bars = el.querySelectorAll('i');
+    bars.forEach((bar, i) => {
+      const target = targets[i] ?? 0.1;
+      const v = still ? (playing ? 0.42 : 0.1) : (barShown[i] = barShown[i] + (target - barShown[i]) * 0.42);
+      bar.style.height = `${Math.round(Math.max(0.1, v) * 100)}%`;
+      bar.style.opacity = playing ? '0.95' : '0.4';
+      bar.style.background = !still && v > 0.82 ? '#d8ffe8' : '#00C853';
+    });
+  });
+  if (!still && playing) meterPhase += 0.28;
+}
 function startMeter() {
-  if (raf) return;
-  const loop = t => {
-    raf = requestAnimationFrame(loop);
-    meters.forEach(c => { if (!c.isConnected) meters.delete(c); else drawMeter(c, t); });
-  };
-  raf = requestAnimationFrame(loop);
+  paintMeters();
+  if (meterTimer || prefersStill()) return;
+  meterTimer = setInterval(paintMeters, 110);
 }
 function stopMeter() {
-  if (raf) cancelAnimationFrame(raf);
-  raf = 0;
-  meters.forEach(c => { if (c.isConnected) drawMeter(c, 0); });
+  if (meterTimer) clearInterval(meterTimer);
+  meterTimer = 0;
+  paintMeters();
 }
-
-function watchMeter(canvas) {
-  if (!canvas || meters.has(canvas)) return;
-  meters.add(canvas);
-  drawMeter(canvas, 0);
+function watchMeter(el) {
+  if (!el || meters.has(el)) return;
+  meters.add(el);
   if (playing) startMeter();
+  else paintMeters();
 }
 
 let mini;
@@ -351,8 +373,6 @@ function paintConsole() {
   const name = current ? current.name : 'YBI Radio';
   $('[data-led]', root).textContent = name;
   $('[data-sub]', root).textContent = current ? `${current.place} · ${current.genre}` : 'Choose a preset';
-  const cluster = $('[data-cluster]', root);
-  if (cluster) cluster.textContent = name;
   const live = $('[data-live]', root);
   live.hidden = !playing;
   live.textContent = scanning ? 'Live · Scan' : 'Live';
@@ -395,45 +415,35 @@ function paintConsole() {
   if (volKnob) volKnob.setAttribute('aria-valuenow', String(Math.round((muted ? 0 : volume) * 100)));
   const tuneKnob = $('[data-tuneknob]', root);
   if (tuneKnob) tuneKnob.setAttribute('aria-valuetext', current ? current.name : 'No station');
+  fitStation(root);
 }
 
 const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
-const GLASS = { x: 0.4234, y: 0.2917, w: 0.1078, h: 0.3306 };
-
-function applyPan(root) {
-  const scene = $('[data-scene]', root);
-  if (!scene) return;
-  const pan = root._pan || { x: 0, y: 0 };
-  const scale = root._sceneScale || 1;
-  scene.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${scale})`;
-}
+const GLASS = { x: 570 / 1280, y: 290 / 720, w: 125 / 1280, h: 217 / 720 };
 
 function placeScene(root) {
   const scene = $('[data-scene]', root);
   if (!scene) return;
   const vw = root.clientWidth;
   const vh = root.clientHeight;
-  const narrow = vw < 760;
-  let w, h, left, top;
-  if (narrow) {
-    w = (vw * 0.92) / GLASS.w;
-    h = w * 9 / 16;
-    left = vw / 2 - (GLASS.x + GLASS.w / 2) * w;
-    top = vh * 0.46 - (GLASS.y + GLASS.h / 2) * h;
-    root._sceneScale = 1;
-  } else {
-    const s = Math.max(vw / 16, vh / 9) * 1.14;
-    w = 16 * s;
-    h = 9 * s;
-    left = (vw - w) / 2;
-    top = (vh - h) / 2;
-    root._sceneScale = 1;
-  }
+  // Cover the radio viewport with the night cabin, keeping source y 30–640
+  // (skyline through the lower dash) and the centre glass in frame.
+  const scale = Math.max(vw / 1280, vh / 610);
+  const w = 1280 * scale;
+  const h = 720 * scale;
+  const screenCx = (GLASS.x + GLASS.w / 2) * w;
+  let left = vw / 2 - screenCx;
+  if (left > 0) left = 0;
+  if (left + w < vw) left = vw - w;
+  let top = -30 * scale;
+  if (top > 0) top = 0;
+  if (top + h < vh) top = vh - h;
   scene.style.width = `${w}px`;
   scene.style.height = `${h}px`;
   scene.style.left = `${left}px`;
   scene.style.top = `${top}px`;
-  applyPan(root);
+  scene.style.transform = 'none';
+  fitStation(root);
 }
 
 function bindKnob(el, { onDelta, onClick }) {
@@ -471,11 +481,6 @@ export async function radioPage() {
   app.innerHTML = `<div class="rx" data-rx>
     <div class="rx-scene" data-scene>
       <img class="rx-photo" alt="" src="${B}/assets/img/ybi-dash.jpg">
-      <div class="rx-cluster" aria-hidden="true">
-        <b>0</b>
-        <span>km/h</span>
-        <em data-cluster>YBI Radio</em>
-      </div>
       <button type="button" class="rx-hot rx-hot--vol" data-volknob aria-label="Volume" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80"></button>
       <button type="button" class="rx-hot rx-hot--tune" data-tuneknob aria-label="Tune"></button>
       <div class="rx-screen">
@@ -492,9 +497,12 @@ export async function radioPage() {
               <h1 data-led>YBI Radio</h1>
               <p class="rx-sub" data-sub>Choose a preset</p>
             </div>
-            <p class="rx-live" data-live hidden>Live</p>
             <button type="button" class="rx-star" data-fav aria-label="Favourite" aria-pressed="false">☆</button>
-            <canvas class="rx-meter" data-meter width="320" height="36" aria-hidden="true"></canvas>
+            <div class="rx-tune">
+              <p class="rx-ch" data-ch><span class="rx-ch-ghost" data-ch-ghost aria-hidden="true">YBI RADIO</span><span class="rx-ch-text" data-ch-text>YBI RADIO</span></p>
+              <p class="rx-live" data-live hidden>Live</p>
+            </div>
+            <div class="rx-meter" data-meter aria-hidden="true">${'<i></i>'.repeat(BAR_COUNT)}</div>
           </section>
           <div class="rx-tabs" role="tablist" aria-label="Bands">
             ${BANKS.map(name => `<button type="button" role="tab" data-bank="${esc(name)}" aria-label="${esc(name)}">${esc(BANK_SHORT[name] || name)}</button>`).join('')}
@@ -540,17 +548,8 @@ export async function radioPage() {
     },
     onClick: () => { stopScan(); step(1); }
   });
-  root.addEventListener('pointermove', e => {
-    if (root.clientWidth < 760) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const r = root.getBoundingClientRect();
-    root._pan = {
-      x: ((e.clientX - r.left) / r.width - 0.5) * -18,
-      y: ((e.clientY - r.top) / r.height - 0.5) * -12
-    };
-    applyPan(root);
-  });
   placeScene(root);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (root.isConnected) fitStation(root); });
   const ro = new ResizeObserver(() => placeScene(root));
   ro.observe(root);
   clearInterval(clockTimer);
