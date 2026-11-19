@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { readFileSync } from 'fs';
-import { autoTolerance, cellPixels, detectBackground, formatLength, outputPixels, processHalftone, pngWithDpi, qualityLabel, substrateById, trueDpi } from '../public/assets/halftone-core.mjs';
+import { autoTolerance, cellPixels, detectBackground, formatLength, medianColorRun, outputPixels, processHalftone, pngWithDpi, qualityLabel, resampleRGBA, substrateById, trueDpi } from '../public/assets/halftone-core.mjs';
 
 function fill(w, h, pixel) {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -216,5 +216,42 @@ const toned = processHalftone(art, 180, 100, {
 });
 const tonedBlue = opaqueCount(toned.rgba, 24, 64, 30, 70, 180);
 assert.ok(tonedBlue < blueInk, 'all tones screens the solid blue that blacks-only keeps');
+
+const photo = fill(80, 40, (x, y) => {
+  if (y < 14 && x < 26) return [250, 250, 250, 255];
+  if (y < 14) return [170, 205, 235, 255];
+  if (y < 28) return [210, 212, 216, 255];
+  const v = Math.round(80 * (1 - x / 79));
+  return [v, v, v, 255];
+});
+const photoOut = processHalftone(photo, 80, 40, {
+  ...dark, knockoutTarget: 'blacks', blackRange: 28, protectColours: 20, dpi: 300, lpi: 35, tolerance: 0.02, protect: true, removeBg: true,
+});
+const solidShare = (n, area) => n / area;
+assert.ok(solidShare(opaqueCount(photoOut.rgba, 2, 24, 2, 12, 80), 22 * 10) > 0.98, 'white stays solid');
+assert.ok(solidShare(opaqueCount(photoOut.rgba, 30, 78, 2, 12, 80), 48 * 10) > 0.98, 'light blue stays solid');
+assert.ok(solidShare(opaqueCount(photoOut.rgba, 12, 68, 18, 23, 80), 56 * 5) > 0.95, 'chrome stays solid');
+const lightFade = opaqueCount(photoOut.rgba, 2, 22, 30, 38, 80);
+const darkFade = opaqueCount(photoOut.rgba, 58, 78, 30, 38, 80);
+assert.ok(lightFade > darkFade, `only the near-black end of a photo fade is screened (${lightFade} > ${darkFade})`);
+
+const sw = 4724, sh = 5669, dw = 3937, dh = 4724;
+const noisy = new Uint8ClampedArray(sw * sh * 4);
+for (let y = 0; y < sh; y++) {
+  for (let x = 0; x < sw; x++) {
+    const i = (y * sw + x) * 4;
+    noisy[i] = 180 + ((x * 17 + y * 3) % 50);
+    noisy[i + 1] = 190 + ((x * 5 + y * 13) % 40);
+    noisy[i + 2] = 210 + ((x * 9 + y * 7) % 40);
+    noisy[i + 3] = 255;
+  }
+}
+const fitted = resampleRGBA(noisy, sw, sh, dw, dh);
+const printed = processHalftone(fitted, dw, dh, {
+  ...dark, knockoutTarget: 'blacks', blackRange: 28, protectColours: 20, dpi: 300, lpi: 35, tolerance: 0.03, protect: true, removeBg: true, smoothEdge: 0,
+});
+assert.strictEqual(printed.rgba.length, dw * dh * 4);
+const run = medianColorRun(printed.rgba, dw, dh, 6);
+assert.ok(run >= 1 && run <= 2, `a full-size noisy photo keeps a median colour run of ${run}, not a 6 px block`);
 
 console.log('halftone: ok');

@@ -33,8 +33,8 @@ export const DEFAULTS = {
   knockout: false,
   knockoutStrength: 80,
   knockoutTarget: 'blacks',
-  blackRange: 45,
-  protectColours: 32,
+  blackRange: 28,
+  protectColours: 20,
   garment: [8, 8, 10],
   dpi: 360,
   screen: 'am',
@@ -54,9 +54,9 @@ const FLAT = {
 
 export const SUBSTRATES = [
   { id: 'custom', name: 'Custom' },
-  { id: 'dtf-dark', name: 'DTF · dark garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockoutTarget: 'blacks', blackRange: 45, protectColours: 32 },
+  { id: 'dtf-dark', name: 'DTF · dark garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockoutTarget: 'blacks', blackRange: 28, protectColours: 20 },
   { id: 'dtf-light', name: 'DTF · light garment', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'light', knockoutTarget: 'tones' },
-  { id: 'remove-garment', name: 'Remove garment color', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockout: true, knockoutTarget: 'blacks', blackRange: 45, protectColours: 32 },
+  { id: 'remove-garment', name: 'Remove garment color', ...FLAT, dpi: 300, lpi: 55, angle: 22.5, output: 'original', minDotMm: 0.10, shrink: 0, specks: 12, garment: 'dark', knockout: true, knockoutTarget: 'blacks', blackRange: 28, protectColours: 20 },
   { id: 'dtf-cmyk-dark', name: 'DTF CMYK · dark', ...FLAT, dpi: 600, lpi: 40, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'dark', bgColor: [0, 0, 0], bgAuto: false, knockoutTarget: 'blacks' },
   { id: 'dtf-cmyk-light', name: 'DTF CMYK · light', ...FLAT, dpi: 600, lpi: 45, angle: 45, output: 'cmyk', minDotMm: 0.15, shrink: 1, specks: 12, garment: 'light', bgColor: [0, 0, 0], bgAuto: false, knockoutTarget: 'tones' },
   { id: 'dtg-white', name: 'DTG · white garment', ...FLAT, dpi: 300, lpi: 35, angle: 45, output: 'cmyk', minDotMm: 0.20, shrink: 0, specks: 12, garment: 'light', knockoutTarget: 'tones' },
@@ -78,6 +78,78 @@ export function outputPixels(widthIn, heightIn, dpi) {
 
 export function cellPixels(dpi, lpi) {
   return dpi / Math.max(1, lpi);
+}
+
+function cubicWeight(t) {
+  const a = Math.abs(t);
+  if (a <= 1) return 1.5 * a * a * a - 2.5 * a * a + 1;
+  if (a < 2) return -0.5 * a * a * a + 2.5 * a * a - 4 * a + 2;
+  return 0;
+}
+
+// Smooth resample. Never nearest-neighbour. Catmull-Rom, separable, in bands.
+export function resampleRGBA(src, sw, sh, dw, dh) {
+  if (sw === dw && sh === dh) return new Uint8ClampedArray(src);
+  const out = new Uint8ClampedArray(dw * dh * 4);
+  const xScale = sw / dw;
+  const yScale = sh / dh;
+  const band = 48;
+  for (let yStart = 0; yStart < dh; yStart += band) {
+    const yEnd = Math.min(dh, yStart + band);
+    const srcY0 = Math.max(0, Math.floor((yStart + 0.5) * yScale - 0.5) - 1);
+    const srcY1 = Math.min(sh, Math.floor(((yEnd - 1) + 0.5) * yScale - 0.5) + 3);
+    const rows = Math.max(1, srcY1 - srcY0);
+    const tmp = new Float32Array(dw * rows * 4);
+    for (let y = srcY0; y < srcY1; y++) {
+      const dy = y - srcY0;
+      for (let x = 0; x < dw; x++) {
+        const srcX = (x + 0.5) * xScale - 0.5;
+        const x0 = Math.floor(srcX);
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let k = -1; k <= 2; k++) {
+          const sx = Math.min(sw - 1, Math.max(0, x0 + k));
+          const wgt = cubicWeight(srcX - (x0 + k));
+          const i = (y * sw + sx) * 4;
+          r += src[i] * wgt; g += src[i + 1] * wgt; b += src[i + 2] * wgt; a += src[i + 3] * wgt;
+        }
+        const o = (dy * dw + x) * 4;
+        tmp[o] = r; tmp[o + 1] = g; tmp[o + 2] = b; tmp[o + 3] = a;
+      }
+    }
+    for (let y = yStart; y < yEnd; y++) {
+      const srcY = (y + 0.5) * yScale - 0.5;
+      const y0 = Math.floor(srcY);
+      for (let x = 0; x < dw; x++) {
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let k = -1; k <= 2; k++) {
+          const sy = Math.min(sh - 1, Math.max(srcY0, y0 + k)) - srcY0;
+          const wgt = cubicWeight(srcY - (y0 + k));
+          const i = (sy * dw + x) * 4;
+          r += tmp[i] * wgt; g += tmp[i + 1] * wgt; b += tmp[i + 2] * wgt; a += tmp[i + 3] * wgt;
+        }
+        const o = (y * dw + x) * 4;
+        out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = a;
+      }
+    }
+  }
+  return out;
+}
+
+export function medianColorRun(data, w, h, step = 1) {
+  const runs = [];
+  for (let y = 0; y < h; y += step) {
+    let run = 1;
+    for (let x = 1; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const p = i - 4;
+      if (data[i] === data[p] && data[i + 1] === data[p + 1] && data[i + 2] === data[p + 2] && data[i + 3] === data[p + 3]) run++;
+      else { runs.push(run); run = 1; }
+    }
+    runs.push(run);
+  }
+  if (!runs.length) return 0;
+  runs.sort((a, b) => a - b);
+  return runs[runs.length >> 1];
 }
 
 export function formatLength(inches, unit) {
@@ -506,17 +578,21 @@ function chromaOf(r, g, b) {
   return max < 1 ? 0 : (max - min) / max;
 }
 function blacksCoverage(r, g, b, s) {
-  const target = s.knockout && s.garment ? s.garment : [0, 0, 0];
   const lum = lumaOf(r, g, b);
   const sat = chromaOf(r, g, b);
-  const near = 1 - dist01(r, g, b, target[0], target[1], target[2]);
-  const darkness = s.knockout ? Math.max(1 - lum, near) : Math.max(1 - lum, near * 0.85);
-  const range = Math.max(0.05, (s.blackRange == null ? 45 : s.blackRange) / 100);
-  const protect = Math.max(0, (s.protectColours == null ? 32 : s.protectColours) / 100);
-  const floor = sat >= protect ? range * (0.42 + 0.2 * (1 - Math.min(1, sat))) : range;
-  const start = 1 - floor;
-  if (darkness <= start) return 1;
-  const t = (darkness - start) / Math.max(0.04, 1 - start);
+  let darkness = 1 - lum;
+  if (s.knockout && s.garment) {
+    const near = 1 - dist01(r, g, b, s.garment[0], s.garment[1], s.garment[2]);
+    darkness = Math.max(darkness, near);
+  }
+  const range = Math.max(0.04, (s.blackRange == null ? 28 : s.blackRange) / 100);
+  const protect = (s.protectColours == null ? 20 : s.protectColours) / 100;
+  // Anything at least this light stays solid: white, chrome, light blue.
+  if (lum >= range) return 1;
+  // Saturated colour stays solid until it is much closer to black.
+  if (sat >= protect && lum >= range * (1 - Math.min(0.82, sat))) return 1;
+  const floor = sat >= protect ? range * (1 - Math.min(0.82, sat)) : range;
+  const t = (floor - lum) / Math.max(0.04, floor);
   return Math.max(0, Math.min(1, 1 - t));
 }
 
@@ -605,9 +681,6 @@ function stamp(rgb, alpha, w, h, s, bg, out, hit, cell, cos, sin, scale, minCov,
   const cols = maxIx - minIx + 1;
   const rows = maxIy - minIy + 1;
   const acc = new Float64Array(cols * rows);
-  const red = new Float64Array(cols * rows);
-  const grn = new Float64Array(cols * rows);
-  const blu = new Float64Array(cols * rows);
   const cnt = new Uint32Array(cols * rows);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -618,9 +691,7 @@ function stamp(rgb, alpha, w, h, s, bg, out, hit, cell, cos, sin, scale, minCov,
       const iy = Math.floor(gy / cell) - minIy;
       if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) continue;
       const k = iy * cols + ix;
-      const cov = cmykChannel ? cmykChannel(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]) : coverageOf(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], 255, bg, s);
-      acc[k] += cov;
-      red[k] += rgb[p * 3]; grn[k] += rgb[p * 3 + 1]; blu[k] += rgb[p * 3 + 2];
+      acc[k] += cmykChannel ? cmykChannel(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]) : coverageOf(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], 255, bg, s);
       cnt[k]++;
     }
   }
@@ -660,20 +731,23 @@ function stamp(rgb, alpha, w, h, s, bg, out, hit, cell, cos, sin, scale, minCov,
         const dpx = radius * cell;
         if (dpx < (s.minDotMm / 25.4) * (s.dpi || 300)) continue;
         if (shape === 'round' || shape === 'circle') {
-          const o = 0.7 / cell;
+          const px = 2 / cell;
           let hits = 0;
-          if (inside(fx - o, fy - o)) hits++;
-          if (inside(fx + o, fy - o)) hits++;
-          if (inside(fx - o, fy + o)) hits++;
-          if (inside(fx + o, fy + o)) hits++;
-          on = hits >= 2;
+          for (let sy = 0; sy < 4; sy++) {
+            for (let sx = 0; sx < 4; sx++) {
+              const ox = ((sx + 0.5) / 4 - 0.5) * px;
+              const oy = ((sy + 0.5) / 4 - 0.5) * px;
+              if (inside(fx + ox, fy + oy)) hits++;
+            }
+          }
+          on = hits >= 8;
         } else on = inside(fx, fy);
       }
       if (!on) continue;
       hit[p] = 1;
       const o = p * 4;
       if (s.output === 'single') { out[o] = s.ink[0]; out[o + 1] = s.ink[1]; out[o + 2] = s.ink[2]; }
-      else { out[o] = red[k] / cnt[k]; out[o + 1] = grn[k] / cnt[k]; out[o + 2] = blu[k] / cnt[k]; }
+      else { out[o] = rgb[p * 3]; out[o + 1] = rgb[p * 3 + 1]; out[o + 2] = rgb[p * 3 + 2]; }
       out[o + 3] = 255;
     }
   }
