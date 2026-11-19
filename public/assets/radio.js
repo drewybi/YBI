@@ -217,6 +217,8 @@ function setVolume(next) {
   const root = document.querySelector('[data-rx]');
   const vol = root && $('[data-vol]', root);
   if (vol) vol.textContent = `${Math.round(volume * 100)}`;
+  const fill = root && $('[data-volfill]', root);
+  if (fill) fill.style.width = `${Math.round(volume * 100)}%`;
   const volKnob = root && $('[data-volknob]', root);
   if (volKnob) volKnob.setAttribute('aria-valuenow', String(Math.round(volume * 100)));
   const mute = root && $('[data-mute]', root);
@@ -273,7 +275,7 @@ function drawMeter(canvas, t) {
     const bh = Math.max(3, v * h);
     const x = i * (bw + gap);
     const y = h - bh;
-    g.fillStyle = v > 0.72 ? '#f3f1ec' : '#A7A9AC';
+    g.fillStyle = v > 0.78 ? '#d8ffe8' : '#00C853';
     g.globalAlpha = playing ? 0.95 : 0.45;
     g.fillRect(x, y, bw, bh);
   }
@@ -355,8 +357,15 @@ function paintConsole() {
   live.hidden = !playing;
   live.textContent = scanning ? 'Live · Scan' : 'Live';
   $('[data-clock]', root).textContent = clock();
+  const art = $('[data-art]', root);
+  if (art) {
+    art.textContent = current ? mark(current) : 'YB';
+    art.classList.toggle('is-live', playing);
+  }
   const vol = $('[data-vol]', root);
   if (vol) vol.textContent = muted ? 'Mute' : `${Math.round(volume * 100)}`;
+  const fill = $('[data-volfill]', root);
+  if (fill) fill.style.width = `${Math.round((muted ? 0 : volume) * 100)}%`;
   $('[data-sig]', root).classList.toggle('is-live', playing && !muted);
   $('[data-presets]', root).innerHTML = presetsHtml();
   root.querySelectorAll('[data-bank]').forEach(btn => {
@@ -367,6 +376,7 @@ function paintConsole() {
   const play = $('[data-play]', root);
   play.textContent = playing ? '❚❚' : '▶';
   play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  play.classList.toggle('is-live', playing);
   const scan = $('[data-scan]', root);
   scan.classList.toggle('is-on', scanning);
   scan.setAttribute('aria-pressed', scanning ? 'true' : 'false');
@@ -388,6 +398,7 @@ function paintConsole() {
 }
 
 const BANK_SHORT = { Favourites: 'Fav', National: 'Nat', Melbourne: 'Mel', Genre: 'Gen' };
+const GLASS = { x: 0.4234, y: 0.2917, w: 0.1078, h: 0.3306 };
 
 function applyPan(root) {
   const scene = $('[data-scene]', root);
@@ -405,18 +416,18 @@ function placeScene(root) {
   const narrow = vw < 760;
   let w, h, left, top;
   if (narrow) {
-    w = (vw * 0.9) / 0.10625;
+    w = (vw * 0.92) / GLASS.w;
     h = w * 9 / 16;
-    left = vw / 2 - (0.421875 + 0.053125) * w;
-    top = vh * 0.47 - (0.288889 + 0.166667) * h;
+    left = vw / 2 - (GLASS.x + GLASS.w / 2) * w;
+    top = vh * 0.46 - (GLASS.y + GLASS.h / 2) * h;
     root._sceneScale = 1;
   } else {
-    const s = Math.max(vw / 16, vh / 9);
+    const s = Math.max(vw / 16, vh / 9) * 1.14;
     w = 16 * s;
     h = 9 * s;
     left = (vw - w) / 2;
     top = (vh - h) / 2;
-    root._sceneScale = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 1.04;
+    root._sceneScale = 1;
   }
   scene.style.width = `${w}px`;
   scene.style.height = `${h}px`;
@@ -460,7 +471,6 @@ export async function radioPage() {
   app.innerHTML = `<div class="rx" data-rx>
     <div class="rx-scene" data-scene>
       <img class="rx-photo" alt="" src="${B}/assets/img/ybi-dash.jpg">
-      <div class="rx-badge" aria-hidden="true">YBI</div>
       <div class="rx-cluster" aria-hidden="true">
         <b>0</b>
         <span>km/h</span>
@@ -471,23 +481,26 @@ export async function radioPage() {
       <div class="rx-screen">
         <div class="rx-ui" data-ui>
           <header class="rx-bar">
-            <span class="rx-brand">YBI</span>
+            <img class="rx-logo" alt="YBI" src="${B}/assets/img/logo-white.png">
             <span class="rx-clock" data-clock>--:--</span>
-            <span class="rx-vol" data-vol>80</span>
             <span class="rx-sig" data-sig aria-hidden="true"><i></i><i></i><i></i><i></i></span>
           </header>
-          <section class="rx-now">
-            <p class="rx-kicker">On <span class="ol">air</span></p>
-            <h1 data-led>YBI Radio</h1>
-            <p class="rx-sub" data-sub>Choose a preset</p>
+          <section class="rx-hero">
+            <div class="rx-art" data-art>YB</div>
+            <div class="rx-copy">
+              <p class="rx-kicker">On <span class="ol">air</span></p>
+              <h1 data-led>YBI Radio</h1>
+              <p class="rx-sub" data-sub>Choose a preset</p>
+            </div>
             <p class="rx-live" data-live hidden>Live</p>
             <button type="button" class="rx-star" data-fav aria-label="Favourite" aria-pressed="false">☆</button>
-            <canvas class="rx-meter" data-meter width="320" height="24" aria-hidden="true"></canvas>
+            <canvas class="rx-meter" data-meter width="320" height="36" aria-hidden="true"></canvas>
           </section>
           <div class="rx-tabs" role="tablist" aria-label="Bands">
             ${BANKS.map(name => `<button type="button" role="tab" data-bank="${esc(name)}" aria-label="${esc(name)}">${esc(BANK_SHORT[name] || name)}</button>`).join('')}
           </div>
           <div class="rx-presets" data-presets></div>
+          <div class="rx-volbar" aria-hidden="true"><i data-volfill></i><span data-vol>80</span></div>
           <div class="rx-controls">
             <button type="button" data-seek="-1" aria-label="Previous station">‹‹</button>
             <button type="button" class="rx-play" data-play aria-label="Play">▶</button>
