@@ -32,9 +32,15 @@ const probed = typeof Audio !== 'undefined' ? new Audio() : null;
 if (heard) { heard.preload = 'none'; }
 if (probed) { probed.preload = 'none'; probed.crossOrigin = 'anonymous'; }
 
+const BANKS = ['National', 'Melbourne', 'Genre'];
 let current = null;
+let bank = 'National';
 let playing = false;
 let usingProbe = false;
+let muted = false;
+let scanning = false;
+let scanTimer = 0;
+let playGen = 0;
 let volume = 0.8;
 let ctx, analyser, freq;
 let raf = 0;
@@ -51,8 +57,9 @@ function remember() {
   localStorage.setItem(KEY_VOLUME, String(volume));
 }
 function applyVolume() {
-  if (heard) heard.volume = volume;
-  if (probed) probed.volume = volume;
+  const out = muted ? 0 : volume;
+  if (heard) heard.volume = out;
+  if (probed) probed.volume = out;
 }
 function liveEl() { return usingProbe ? probed : heard; }
 
@@ -79,37 +86,48 @@ function emit() {
 
 function fail(station) {
   playing = false;
+  stopScan();
   emit();
   toast(`${station.name} didn’t start. Open their player instead.`);
 }
 
 async function playCurrent() {
   if (!current || !current.stream) { toast('Choose a station'); return; }
-  const useProbe = !!current.cors;
+  const gen = ++playGen;
+  const station = current;
+  const useProbe = !!station.cors;
   const live = useProbe ? probed : heard;
   const other = useProbe ? heard : probed;
-  if (other) { other.pause(); }
+  if (other) other.pause();
   if (useProbe) wireProbe();
   usingProbe = useProbe;
   applyVolume();
-  if (!live.src || live.src !== new URL(current.stream, location.href).href) live.src = current.stream;
+  const abs = new URL(station.stream, location.href).href;
+  if (live.src !== abs) live.src = station.stream;
   playing = true;
   emit();
+  const started = () => live.currentTime > 0.05 && !live.paused;
   try {
     resumeCtx();
     await live.play();
   } catch (e) {
+    if (gen !== playGen) return;
     if (useProbe && heard) {
       probed.pause();
       usingProbe = false;
-      heard.src = current.stream;
+      heard.src = station.stream;
       applyVolume();
       try { await heard.play(); emit(); return; }
-      catch { /* fall through */ }
+      catch { /* still down */ }
     }
-    playing = false;
-    fail(current);
+    if (!started()) fail(station);
+    return;
   }
+  setTimeout(() => {
+    if (gen !== playGen || current !== station || !playing) return;
+    if (live.currentTime > 0.05) return;
+    if (live.error && live.error.code !== 1) fail(station);
+  }, 1800);
 }
 
 function stopPlayback() {
@@ -119,30 +137,85 @@ function stopPlayback() {
   emit();
 }
 
+function playable(name = bank) {
+  return STATIONS.filter(s => s.bank === name && s.stream);
+}
 function choose(station, autoplay) {
+  if (!station) return;
   if (!station.stream) {
+    stopScan();
     window.open(station.page, '_blank', 'noopener');
     toast(`${station.name} has no public stream — opened their player.`);
     return;
   }
   current = station;
+  bank = station.bank;
   remember();
   if (autoplay || playing) playCurrent();
   else emit();
 }
-
+function step(dir) {
+  const list = playable();
+  if (!list.length) return;
+  let i = list.findIndex(s => current && s.id === current.id);
+  if (i < 0) i = dir > 0 ? -1 : 0;
+  choose(list[(i + dir + list.length) % list.length], true);
+}
+function stopScan() {
+  scanning = false;
+  clearInterval(scanTimer);
+  scanTimer = 0;
+}
+function startScan() {
+  const list = playable();
+  if (!list.length) { toast('Nothing to scan in this band'); return; }
+  if (!current || current.bank !== bank || !current.stream) choose(list[0], true);
+  else if (!playing) playCurrent();
+  scanning = true;
+  clearInterval(scanTimer);
+  scanTimer = setInterval(() => { if (scanning) step(1); }, 8000);
+  emit();
+}
+function toggleScan() {
+  if (scanning) { stopScan(); emit(); }
+  else startScan();
+}
+function togglePlay() {
+  if (playing) { stopScan(); stopPlayback(); }
+  else playCurrent();
+}
+function toggleMute() {
+  muted = !muted;
+  applyVolume();
+  emit();
+}
 function setVolume(next) {
   volume = Math.min(1, Math.max(0, next));
+  if (volume > 0) muted = false;
   applyVolume();
   remember();
   emit();
 }
 
-if (heard) heard.addEventListener('error', () => { if (!usingProbe && playing) fail(current || { name: 'Station' }); });
-if (probed) probed.addEventListener('error', () => { if (usingProbe && playing) fail(current || { name: 'Station' }); });
+function onAudioError(el, probe) {
+  if (probe !== usingProbe || !playing || !current) return;
+  if (!el.error || el.error.code === 1) return;
+  if (el.currentTime > 0.05) return;
+}
+if (heard) heard.addEventListener('error', () => onAudioError(heard, false));
+if (probed) probed.addEventListener('error', () => onAudioError(probed, true));
 
 function clock() {
-  return new Date().toLocaleTimeString('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return new Date().toLocaleTimeString('en-AU', { timeZone: 'Australia/Melbourne', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function mark(station) {
+  const words = station.name.replace(/[0-9.]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'YBI';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+function hue(id) {
+  return [...id].reduce((n, c) => n + c.charCodeAt(0), 0) % 360;
 }
 
 function drawMeter(canvas, t) {
@@ -225,100 +298,129 @@ function paintMini() {
   if (!show) return;
   $('[data-mini-lamp]', el).classList.toggle('is-live', playing);
   const name = $('[data-mini-name]', el);
-  name.textContent = playing ? current.name : `${current.name} · standby`;
+  name.textContent = scanning ? `${current.name} · scan` : playing ? current.name : `${current.name} · standby`;
   const play = $('[data-mini-play]', el);
-  play.textContent = playing ? '■' : '▶';
-  play.setAttribute('aria-label', playing ? 'Stop' : 'Play');
+  play.textContent = playing ? '❚❚' : '▶';
+  play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
   const vol = $('[data-mini-vol]', el);
   if (document.activeElement !== vol) vol.value = String(Math.round(volume * 100));
 }
 
-function pad(station) {
-  const on = current && current.id === station.id;
-  const ext = !station.stream;
-  return `<button type="button" class="rx-pad${on ? ' is-on' : ''}${ext ? ' is-ext' : ''}" data-pad="${esc(station.id)}" aria-pressed="${on ? 'true' : 'false'}">
-    <b>${esc(station.name)}</b><span>${esc(ext ? 'Open player' : station.genre)}</span></button>`;
+function presetsHtml() {
+  return STATIONS.filter(s => s.bank === bank).map((s, i) => {
+    const on = current && current.id === s.id;
+    const ext = !s.stream;
+    return `<button type="button" class="rx-preset${on ? ' is-on' : ''}${ext ? ' is-ext' : ''}" data-pad="${esc(s.id)}" aria-pressed="${on ? 'true' : 'false'}"><small>P${i + 1}</small><b>${esc(s.name)}</b></button>`;
+  }).join('');
 }
 
 function paintConsole() {
   const root = document.querySelector('[data-rx]');
   if (!root) return;
-  const lamp = $('[data-onair]', root);
-  lamp.classList.toggle('is-live', playing);
-  lamp.textContent = playing ? 'ON AIR' : 'STANDBY';
-  $('[data-led]', root).textContent = current ? current.name : 'YBI RADIO';
-  $('[data-sub]', root).textContent = current ? `${current.place} · ${current.genre}` : 'Select a cart';
+  const art = $('[data-art]', root);
+  if (current) {
+    art.textContent = mark(current);
+    art.style.setProperty('--hue', String(hue(current.id)));
+    art.classList.toggle('is-live', playing);
+  } else {
+    art.textContent = 'YBI';
+    art.style.setProperty('--hue', '80');
+    art.classList.remove('is-live');
+  }
+  $('[data-led]', root).textContent = current ? current.name : 'YBI Radio';
+  $('[data-sub]', root).textContent = current ? `${current.place} · ${current.genre}` : 'Choose a preset';
+  const live = $('[data-live]', root);
+  live.hidden = !playing;
+  live.textContent = scanning ? 'Live · Scan' : 'Live';
   $('[data-clock]', root).textContent = clock();
-  const status = $('[data-status]', root);
-  status.textContent = playing ? 'ON AIR' : current ? 'CUED' : 'READY';
-  $$pads(root);
+  $('[data-sig]', root).classList.toggle('is-live', playing && !muted);
+  $('[data-presets]', root).innerHTML = presetsHtml();
+  root.querySelectorAll('[data-bank]').forEach(btn => {
+    const on = btn.dataset.bank === bank;
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const play = $('[data-play]', root);
+  play.textContent = playing ? '❚❚' : '▶';
+  play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  const scan = $('[data-scan]', root);
+  scan.classList.toggle('is-on', scanning);
+  scan.setAttribute('aria-pressed', scanning ? 'true' : 'false');
+  const mute = $('[data-mute]', root);
+  mute.classList.toggle('is-on', muted);
+  mute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+  mute.textContent = muted ? 'Muted' : 'Mute';
   const knob = $('[data-knob]', root);
   if (knob) {
     knob.style.setProperty('--ang', `${-140 + volume * 280}deg`);
     knob.setAttribute('aria-valuenow', String(Math.round(volume * 100)));
   }
   const pct = $('[data-level]', root);
-  if (pct) pct.textContent = `${Math.round(volume * 100)}`;
-}
-function $$pads(root) {
-  root.querySelectorAll('[data-pad]').forEach(btn => {
-    const on = current && btn.dataset.pad === current.id;
-    btn.classList.toggle('is-on', !!on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-
-function banks() {
-  const order = ['National', 'Melbourne', 'Genre'];
-  return order.map(name => {
-    const items = STATIONS.filter(s => s.bank === name).map(pad).join('');
-    return `<section class="rx-bank"><h2>${name}</h2><div class="rx-pads">${items}</div></section>`;
-  }).join('');
+  if (pct) pct.textContent = muted ? 'Mute' : String(Math.round(volume * 100));
 }
 
 let clockTimer = 0;
 export async function radioPage() {
   document.title = 'YBI Radio · Studio';
+  if (current) bank = current.bank;
   const app = document.getElementById('app');
   app.innerHTML = `<div class="rx" data-rx>
-    <div class="rx-desk">
-      <div class="rx-screws" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-      <div class="rx-top">
-        <div class="rx-brand"><span>YBI</span><b>Radio</b><em>Console 01 · Bendigo</em></div>
-        <div class="rx-screen">
-          <div class="rx-onair" data-onair>STANDBY</div>
-          <div class="rx-readout">
-            <div class="rx-led" data-led>YBI RADIO</div>
-            <div class="rx-sub" data-sub>Select a cart</div>
-            <canvas class="rx-meter" data-meter width="320" height="48" aria-hidden="true"></canvas>
+    <div class="rx-dash">
+      <div class="rx-bezel">
+        <div class="rx-glass">
+          <header class="rx-bar">
+            <span class="rx-clock" data-clock>--:--</span>
+            <span class="rx-temp" title="Temperature placeholder">22°</span>
+            <span class="rx-sig" data-sig aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          </header>
+          <section class="rx-now">
+            <div class="rx-art" data-art>YBI</div>
+            <div class="rx-copy">
+              <p class="rx-live" data-live hidden>Live</p>
+              <h1 data-led>YBI Radio</h1>
+              <p class="rx-sub" data-sub>Choose a preset</p>
+              <canvas class="rx-meter" data-meter width="320" height="36" aria-hidden="true"></canvas>
+            </div>
+          </section>
+          <div class="rx-tabs" role="tablist" aria-label="Bands">
+            ${BANKS.map(name => `<button type="button" role="tab" data-bank="${esc(name)}">${esc(name)}</button>`).join('')}
           </div>
-          <div class="rx-side">
-            <div class="rx-clock" data-clock>--:--:--</div>
-            <div class="rx-status" data-status>READY</div>
+          <div class="rx-presets" data-presets></div>
+          <div class="rx-controls">
+            <button type="button" data-seek="-1" aria-label="Previous station">‹‹</button>
+            <button type="button" class="rx-play" data-play aria-label="Play">▶</button>
+            <button type="button" data-scan aria-pressed="false">Scan</button>
+            <button type="button" data-seek="1" aria-label="Next station">››</button>
+            <button type="button" data-mute aria-pressed="false">Mute</button>
           </div>
+          <nav class="rx-dock" aria-label="Display">
+            <span class="is-on">Radio</span>
+            <span aria-hidden="true">Map</span>
+            <span aria-hidden="true">Phone</span>
+            <span aria-hidden="true">Climate</span>
+            <span aria-hidden="true">Apps</span>
+          </nav>
         </div>
       </div>
-      <div class="rx-bay">
-        <button type="button" class="rx-transport" data-play aria-label="Play"><span>▶</span><small>Play</small></button>
-        <button type="button" class="rx-transport" data-stop aria-label="Stop"><span>■</span><small>Stop</small></button>
-        <div class="rx-knobwrap">
-          <button type="button" class="rx-knob" data-knob aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80"><i></i></button>
-          <div class="rx-knobcap"><b data-level>80</b><small>Level</small></div>
-        </div>
+      <div class="rx-knobrow">
+        <button type="button" class="rx-knob" data-knob aria-label="Volume" aria-valuemin="0" aria-valuemax="100"><i></i></button>
+        <div class="rx-knobcap"><b data-level>80</b><small>Volume</small></div>
       </div>
-      ${banks()}
     </div>
   </div>`;
   const root = $('[data-rx]');
   watchMeter($('[data-meter]', root));
-  $('[data-play]', root).onclick = () => playCurrent();
-  $('[data-stop]', root).onclick = () => stopPlayback();
-  root.querySelectorAll('[data-pad]').forEach(btn => btn.onclick = () => {
-    const station = byId(btn.dataset.pad);
-    if (station) choose(station, true);
+  root.addEventListener('click', e => {
+    const pad = e.target.closest('[data-pad]');
+    if (pad) { stopScan(); const station = byId(pad.dataset.pad); if (station) choose(station, true); return; }
+    const tab = e.target.closest('[data-bank]');
+    if (tab) { stopScan(); bank = tab.dataset.bank; emit(); return; }
+    if (e.target.closest('[data-seek]')) { stopScan(); step(Number(e.target.closest('[data-seek]').dataset.seek)); return; }
+    if (e.target.closest('[data-play]')) { togglePlay(); return; }
+    if (e.target.closest('[data-scan]')) { toggleScan(); return; }
+    if (e.target.closest('[data-mute]')) { toggleMute(); return; }
   });
   const knob = $('[data-knob]', root);
-  knob.setAttribute('aria-valuenow', String(Math.round(volume * 100)));
   let drag = null;
   knob.addEventListener('pointerdown', e => {
     drag = { y: e.clientY, v: volume };
@@ -334,7 +436,7 @@ export async function radioPage() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { e.preventDefault(); setVolume(volume - 0.05); }
   });
   clearInterval(clockTimer);
-  clockTimer = setInterval(() => { const c = $('[data-clock]'); if (c) c.textContent = clock(); }, 1000);
+  clockTimer = setInterval(() => { const c = document.querySelector('[data-rx] [data-clock]'); if (c) c.textContent = clock(); }, 1000);
   paintConsole();
   paintMini();
 }
@@ -345,6 +447,7 @@ export function bootRadio() {
   volume = savedVolume();
   applyVolume();
   current = byId(localStorage.getItem(KEY_STATION) || '');
+  if (current) bank = current.bank;
   ensureMini();
   paintMini();
 }
