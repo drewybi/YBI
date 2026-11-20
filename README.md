@@ -27,6 +27,8 @@ The app is mounted at **`/proof`** by default (`BASE_PATH`). Each job's page is 
 
 `/` redirects to `/proof`. The server accepts requests **with or without** the `/proof` prefix, so a reverse proxy can either keep or strip it. Set `BASE_PATH=` (empty) to mount the app at the root instead, for example on a `proofs.` subdomain.
 
+YBI FX is the same service, under **`/fx`**. On proofs.ybicreative.com.au the studio is `/fx/proof/studio` and a client proof is `/fx/proof/{jobNumber}?k=<token>` (quotes are `/fx/proof/quote/{id}?k=<token>`). FX jobs and quotes are stored in `DATA_DIR/fx` (or `data/fx`), separate from YBI. The FX studio cookie is scoped to `/fx`. Its password is `STUDIO_PASSWORD_FX`, and it uses `STUDIO_PASSWORD` only when that variable is unset. Leave `DEMO_SEED` unset in production so FX starts with an empty job list.
+
 ## Run it
 
 ```bash

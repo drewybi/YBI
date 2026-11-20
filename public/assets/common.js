@@ -3,9 +3,9 @@ export const B = (typeof window !== 'undefined' && window.BASE) || '';
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const STATUS = { draft: 'No proof yet', awaiting_review: 'Awaiting review', changes_requested: 'Changes requested', approved: 'Approved' };
+export const STATUS = { draft: 'No proof yet', awaiting_review: 'Awaiting review', changes_requested: 'Changes requested', approved: 'Approved', quoting: 'Quote awaiting approval', quote_changes: 'Quote alterations' };
 export const chip = s => `<span class="chip chip--${s}">${STATUS[s] || s}</span>`;
-export const fmtDate = iso => iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+export const fmtDate = iso => iso ? new Date(iso).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 export const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
 
 export async function api(url, opts = {}) {
@@ -76,8 +76,12 @@ export function pdfStackGap(stageHeight, pageHeight, nextPageHeight = pageHeight
 // Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
 export function engineBand(inner) {
   const src = `${B}/assets/img`;
+  const fx = document.documentElement.dataset.brand === 'fx';
+  const media = fx
+    ? `<img class="eband__still" src="${src}/fx-hero.webp" width="2139" height="1800" alt="">`
+    : `<img class="eband__still" src="${src}/engine-1280.webp" srcset="${src}/engine-640.webp 640w, ${src}/engine-1280.webp 1280w, ${src}/engine-1920.webp 1920w" sizes="100vw" width="1280" height="720" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="metadata" poster="${src}/engine-1280.webp"><source src="${B}/assets/video/engine.mp4" type="video/mp4"></video>`;
   return `<section class="eband">
-    <div class="eband__media" aria-hidden="true"><img class="eband__still" src="${src}/engine-1280.webp" srcset="${src}/engine-640.webp 640w, ${src}/engine-1280.webp 1280w, ${src}/engine-1920.webp 1920w" sizes="100vw" width="1280" height="720" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="metadata" poster="${src}/engine-1280.webp"><source src="${B}/assets/video/engine.mp4" type="video/mp4"></video></div>
+    <div class="eband__media" aria-hidden="true">${media}</div>
     <div class="wrap eband__in">${inner}</div>
   </section>`;
 }

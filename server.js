@@ -9,17 +9,111 @@ const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { buildChangesPdf } = require('./changes-pdf');
 
+const { AsyncLocalStorage } = require('async_hooks');
+const { buildQuotePdf } = require('./quote-pdf');
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
-const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
-const JOBS = path.join(DATA, 'jobs');
-const FILES = path.join(DATA, 'files');
+const brandAls = new AsyncLocalStorage();
+
+// YBI FX is the same service, under /fx. /proof (and every other path) stays YBI Creative.
+// FX files sit in DATA_DIR/fx on the existing disk. No host switch and no second service.
+const FX_PREFIX = '/fx';
+function requestPath(req) {
+  try { return decodeURIComponent(new URL(req.url || '/', 'http://x').pathname); }
+  catch { return '/'; }
+}
+function isFxPath(pathname) {
+  return pathname === FX_PREFIX || pathname.startsWith(FX_PREFIX + '/');
+}
+function activeBrand() {
+  const store = brandAls.getStore();
+  if (store && (store.brand === 'fx' || store.brand === 'creative')) return store.brand;
+  return 'creative';
+}
+function brandForRequest(req) {
+  return isFxPath(requestPath(req)) ? 'fx' : 'creative';
+}
+function creativeRoot() {
+  return process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
+}
+function dataRoot() {
+  if (activeBrand() === 'fx') return path.join(creativeRoot(), 'fx');
+  return creativeRoot();
+}
+const jobsDir = () => path.join(dataRoot(), 'jobs');
+const filesDir = () => path.join(dataRoot(), 'files');
+const settingsPath = () => path.join(dataRoot(), 'settings.json');
+const logPath = () => path.join(dataRoot(), 'notifications.log');
+const calPath = () => path.join(dataRoot(), 'calendar-events.json');
+const quotePath = () => path.join(dataRoot(), 'quotes.json');
+function studioPassword() {
+  if (activeBrand() === 'fx' && process.env.STUDIO_PASSWORD_FX) return process.env.STUDIO_PASSWORD_FX;
+  return process.env.STUDIO_PASSWORD || 'ybi-proof';
+}
+function studioCookieName() { return activeBrand() === 'fx' ? 'ybi_fx_studio' : 'ybi_studio'; }
+const brandSecrets = new Map();
+function brandSecret() {
+  const root = dataRoot();
+  if (brandSecrets.has(root)) return brandSecrets.get(root);
+  fs.mkdirSync(path.join(root, 'jobs'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'files'), { recursive: true });
+  const secretFile = path.join(root, 'secret.key');
+  if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(32).toString('hex'));
+  const secret = fs.readFileSync(secretFile, 'utf8').trim();
+  brandSecrets.set(root, secret);
+  return secret;
+}
+function studioSession() {
+  return crypto.createHmac('sha256', brandSecret()).update('studio:' + studioPassword()).digest('hex');
+}
+function phoneHref(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('0')) return `tel:+61${digits.slice(1)}`;
+  if (digits.startsWith('61')) return `tel:+${digits}`;
+  return digits ? `tel:+${digits}` : '';
+}
+// FX contact defaults match ybifx.com (fx@ybicreative.com.au, +61 3 5444 2127,
+// 51 Pratts Park Road, Bendigo). Override with FX_EMAIL, FX_PHONE, FX_ADDRESS.
+// YBI Proofs does not publish an ABN, so none is invented here.
+function fxContact() {
+  return {
+    email: process.env.FX_EMAIL || 'fx@ybicreative.com.au',
+    phone: process.env.FX_PHONE || '(03) 5444 2127',
+    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Bendigo VIC 3551'
+  };
+}
+function publicBrand() {
+  const fx = activeBrand() === 'fx';
+  const contact = fxContact();
+  return {
+    id: fx ? 'fx' : 'creative',
+    name: fx ? 'YBI FX' : 'YBI Creative',
+    product: fx ? 'YBI FX Proofs' : 'YBI Proofs',
+    site: fx ? 'https://www.ybifx.com' : 'https://www.ybicreative.com.au',
+    siteLabel: fx ? 'ybifx.com' : 'ybicreative.com.au',
+    email: fx ? contact.email : 'website@ybicreative.com.au',
+    phone: fx ? contact.phone : '(03) 5444 2127',
+    address: fx ? contact.address : '51 Pratts Park Road, Bendigo VIC 3551',
+    logo: `${base()}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
+    lockup: fx ? 'Truck Art' : 'Brand Engineering',
+    confirmTo: fx ? contact.email : 'website@ybicreative.com.au'
+  };
+}
+
 const PORT = +process.env.PORT || 4321;
 const HOST = process.env.HOST || '0.0.0.0';
-const STUDIO_PASSWORD = process.env.STUDIO_PASSWORD || 'ybi-proof';
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin only, e.g. https://www.ybicreative.com.au
 // Path prefix the app is mounted at (default /proof). Use BASE_PATH= (empty) to mount at the root.
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
+// Public mount for the request's brand. FX mirrors YBI under /fx, so /proof/studio is /fx/proof/studio.
+function base() {
+  if (activeBrand() !== 'fx') return B;
+  return B ? FX_PREFIX + B : FX_PREFIX;
+}
+function cookiePath() {
+  if (activeBrand() === 'fx') return FX_PREFIX;
+  return B || '/';
+}
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
 const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'halftone', 'radio', 'login', 'logout', 'favicon.ico', 'robots.txt']);
@@ -31,13 +125,7 @@ const PROOF_TYPE_ERROR = 'Proofs must be PDF, JPG, PNG, or a ZIP.';
 const PROOF_EMPTY_ERROR = 'Choose a PDF, one or more JPG or PNG files, or a ZIP.';
 const ZIP_ALONE = 'A ZIP is one file per version. Upload it on its own, or upload JPG and PNG files together.';
 
-for (const d of [DATA, JOBS, FILES]) fs.mkdirSync(d, { recursive: true });
-const SECRET_FILE = path.join(DATA, 'secret.key');
-if (!fs.existsSync(SECRET_FILE)) fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'));
-const SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-const SESSION = crypto.createHmac('sha256', SECRET).update('studio:' + STUDIO_PASSWORD).digest('hex');
-const SETTINGS_FILE = path.join(DATA, 'settings.json');
-const LOG_FILE = path.join(DATA, 'notifications.log');
+brandSecret();
 
 // ---------- helpers ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.webm': 'video/webm', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.zip': 'application/zip', '.ai': 'application/postscript', '.eps': 'application/postscript' };
@@ -361,12 +449,16 @@ async function addUploadedVersion(req, res, job, note, incoming) {
     return err(res, check.status, check.error);
   }
   const fresh = await loadJob(job.id);
+  if (fresh && fresh.phase === 'quoting') {
+    await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
+    return err(res, 409, 'Approve the quote before uploading artwork proofs.');
+  }
   if (!fresh) {
     await Promise.all(incoming.map(f => fsp.rm(f.storedPath, { force: true })));
     return err(res, 404, 'No job with that number.');
   }
   const n = (fresh.versions.length ? fresh.versions[fresh.versions.length - 1].n : 0) + 1;
-  const dir = path.join(FILES, fresh.id);
+  const dir = path.join(filesDir(), fresh.id);
   const committed = [];
   const ordered = [...incoming].sort((a, b) => compareFileNames(a.originalName, b.originalName));
   const version = { n, kind: check.kind, originalName: ordered[0].originalName, stored: '', size: 0, uploadedAt: now(), studioNote: note, feedback: [] };
@@ -393,10 +485,10 @@ async function addUploadedVersion(req, res, job, note, incoming) {
 }
 
 // ---------- storage ----------
-const jobPath = jid => path.join(JOBS, jid + '.json');
+const jobPath = jid => path.join(jobsDir(), jid + '.json');
 async function loadJob(jid) { if (!/^[a-f0-9]{12}$/.test(jid)) return null; try { return JSON.parse(await fsp.readFile(jobPath(jid), 'utf8')); } catch { return null; } }
 async function saveJob(job) { job.access = 'private'; job.updatedAt = now(); const t = jobPath(job.id) + '.tmp'; await fsp.writeFile(t, JSON.stringify(job, null, 2)); await fsp.rename(t, jobPath(job.id)); }
-async function allJobs() { const fsn = (await fsp.readdir(JOBS)).filter(f => f.endsWith('.json')); const jobs = (await Promise.all(fsn.map(f => loadJob(f.slice(0, -5))))).filter(Boolean); await Promise.all(jobs.map(ensurePrivate)); return jobs; }
+async function allJobs() { const fsn = (await fsp.readdir(jobsDir())).filter(f => f.endsWith('.json')); const jobs = (await Promise.all(fsn.map(f => loadJob(f.slice(0, -5))))).filter(Boolean); await Promise.all(jobs.map(ensurePrivate)); return jobs; }
 async function jobByToken(tok) { if (!tok || tok.length < 10) return null; return (await allJobs()).find(j => j.token === tok) || null; }
 async function jobByNumber(num) { const n = norm(num); if (!n) return null; return (await allJobs()).find(j => norm(j.jobNumber) === n) || null; }
 async function jobByRef(key) {
@@ -433,6 +525,7 @@ function cleanStickies(raw) {
   return out;
 }
 function status(job) {
+  if (job.phase === 'quoting') return job.quoteState === 'changes' ? 'quote_changes' : 'quoting';
   if (!job.versions || !job.versions.length) return 'draft';
   const d = latestDecision(job);
   return d ? (d.type === 'approve' ? 'approved' : 'changes_requested') : 'awaiting_review';
@@ -512,7 +605,7 @@ function syncUnread(job) {
   if (!latest || (job.seenAt && latest <= job.seenAt)) job.unread = false;
 }
 async function removeVersionFiles(job, version) {
-  const root = path.resolve(FILES, job.id);
+  const root = path.resolve(filesDir(), job.id);
   const rels = [];
   if (version && version.stored) rels.push(version.stored);
   for (const f of versionPages(version)) rels.push(f.stored);
@@ -551,12 +644,13 @@ function parseNotifyAddresses(raw) {
 function fallbackNotifyEmail() {
   const env = String(process.env.NOTIFY_EMAIL || '').trim();
   if (parseNotifyAddresses(env).length) return env;
+  if (activeBrand() === 'fx') return process.env.FX_EMAIL || 'fx@ybicreative.com.au';
   return DEFAULT_NOTIFY_EMAIL;
 }
 
 async function readSettingsFile() {
   try {
-    const s = JSON.parse(await fsp.readFile(SETTINGS_FILE, 'utf8'));
+    const s = JSON.parse(await fsp.readFile(settingsPath(), 'utf8'));
     if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
     return s;
   } catch {
@@ -584,7 +678,6 @@ async function notifyRecipients() {
 // as { events, jobOverrides }. Proof jobs are not copied into events: the list is derived
 // from the job files, with per-job colour, calendarDate and dayOrder kept in jobOverrides.
 // dayOrder is a whole number (lower first) for chips that share a calendar day.
-const CAL_FILE = path.join(DATA, 'calendar-events.json');
 const CAL_COLOURS = ['red', 'blue', 'green', 'yellow', 'purple', 'grey'];
 const CAL_COLOUR_SET = new Set(CAL_COLOURS);
 const COLOUR_ERR = 'Pick a colour: red, blue, green, yellow, purple or grey.';
@@ -721,14 +814,14 @@ function jobEvent(job, override) {
     notes: '',
     colour: (override && normalColour(override.colour)) || 'grey',
     dayOrder: override ? storedDayOrder(override.dayOrder) : null,
-    href: `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`,
+    href: `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };
 }
 async function readCalendarDoc() {
   let raw;
-  try { raw = await fsp.readFile(CAL_FILE, 'utf8'); }
+  try { raw = await fsp.readFile(calPath(), 'utf8'); }
   catch (e) { if (e.code === 'ENOENT') return { events: [], jobOverrides: {} }; throw e; }
   let data;
   try { data = JSON.parse(raw); }
@@ -752,9 +845,9 @@ async function readCalendarDoc() {
   return { events, jobOverrides };
 }
 async function writeCalendarDoc(doc) {
-  const tmp = CAL_FILE + '.tmp';
+  const tmp = calPath() + '.tmp';
   await fsp.writeFile(tmp, JSON.stringify({ events: doc.events, jobOverrides: doc.jobOverrides || {} }, null, 2));
-  await fsp.rename(tmp, CAL_FILE);
+  await fsp.rename(tmp, calPath());
 }
 async function calendarEntries(from, to) {
   const doc = await readCalendarDoc();
@@ -994,7 +1087,6 @@ async function handleCalendar(req, res, p, m, u) {
 // A blank quantity is stored as null and counted as 1. Totals are calculated on read
 // (subtotal ex GST, GST 10% rounded to the nearest cent, total inc GST). Studio login only.
 const quoteMathReady = import(pathToFileURL(path.join(__dirname, 'public/assets/quote-math.mjs')).href);
-const QUOTE_FILE = path.join(DATA, 'quotes.json');
 let quoteChain = Promise.resolve();
 function withQuotes(fn) {
   const run = quoteChain.then(fn, fn);
@@ -1004,7 +1096,7 @@ function withQuotes(fn) {
 async function readQuotesDoc() {
   const math = await quoteMathReady;
   let raw;
-  try { raw = await fsp.readFile(QUOTE_FILE, 'utf8'); }
+  try { raw = await fsp.readFile(quotePath(), 'utf8'); }
   catch (e) { if (e.code === 'ENOENT') return { quotes: [] }; throw e; }
   let data;
   try { data = JSON.parse(raw); }
@@ -1050,6 +1142,10 @@ async function readQuotesDoc() {
       lines,
       responses: cleanQuoteResponses(q.responses),
       ...(jobId ? { jobId } : {}),
+      notes: String(q.notes || '').trim().slice(0, 4000),
+      terms: String(q.terms || '').trim().slice(0, 4000),
+      version: Number.isInteger(q.version) && q.version > 0 && q.version < 100 ? q.version : 1,
+      revisions: Array.isArray(q.revisions) ? q.revisions.slice(-12) : [],
       createdAt: typeof q.createdAt === 'string' ? q.createdAt : now(),
       updatedAt: typeof q.updatedAt === 'string' ? q.updatedAt : now()
     });
@@ -1057,9 +1153,9 @@ async function readQuotesDoc() {
   return { quotes };
 }
 async function writeQuotesDoc(doc) {
-  const tmp = QUOTE_FILE + '.tmp';
+  const tmp = quotePath() + '.tmp';
   await fsp.writeFile(tmp, JSON.stringify({ quotes: doc.quotes }, null, 2));
-  await fsp.rename(tmp, QUOTE_FILE);
+  await fsp.rename(tmp, quotePath());
 }
 async function cleanQuote(b) {
   const math = await quoteMathReady;
@@ -1085,7 +1181,9 @@ async function cleanQuote(b) {
     if (price === undefined) return { error: `Line ${i + 1} price isn’t valid.` };
     lines.push({ description: lineDescription, qty: math.milliToQty(milli), price });
   }
-  return { client, contactName, date, description, validity, lines };
+  const notes = String(b.notes ?? '').trim().slice(0, 4000);
+  const terms = String(b.terms ?? '').trim().slice(0, 4000);
+  return { client, contactName, date, description, validity, lines, notes, terms };
 }
 function publicQuote(q, math) {
   const lines = q.lines.map(line => ({
@@ -1105,6 +1203,9 @@ function publicQuote(q, math) {
     subtotal: totals.subtotal,
     gst: totals.gst,
     total: totals.total,
+    notes: q.notes || '',
+    terms: q.terms || '',
+    version: q.version || 1,
     createdAt: q.createdAt,
     updatedAt: q.updatedAt
   };
@@ -1156,7 +1257,7 @@ async function studioQuote(req, q, math) {
     ...pub,
     status: quoteStatus(q),
     responses: publicResponses(q),
-    clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
+    clientUrl: `${origin(req)}${base()}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
     ...(q.jobId ? { jobId: q.jobId } : {}),
     ...(job && job.jobNumber ? { jobNumber: job.jobNumber } : {})
   };
@@ -1211,7 +1312,7 @@ async function handleQuotes(req, res, p, m) {
       let nid = id(8);
       while (doc.quotes.some(q => q.id === nid)) nid = id(8);
       const stamp = now();
-      const quote = { id: nid, token: token(), responses: [], ...cleaned, createdAt: stamp, updatedAt: stamp };
+      const quote = { id: nid, token: token(), responses: [], version: 1, revisions: [], ...cleaned, createdAt: stamp, updatedAt: stamp };
       doc.quotes.push(quote);
       await writeQuotesDoc(doc);
       return quote;
@@ -1232,8 +1333,27 @@ async function handleQuotes(req, res, p, m) {
       const i = doc.quotes.findIndex(q => q.id === qid);
       if (i < 0) return { status: 404, error: 'No quote with that id.' };
       const prev = doc.quotes[i];
-      const next = { ...prev, ...cleaned, id: prev.id, createdAt: prev.createdAt, updatedAt: now() };
+      const next = { ...prev, ...cleaned, id: prev.id, token: prev.token, responses: prev.responses || [], createdAt: prev.createdAt, updatedAt: now() };
       if (prev.jobId) next.jobId = prev.jobId;
+      const changed = JSON.stringify(prev.lines) !== JSON.stringify(cleaned.lines)
+        || prev.description !== cleaned.description
+        || (prev.notes || '') !== cleaned.notes
+        || (prev.terms || '') !== cleaned.terms;
+      const altered = (prev.responses || []).some(r => r.type === 'changes');
+      if (changed && altered) {
+        next.version = (prev.version || 1) + 1;
+        next.revisions = [...(prev.revisions || []), {
+          version: prev.version || 1,
+          lines: prev.lines,
+          description: prev.description,
+          notes: prev.notes || '',
+          terms: prev.terms || '',
+          at: now()
+        }].slice(-12);
+      } else {
+        next.version = prev.version || 1;
+        next.revisions = prev.revisions || [];
+      }
       doc.quotes[i] = next;
       await writeQuotesDoc(doc);
       return { quote: next };
@@ -1269,7 +1389,14 @@ function quoteJobFields(quote) {
 async function createJobFromQuote(quote) {
   if (quote.jobId) {
     const linked = await loadJob(quote.jobId);
-    if (linked) return linked;
+    if (linked) {
+      if (linked.phase === 'quoting') {
+        linked.phase = 'proofs';
+        linked.quoteState = 'accepted';
+        await saveJob(linked);
+      }
+      return linked;
+    }
   }
   const jobs = await allJobs();
   const existing = jobs.find(j => j.quoteId === quote.id);
@@ -1293,9 +1420,48 @@ async function createJobFromQuote(quote) {
     createdAt: now(),
     versions: []
   };
-  await fsp.mkdir(path.join(FILES, job.id), { recursive: true });
+  await fsp.mkdir(path.join(filesDir(), job.id), { recursive: true });
   await saveJob(job);
   return job;
+}
+
+function addValidity(date, validity) {
+  const [y, m, d] = String(date || '').split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (validity === '7 days') dt.setUTCDate(dt.getUTCDate() + 7);
+  else if (validity === '6 months') dt.setUTCMonth(dt.getUTCMonth() + 6);
+  else dt.setUTCDate(dt.getUTCDate() + 30);
+  return dt.toISOString().slice(0, 10);
+}
+async function quoteSheet(quote, math) {
+  const pub = publicQuote(quote, math);
+  const job = quote.jobId ? await loadJob(quote.jobId) : null;
+  const jobNumber = job && job.jobNumber ? job.jobNumber : '';
+  return {
+    ...pub,
+    jobNumber,
+    clientEmail: (job && job.clientEmail) || '',
+    quoteNo: `Q-${jobNumber || String(quote.id).slice(0, 6).toUpperCase()}-V${quote.version || 1}`,
+    validUntil: addValidity(quote.date, quote.validity)
+  };
+}
+async function clientQuotePayload(quote, math) {
+  const view = clientQuote(quote, math);
+  if (activeBrand() !== 'fx') return view;
+  const sheet = await quoteSheet(quote, math);
+  return { ...view, jobNumber: sheet.jobNumber, clientEmail: sheet.clientEmail, quoteNo: sheet.quoteNo, validUntil: sheet.validUntil };
+}
+async function sendQuotePdf(req, res, qid, k, studio) {
+  const math = await quoteMathReady;
+  const quote = (await loadQuotes()).quotes.find(q => q.id === qid);
+  if (!quote) return err(res, 404, 'No quote with that id.');
+  if (!studio && k !== quote.token) return err(res, 403, 'This quote is private — please use the secure link YBI sent you.');
+  const pub = await quoteSheet(quote, math);
+  const pdf = await buildQuotePdf(pub, publicBrand());
+  const fname = `${activeBrand() === 'fx' ? 'YBI-FX' : 'YBI'}-quote-${safeName(quote.client)}.pdf`;
+  res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+  return req.method === 'HEAD' ? res.end() : res.end(pdf);
 }
 
 async function handlePublicQuote(req, res, qid, action, m, k) {
@@ -1305,7 +1471,7 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
   const quote = doc.quotes.find(q => q.id === qid);
   if (!quote) { miss(req); return err(res, 404, 'We couldn’t find that quote.'); }
   if (k !== quote.token) { miss(req); return err(res, 403, 'This quote is private — please use the secure link YBI sent you.'); }
-  if (!action && m === 'GET') return send(res, 200, clientQuote(quote, math));
+  if (!action && m === 'GET') return send(res, 200, await clientQuotePayload(quote, math));
   if (action === '/decision' && m === 'POST') {
     const b = await readJSON(req);
     if (!b || !['accept', 'changes'].includes(b.type)) return err(res, 400, 'Bad action');
@@ -1324,6 +1490,12 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
       if (b.type === 'accept') {
         job = await createJobFromQuote(current);
         current.jobId = job.id;
+      } else if (current.jobId) {
+        const linked = await loadJob(current.jobId);
+        if (linked && linked.phase === 'quoting') {
+          linked.quoteState = 'changes';
+          await saveJob(linked);
+        }
       }
       const response = { id: id(6), type: b.type, name, note, at: now() };
       current.responses = [...(current.responses || []), response];
@@ -1333,13 +1505,13 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
     });
     if (result.error) return err(res, result.status, result.error);
     await notifyQuote(req, result.quote, result.response, result.job);
-    return send(res, 200, clientQuote(result.quote, math));
+    return send(res, 200, await clientQuotePayload(result.quote, math));
   }
   return err(res, 405, 'Method not allowed');
 }
 
 const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-const numPath = job => `${B}/${encodeURIComponent(job.jobNumber || job.id)}`;
+const numPath = job => `${base()}/${encodeURIComponent(job.jobNumber || job.id)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
 function secureUrl(req, job) { return `${origin(req)}${numPath(job)}?k=${job.token}`; }
 function publicVersion(job, v, q) {
@@ -1358,11 +1530,11 @@ function publicJob(job, k) {
   const q = k ? `?k=${encodeURIComponent(k)}` : '';
   return {
     jobNumber: job.jobNumber, description: job.description, clientName: job.clientName, clientCompany: job.clientCompany,
-    status: status(job), createdAt: job.createdAt,
+    status: status(job), createdAt: job.createdAt, quoting: job.phase === 'quoting',
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), phase: job.phase === 'quoting' ? 'quoting' : 'proofs', ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1374,13 +1546,14 @@ async function deliverStaffMail({ subject, text, replyTo }) {
   const to = list.join(', ');
   if (!mailer) return;
   if (!to) {
-    await fsp.appendFile(LOG_FILE, `[mail] skipped — no valid addresses in ${JSON.stringify(raw)}\n`);
+    await fsp.appendFile(logPath(), `[mail] skipped — no valid addresses in ${JSON.stringify(raw)}\n`);
     return;
   }
   // fire-and-forget so the client never waits on SMTP
-  mailer.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER || 'proofs@ybicreative.com.au', to, replyTo: replyTo || undefined, subject, text })
-    .then(() => fsp.appendFile(LOG_FILE, `[mail] sent to ${to}\n`))
-    .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(LOG_FILE, `[mail] FAILED to ${to}: ${e.message}\n`); });
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || (activeBrand() === 'fx' ? `YBI FX Proofs <${process.env.FX_EMAIL || 'fx@ybicreative.com.au'}>` : 'proofs@ybicreative.com.au');
+  mailer.sendMail({ from, to, replyTo: replyTo || undefined, subject, text })
+    .then(() => fsp.appendFile(logPath(), `[mail] sent to ${to}\n`))
+    .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(logPath(), `[mail] FAILED to ${to}: ${e.message}\n`); });
 }
 
 function audMail(cents) {
@@ -1393,8 +1566,8 @@ async function notifyQuote(req, quote, response, job) {
   const pub = publicQuote(quote, math);
   const jobLine = String(quote.description || '').split('\n')[0].trim();
   const label = response.type === 'accept' ? 'CONFIRMED' : 'CHANGES REQUESTED';
-  const studioLink = origin(req) + `${B}/studio/quote/${quote.id}`;
-  const proofLink = job ? origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}` : '';
+  const studioLink = origin(req) + `${base()}/studio/quote/${quote.id}`;
+  const proofLink = job ? origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}` : '';
   const lines = [
     `${label} — Quote for ${quote.client}`, '',
     `Client: ${quote.client}`,
@@ -1408,17 +1581,17 @@ async function notifyQuote(req, quote, response, job) {
     ...(job ? [`Proof job number: ${job.jobNumber || '(not set — add it in the studio)'}`, `Open job in studio: ${proofLink}`] : []),
     `Open in studio: ${studioLink}`
   ].join('\n');
-  await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
+  await fsp.appendFile(logPath(), `\n==== ${now()} ====\n${lines}\n`);
   const subjectJob = jobLine || quote.client;
   await deliverStaffMail({
-    subject: response.type === 'accept' ? `[YBI Quote] CONFIRMED: ${subjectJob}` : `[YBI Quote] CHANGES: ${subjectJob}`,
+    subject: `${activeBrand() === 'fx' ? '[YBI FX Quote]' : '[YBI Quote]'} ${response.type === 'accept' ? 'CONFIRMED' : 'CHANGES'}: ${subjectJob}`,
     text: lines
   });
 }
 
 async function notify(req, job, fb, v) {
   const label = fb.type === 'approve' ? 'APPROVED' : 'CHANGES REQUESTED';
-  const studioLink = origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`;
+  const studioLink = origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber)}`;
   const lines = [
     `${label} — Job ${job.jobNumber} (V${v.n})`, '',
     `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
@@ -1428,14 +1601,15 @@ async function notify(req, job, fb, v) {
     fb.attachments.length ? `Attachments:\n${fb.attachments.map(a => ' - ' + a.originalName + ': ' + origin(req) + `${numPath(job)}/file/a${a.id}?k=${job.token}`).join('\n')}\n` : '',
     `Open in studio: ${studioLink}`
   ].join('\n');
-  await fsp.appendFile(LOG_FILE, `\n==== ${now()} ====\n${lines}\n`);
-  await deliverStaffMail({ subject: `[YBI Proof] ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines, replyTo: job.clientEmail || undefined });
+  await fsp.appendFile(logPath(), `\n==== ${now()} ====\n${lines}\n`);
+  await deliverStaffMail({ subject: `${activeBrand() === 'fx' ? '[YBI FX Proof]' : '[YBI Proof]'} ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines, replyTo: job.clientEmail || undefined });
 }
 
 // ---------- auth ----------
 const cookies = req => Object.fromEntries((req.headers.cookie || '').split(';').map(c => c.trim().split('=').map(decodeURIComponent)).filter(p => p[0]));
-const isStudio = req => cookies(req).ybi_studio === SESSION || req.headers['x-studio-key'] === STUDIO_PASSWORD;
-const setCookie = () => `ybi_studio=${SESSION}; Path=${B || '/'}; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}`;
+const isStudio = req => cookies(req)[studioCookieName()] === studioSession() || req.headers['x-studio-key'] === studioPassword();
+const setCookie = () => `${studioCookieName()}=${studioSession()}; Path=${cookiePath()}; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}`;
+const clearCookie = () => `${studioCookieName()}=; Path=${cookiePath()}; Max-Age=0`;
 
 // ---------- static ----------
 async function serveFile(req, res, file, extra = {}) {
@@ -1446,9 +1620,27 @@ async function serveFile(req, res, file, extra = {}) {
   fs.createReadStream(file).pipe(res);
 }
 const htmlCache = {};
+function fxHtml(html) {
+  const c = fxContact();
+  return html
+    .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
+    .replaceAll('width="300" height="126" ', '')
+    .replaceAll('assets/img/engine-640.webp', 'assets/img/fx-hero.webp')
+    .replaceAll('assets/img/engine-1280.webp', 'assets/img/fx-hero.webp')
+    .replaceAll('assets/img/engine-1920.webp', 'assets/img/fx-hero.webp')
+    .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')
+    .replaceAll('YBI Creative', 'YBI FX')
+    .replaceAll('Brand<br>Engineering', 'Truck Art')
+    .replaceAll('Brand Engineering', 'Truck Art')
+    .replaceAll('website@ybicreative.com.au', c.email)
+    .replaceAll('(03) 5444 2127', c.phone)
+    .replaceAll('tel:+61354442127', phoneHref(c.phone))
+    .replaceAll('>ybicreative.com.au<', '>ybifx.com<');
+}
 async function servePage(req, res, name, code = 200) {
   // HTML templates use {{B}} for the mount path, so the app works at /proof (or anywhere)
-  const html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', B);
+  let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', base()).replaceAll('{{BRAND}}', activeBrand());
+  if (activeBrand() === 'fx') html = fxHtml(html);
   res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'same-origin' });
   res.end(html);
 }
@@ -1464,31 +1656,35 @@ const back = (res, loc, extra = {}) => send(res, 302, '', { Location: loc, ...ex
 async function handle(req, res) {
   const u = new URL(req.url, 'http://x'); let p; try { p = decodeURIComponent(u.pathname); } catch { return err(res, 400, 'Bad URL'); }
   const m = req.method; let r;
+  brandSecret();
 
+  // /fx mirrors the YBI mount. /fx/proof/studio is FX; /proof/studio stays YBI.
+  if (isFxPath(p)) p = p.slice(FX_PREFIX.length) || '/';
   // Works whether the proxy keeps the /proof prefix or strips it.
   if (B && (p === B || p.startsWith(B + '/'))) p = p.slice(B.length) || '/';
-  else if (B && p === '/') return back(res, B);
+  else if (B && p === '/') return back(res, base());
   const k = u.searchParams.get('k') || '';
 
   // legacy links → new shape
   if ((r = p.match(/^\/p\/([\w-]{10,})\/?$/))) { const job = await jobByToken(r[1]); return job ? back(res, `${numPath(job)}?k=${job.token}`) : servePage(req, res, 'review.html', 404); }
-  if (p === '/studio.html' || p === '/review.html' || p === '/login.html') return back(res, B + '/');
+  if (p === '/studio.html' || p === '/review.html' || p === '/login.html') return back(res, base() + '/');
 
   // pages
   if (p === '/' || p === '/login') {
-    if (isStudio(req)) return back(res, B + '/studio');
+    if (isStudio(req)) return back(res, base() + '/studio');
     return servePage(req, res, 'login.html');
   }
   if (p === '/studio' || p.startsWith('/studio/')) {
-    if (u.searchParams.get('key') === STUDIO_PASSWORD) return back(res, B + p, { 'Set-Cookie': setCookie() });
-    if (!isStudio(req)) return back(res, `${B}/?next=${encodeURIComponent(B + p)}`);
+    if (u.searchParams.get('key') === studioPassword()) return back(res, base() + p, { 'Set-Cookie': setCookie() });
+    if (!isStudio(req)) return back(res, `${base()}/?next=${encodeURIComponent(base() + p)}`);
     return servePage(req, res, 'studio.html');
   }
   if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
 
   // auth
-  if (p === '/api/login' && m === 'POST') { const b = await readJSON(req); if (b.password === STUDIO_PASSWORD) return send(res, 200, { ok: true }, { 'Set-Cookie': setCookie() }); await new Promise(r => setTimeout(r, 600)); return err(res, 401, 'Wrong password'); }
-  if (p === '/api/logout' && m === 'POST') return send(res, 200, { ok: true }, { 'Set-Cookie': `ybi_studio=; Path=${B || '/'}; Max-Age=0` });
+  if (p === '/api/brand' && m === 'GET') return send(res, 200, publicBrand());
+  if (p === '/api/login' && m === 'POST') { const b = await readJSON(req); if (b.password === studioPassword()) return send(res, 200, { ok: true }, { 'Set-Cookie': setCookie() }); await new Promise(r => setTimeout(r, 600)); return err(res, 401, 'Wrong password'); }
+  if (p === '/api/logout' && m === 'POST') return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
 
   // client API — keyed by job number (+ optional secure key k)
   if ((r = p.match(/^\/api\/review\/([^/]+)(\/attachments|\/decision)?$/))) {
@@ -1499,7 +1695,7 @@ async function handle(req, res) {
     if (!r[2] && m === 'GET') return send(res, 200, publicJob(job, k || null));
     if (r[2] === '/attachments' && m === 'POST') {
       const orig = safeName(u.searchParams.get('name')); const aid = id(8);
-      const dir = path.join(FILES, job.id, 'feedback'); await fsp.mkdir(dir, { recursive: true });
+      const dir = path.join(filesDir(), job.id, 'feedback'); await fsp.mkdir(dir, { recursive: true });
       const stored = `${aid}${extOf(orig)}`; const size = await streamToFile(req, path.join(dir, stored), MAX_ATT);
       const fresh = await loadJob(job.id); fresh.pendingAttachments = fresh.pendingAttachments || {};
       fresh.pendingAttachments[aid] = { id: aid, originalName: orig, stored: 'feedback/' + stored, size, at: now() };
@@ -1526,12 +1722,14 @@ async function handle(req, res) {
     return err(res, 405, 'Method not allowed');
   }
 
+  if ((r = p.match(/^\/api\/quote\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], k, false);
   if ((r = p.match(/^\/api\/quote\/([a-f0-9]{16})(\/decision)?$/))) return handlePublicQuote(req, res, r[1], r[2] || '', m, k);
 
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
+    if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], '', true);
     if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);
     if ((r = p.match(/^\/api\/jobs\/([^/]+)\/versions\/(\d+)$/))) {
       if (m !== 'DELETE') return err(res, 405, 'Method not allowed');
@@ -1563,15 +1761,15 @@ async function handle(req, res) {
       try {
         if (v.kind === 'image' && pages.length > 1) {
           const images = [];
-          for (const f of pages) images.push({ bytes: await fsp.readFile(path.join(FILES, job.id, f.stored)), ext: extOf(f.stored) });
+          for (const f of pages) images.push({ bytes: await fsp.readFile(path.join(filesDir(), job.id, f.stored)), ext: extOf(f.stored) });
           pdf = await buildChangesPdf({ kind: 'image', images, stickies: fb.stickies, meta });
         } else if (v.kind === 'pdf' && pages.length > 1) {
           const pdfs = [];
-          for (const f of pages) pdfs.push(await fsp.readFile(path.join(FILES, job.id, f.stored)));
+          for (const f of pages) pdfs.push(await fsp.readFile(path.join(filesDir(), job.id, f.stored)));
           pdf = await buildChangesPdf({ kind: 'pdf', pdfs, stickies: fb.stickies, meta });
         } else {
           pdf = await buildChangesPdf({
-            kind: v.kind, bytes: await fsp.readFile(path.join(FILES, job.id, v.stored)), ext: extOf(v.stored),
+            kind: v.kind, bytes: await fsp.readFile(path.join(filesDir(), job.id, v.stored)), ext: extOf(v.stored),
             stickies: fb.stickies, meta
           });
         }
@@ -1582,7 +1780,34 @@ async function handle(req, res) {
     }
     if (p === '/api/jobs' && m === 'GET') { const js = await sweepArchives(); js.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))); return send(res, 200, js.map(j => studioJob(req, j))); }
     if (p === '/api/jobs' && m === 'POST') {
-      const b = await readJSON(req); const num = String(b.jobNumber || '').trim();
+      const b = await readJSON(req);
+      if (b && b.mode === 'quote') {
+        if (activeBrand() !== 'fx') return err(res, 400, 'Quote-first jobs are part of YBI FX.');
+        const num = String(b.jobNumber || '').trim();
+        if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. FX-2201.');
+        const dupe = await jobByNumber(num);
+        if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
+        const cleaned = await cleanQuote({ ...b, client: b.client || b.clientName });
+        if (cleaned.error) return err(res, 400, cleaned.error);
+        const job = { id: id(6), token: token(), jobNumber: num, description: cleaned.description.slice(0, 2000), clientName: cleaned.client.slice(0, 120), clientCompany: cleaned.contactName.slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', production: 'awaiting_approval', phase: 'quoting', quoteState: 'open', createdAt: now(), versions: [] };
+        const quote = await withQuotes(async () => {
+          const doc = await readQuotesDoc();
+          let qid = id(8);
+          while (doc.quotes.some(q => q.id === qid)) qid = id(8);
+          const stamp = now();
+          const row = { id: qid, token: token(), responses: [], version: 1, revisions: [], jobId: job.id, ...cleaned, createdAt: stamp, updatedAt: stamp };
+          doc.quotes.push(row);
+          await writeQuotesDoc(doc);
+          return row;
+        });
+        job.quoteId = quote.id;
+        await fsp.mkdir(path.join(filesDir(), job.id), { recursive: true });
+        await saveJob(job);
+        const out = studioJob(req, job);
+        out.quote = await studioQuote(req, quote, await quoteMathReady);
+        return send(res, 201, out);
+      }
+      const num = String(b.jobNumber || '').trim();
       if (!String(b.clientName || '').trim() || !num) return err(res, 400, 'Client name and job number are required.');
       if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. 30434.');
       const colourField = parseColourField(b);
@@ -1592,7 +1817,7 @@ async function handle(req, res) {
       const dupe = await jobByNumber(num);
       if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
       const job = { id: id(6), token: token(), jobNumber: num, description: String(b.description || '').trim().slice(0, 2000), clientName: String(b.clientName).trim().slice(0, 120), clientCompany: String(b.clientCompany || '').trim().slice(0, 120), clientEmail: String(b.clientEmail || '').trim().slice(0, 200), clientPhone: String(b.clientPhone || '').trim().slice(0, 60), access: 'private', production: 'awaiting_approval', createdAt: now(), versions: [] };
-      await fsp.mkdir(path.join(FILES, job.id), { recursive: true }); await saveJob(job);
+      await fsp.mkdir(path.join(filesDir(), job.id), { recursive: true }); await saveJob(job);
       if ((colourField.sent && colourField.colour !== 'grey') || dateField.sent) {
         try {
           await saveJobCalendar(job, {
@@ -1600,7 +1825,7 @@ async function handle(req, res) {
             hasDate: dateField.sent, calendarDate: dateField.sent ? dateField.calendarDate : null
           });
         } catch (e) {
-          await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true });
+          await fsp.rm(path.join(filesDir(), job.id), { recursive: true, force: true });
           await fsp.rm(jobPath(job.id), { force: true });
           await forgetJobOverride(job.id);
           throw e;
@@ -1645,12 +1870,12 @@ async function handle(req, res) {
           applyArchive(job);
           await saveJob(job); return send(res, 200, studioJob(req, job));
         }
-        if (m === 'DELETE') { await fsp.rm(path.join(FILES, job.id), { recursive: true, force: true }); await fsp.rm(jobPath(job.id), { force: true }); await forgetJobOverride(job.id); return send(res, 200, { ok: true }); }
+        if (m === 'DELETE') { await fsp.rm(path.join(filesDir(), job.id), { recursive: true, force: true }); await fsp.rm(jobPath(job.id), { force: true }); await forgetJobOverride(job.id); return send(res, 200, { ok: true }); }
       }
       if (r[2] === '/versions' && m === 'DELETE') return err(res, 404, 'Include the version number to remove.');
       if (r[2] && m === 'POST') {
         const note = String(u.searchParams.get('note') || '').slice(0, 2000);
-        const dir = path.join(FILES, job.id);
+        const dir = path.join(filesDir(), job.id);
         await fsp.mkdir(dir, { recursive: true });
         const multipart = /^multipart\/form-data\b/i.test(String(req.headers['content-type'] || ''));
         const takeUploadError = e => {
@@ -1673,11 +1898,11 @@ async function handle(req, res) {
       }
     }
     if (p === '/api/settings') {
-      if (m === 'GET') { const s = await loadSettings(); return send(res, 200, { ...s, emailEnabled: !!mailer, publicUrl: PUBLIC_URL, basePath: B, defaultAccess: DEFAULT_ACCESS }); }
+      if (m === 'GET') { const s = await loadSettings(); return send(res, 200, { ...s, emailEnabled: !!mailer, publicUrl: PUBLIC_URL, basePath: base(), defaultAccess: DEFAULT_ACCESS }); }
       if (m === 'POST') {
         const b = await readJSON(req);
         const notifyEmail = String(b.notifyEmail || '').trim();
-        await fsp.writeFile(SETTINGS_FILE, JSON.stringify({ notifyEmail }, null, 2));
+        await fsp.writeFile(settingsPath(), JSON.stringify({ notifyEmail }, null, 2));
         const s = await loadSettings();
         return send(res, 200, { ...s, emailEnabled: !!mailer });
       }
@@ -1699,7 +1924,7 @@ async function handle(req, res) {
       for (const v of job.versions) for (const f of v.feedback) for (const a of f.attachments) if (a.id === r[3]) rec = a;
       if (!rec) return err(res, 404, 'Not found');
       const name = rec.originalName; const inline = /\.(pdf|png|jpe?g|webp|gif)$/i.test(name) && !u.searchParams.has('download');
-      return serveFile(req, res, path.join(FILES, job.id, rec.stored), { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=300' });
+      return serveFile(req, res, path.join(filesDir(), job.id, rec.stored), { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=300' });
     }
     if (!/^\d+$/.test(r[3])) return err(res, 404, 'Not found');
     const version = job.versions.find(v => v.n === +r[3]);
@@ -1708,7 +1933,7 @@ async function handle(req, res) {
     const part = r[4] || '';
     if (part === 'zip') {
       if (!((version.kind === 'image' || version.kind === 'pdf') && pages.length > 1)) return err(res, 404, 'Not found');
-      const root = path.resolve(FILES, job.id);
+      const root = path.resolve(filesDir(), job.id);
       const entries = [];
       for (const f of pages) {
         const filePath = path.resolve(root, f.stored);
@@ -1724,8 +1949,8 @@ async function handle(req, res) {
     }
     const safe = String(file.originalName || 'file').replace(/"/g, '');
     const inline = /\.(pdf|png|jpe?g|webp|gif)$/i.test(safe) && !u.searchParams.has('download');
-    const filePath = path.resolve(FILES, job.id, file.stored);
-    const root = path.resolve(FILES, job.id);
+    const filePath = path.resolve(filesDir(), job.id, file.stored);
+    const root = path.resolve(filesDir(), job.id);
     if (filePath === root || !filePath.startsWith(root + path.sep)) return err(res, 404, 'Not found');
     return serveFile(req, res, filePath, { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safe}"`, 'Cache-Control': 'private, max-age=300' });
   }
@@ -1738,16 +1963,71 @@ async function handle(req, res) {
 
 function createAppServer() {
   return http.createServer((req, res) => {
-    handle(req, res).catch(e => { console.error(e); if (!res.headersSent) err(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, e.message || 'Server error'); else res.end(); });
+    brandAls.run({ brand: brandForRequest(req) }, () => {
+      handle(req, res).catch(e => { console.error(e); if (!res.headersSent) err(res, e.code && e.code >= 400 && e.code < 600 ? e.code : 500, e.message || 'Server error'); else res.end(); });
+    });
   });
+}
+
+async function seedFxDemo() {
+  if (process.env.DEMO_SEED !== '1' || activeBrand() !== 'fx') return;
+  brandSecret();
+  if ((await allJobs()).length) return;
+  const { PDFDocument, StandardFonts } = require('pdf-lib');
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595.28, 841.89]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText('YBI FX sample artwork proof', { x: 64, y: 760, size: 18, font });
+  page.drawText('AJM Transport K220 — door lettering, draft 1', { x: 64, y: 730, size: 12, font });
+  const bytes = Buffer.from(await pdf.save());
+  const proof = { id: id(6), token: token(), jobNumber: 'FX-2208', description: 'AJM Transport K220 door lettering', clientName: 'AJM Transport', clientCompany: 'Dustin', clientEmail: '', clientPhone: '', access: 'private', production: 'awaiting_approval', phase: 'proofs', createdAt: now(), versions: [] };
+  await fsp.mkdir(path.join(filesDir(), proof.id), { recursive: true });
+  await fsp.writeFile(path.join(filesDir(), proof.id, 'v1-seed.pdf'), bytes);
+  proof.versions.push({ n: 1, kind: 'pdf', originalName: 'AJM-K220-door.pdf', stored: 'v1-seed.pdf', size: bytes.length, uploadedAt: now(), studioNote: 'First draft of the door name.', feedback: [] });
+  await saveJob(proof);
+  const cleaned = await cleanQuote({
+    client: "Hovey's Transport",
+    contactName: 'Sam Hovey',
+    clientEmail: '',
+    date: melbourneDay(new Date()),
+    description: 'Full scroll package and town names, both doors.',
+    validity: '30 days',
+    notes: 'Colours to be confirmed on the truck.',
+    terms: 'Valid for the period shown. Prices are in Australian dollars and exclude GST. Artwork proofs start once this quote is approved.',
+    lines: [
+      { description: 'Hand-painted scrolls, both doors', qty: '1', price: '2400' },
+      { description: 'Town names', qty: '2', price: '380' }
+    ]
+  });
+  if (cleaned.error) { console.error('[seed]', cleaned.error); return; }
+  const job = { id: id(6), token: token(), jobNumber: 'FX-2201', description: cleaned.description, clientName: cleaned.client, clientCompany: cleaned.contactName, clientEmail: '', clientPhone: '', access: 'private', production: 'awaiting_approval', phase: 'quoting', quoteState: 'open', createdAt: now(), versions: [] };
+  const quote = await withQuotes(async () => {
+    const doc = await readQuotesDoc();
+    let qid = id(8);
+    while (doc.quotes.some(q => q.id === qid)) qid = id(8);
+    const stamp = now();
+    const row = { id: qid, token: token(), responses: [], version: 1, revisions: [], jobId: job.id, ...cleaned, createdAt: stamp, updatedAt: stamp };
+    doc.quotes.push(row);
+    await writeQuotesDoc(doc);
+    return row;
+  });
+  job.quoteId = quote.id;
+  await fsp.mkdir(path.join(filesDir(), job.id), { recursive: true });
+  await saveJob(job);
+  console.log('  Demo seed: FX-2201 (quote first) and FX-2208 (proof only)');
 }
 
 if (require.main === module) {
   startArchiveSweep();
   createAppServer().listen(PORT, HOST, () => {
-    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · halftone: ${B}/studio/halftone · job pages: ${B}/{jobNumber})`);
-    console.log(`  Studio password: ${STUDIO_PASSWORD === 'ybi-proof' ? 'ybi-proof (default — set STUDIO_PASSWORD to change)' : '(from STUDIO_PASSWORD)'}`);
-    console.log(`  Data folder: ${DATA}`);
+    const fxMount = B ? FX_PREFIX + B : FX_PREFIX;
+    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B || '/'}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · halftone: ${B}/studio/halftone · job pages: ${B}/{jobNumber})`);
+    console.log(`  YBI FX →  http://localhost:${PORT}${fxMount}/studio  (same service, data in ${path.join(creativeRoot(), 'fx')})`);
+    const pw = process.env.STUDIO_PASSWORD || 'ybi-proof';
+    console.log(`  Studio password: ${process.env.STUDIO_PASSWORD ? '(from env)' : pw + ' (default — set STUDIO_PASSWORD to change)'}`);
+    console.log(`  FX studio password: ${process.env.STUDIO_PASSWORD_FX ? 'STUDIO_PASSWORD_FX' : 'falls back to the YBI studio password'}`);
+    console.log(`  Data folder: ${creativeRoot()}`);
+    seedFxDemo().catch(e => console.error('[seed]', e));
     console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}`);
     loadSettings().then(s => {
       const list = parseNotifyAddresses(s.notifyEmail);
