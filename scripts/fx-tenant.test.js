@@ -14,9 +14,12 @@ process.env.STUDIO_PASSWORD = 'creative-secret';
 process.env.STUDIO_PASSWORD_FX = 'fx-secret';
 delete process.env.BRAND;
 delete process.env.DEMO_SEED;
+delete process.env.FX_EMAILS_ENABLED;
 process.env.PORT = '0';
 
-const { createAppServer } = require('../server');
+const { createAppServer, setMailerForTests } = require('../server');
+const sentMail = [];
+setMailerForTests({ sendMail(opts) { sentMail.push(opts); return Promise.resolve(); } });
 
 function req(server, method, urlPath, { headers = {}, body, key } = {}) {
   const { port } = server.address();
@@ -99,13 +102,24 @@ const lines = [
     const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
     assert.strictEqual(fxStudio.status, 200);
     assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
-    for (const path of ['/studio/calendar', '/studio/quote', '/studio/settings', '/studio/halftone', '/studio/radio']) {
+    assert.ok(!fxStudio.text.includes('/studio/calendar'), 'fx nav has no calendar');
+    assert.ok(!fxStudio.text.includes('data-tools'), 'fx nav has no tools menu');
+    for (const path of ['/studio/quote', '/studio/settings']) {
       const page = await req(server, 'GET', `${FX}${path}`, { headers: { Cookie: fxCookie } });
       assert.strictEqual(page.status, 200, path);
       assert.ok(page.text.includes('<title>Studio · YBI FX Proofs</title>'), path);
     }
+    for (const path of ['/studio/calendar', '/studio/halftone', '/studio/radio']) {
+      const page = await req(server, 'GET', `${FX}${path}`, { headers: { Cookie: fxCookie } });
+      assert.strictEqual(page.status, 302, path);
+      assert.ok(String(page.headers.location).endsWith('/studio'), page.headers.location);
+    }
+    const fxCal = await req(server, 'GET', `${FX}/api/calendar`, { key: 'fx-secret' });
+    assert.strictEqual(fxCal.status, 404);
     const ybiStudio = await req(server, 'GET', `${Y}/studio`, { headers: { Cookie: ybiCookie } });
     assert.ok(ybiStudio.text.includes('<title>Studio · YBI Proofs</title>'));
+    assert.ok(ybiStudio.text.includes('/studio/calendar'));
+    assert.ok(ybiStudio.text.includes('data-tools'));
     assert.ok(!ybiStudio.text.includes('YBI FX Proofs'));
     const fxQuotePage = await req(server, 'GET', `${FX}/quote/0123456789abcdef`);
     assert.ok(fxQuotePage.text.includes('<title>Quote · YBI FX Proofs</title>'));
@@ -132,8 +146,7 @@ const lines = [
     const ybiRadio = await req(server, 'GET', `${Y}/studio/radio`, { key: 'creative-secret' });
     assert.strictEqual(ybiRadio.status, 200);
     const fxHalftone = await req(server, 'GET', `${FX}/studio/halftone`, { key: 'fx-secret' });
-    assert.strictEqual(fxHalftone.status, 200);
-    assert.ok(fxHalftone.text.includes('data-brand="fx"'));
+    assert.strictEqual(fxHalftone.status, 302);
     const fxRadioBlocked = await req(server, 'GET', `${FX}/studio/radio`, { key: 'creative-secret' });
     assert.strictEqual(fxRadioBlocked.status, 302);
 
@@ -195,6 +208,18 @@ const lines = [
     });
     assert.strictEqual(clientOk.status, 200, clientOk.text);
     assert.strictEqual(clientOk.json.status, 'approved');
+    assert.strictEqual(sentMail.length, 0, 'FX quote and proof mail stays off');
+
+    const ybiUp = await req(server, 'POST', `${Y}/api/jobs/30434/versions?name=poster.pdf`, {
+      key: 'creative-secret', headers: { 'Content-Type': 'application/pdf' }, body: '%PDF-1.1'
+    });
+    assert.strictEqual(ybiUp.status, 201, ybiUp.text);
+    const ybiOk = await req(server, 'POST', `${Y}/api/review/30434/decision?k=${encodeURIComponent(creativeJob.json.token)}`, {
+      body: { type: 'approve', name: 'Creative Client', note: 'Yes', version: 1 }
+    });
+    assert.strictEqual(ybiOk.status, 200, ybiOk.text);
+    assert.ok(sentMail.some(m => String(m.subject).includes('[YBI Proof]')), 'YBI mail still sends');
+    assert.ok(!sentMail.some(m => String(m.subject).includes('[YBI FX]')));
 
     const proofOnly = await req(server, 'POST', `${FX}/api/jobs`, { key: 'fx-secret', body: { jobNumber: 'FX-2208', clientName: 'AJM Transport', description: 'Door lettering' } });
     assert.strictEqual(proofOnly.status, 201);

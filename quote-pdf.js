@@ -10,11 +10,9 @@ const DISPLAY = path.join(__dirname, 'public/assets/fonts/archivo-black-italic-e
 const SANS = path.join(__dirname, 'public/assets/fonts/work-sans-regular.ttf');
 const SANS_BOLD = path.join(__dirname, 'public/assets/fonts/work-sans-semibold.ttf');
 const LOCKUP = path.join(__dirname, 'public/assets/img/ybifx-logo-white.png');
-const CYAN = rgb(0 / 255, 180 / 255, 230 / 255);
-const PINK = rgb(240 / 255, 0 / 255, 144 / 255);
-const CYAN_RGB = [0, 180, 230];
-const VIOLET = [122, 77, 255];
-const PINK_RGB = [240, 0, 144];
+const CYAN = rgb(0 / 255, 196 / 255, 238 / 255);
+const CYAN_RGB = [0, 196, 238];
+const GREY_RGB = [168, 170, 174];
 const INK = rgb(0.07, 0.07, 0.08);
 const MUTE = rgb(0.33, 0.32, 0.31);
 const HAIR = rgb(0.82, 0.82, 0.84);
@@ -43,10 +41,10 @@ function wrap(text, font, size, width) {
 function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
 function gradientBar(page, x, y, w, h) {
   const n = 90;
-  const stops = [CYAN_RGB, VIOLET, PINK_RGB];
+  const stops = [GREY_RGB, CYAN_RGB];
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
-    const c = t < 0.46 ? mix(stops[0], stops[1], t / 0.46) : mix(stops[1], stops[2], (t - 0.46) / 0.54);
+    const c = mix(stops[0], stops[1], t);
     page.drawRectangle({ x: x + (w * i) / n, y, width: (w / n) + 0.35, height: h, color: rgb(c[0] / 255, c[1] / 255, c[2] / 255) });
   }
 }
@@ -121,7 +119,7 @@ async function buildQuotePdf(quote, brand) {
   const amtLabel = 'AMOUNT';
   page.drawText(amtLabel, { x: tableR - display.widthOfTextAtSize(amtLabel, 8), y, size: 8, font: display, color: CYAN });
   y -= 8;
-  page.drawRectangle({ x: xDesc, y, width: tableR - xDesc, height: 0.6, color: PINK });
+  page.drawRectangle({ x: xDesc, y, width: tableR - xDesc, height: 0.6, color: CYAN });
   y -= 4;
 
   const lines = (quote.lines || []).filter(line => String(line.description || '').trim() || String(line.price || '').trim());

@@ -50,6 +50,15 @@ function studioPassword() {
   if (activeBrand() === 'fx' && process.env.STUDIO_PASSWORD_FX) return process.env.STUDIO_PASSWORD_FX;
   return process.env.STUDIO_PASSWORD || 'ybi-proof';
 }
+// FX mail is off until FX_EMAILS_ENABLED=1. YBI mail is unchanged.
+function fxEmailsEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.FX_EMAILS_ENABLED || '').trim());
+}
+function fxStudioRemoved(p) {
+  return p === '/studio/calendar' || p.startsWith('/studio/calendar/')
+    || p === '/studio/halftone' || p.startsWith('/studio/halftone/')
+    || p === '/studio/radio' || p.startsWith('/studio/radio/');
+}
 function studioCookieName() { return activeBrand() === 'fx' ? 'ybi_fx_studio' : 'ybi_studio'; }
 const brandSecrets = new Map();
 function brandSecret() {
@@ -1542,6 +1551,10 @@ function setMailerForTests(next) { mailer = next || null; }
 try { if (process.env.SMTP_HOST) { const nm = require('nodemailer'); mailer = nm.createTransport({ host: process.env.SMTP_HOST, port: +(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined }); } } catch (e) { console.warn('[mail] nodemailer not installed — run `npm install` to enable email. Falling back to dashboard + log only.'); }
 
 async function deliverStaffMail({ subject, text, replyTo }) {
+  if (activeBrand() === 'fx' && !fxEmailsEnabled()) {
+    await fsp.appendFile(logPath(), `[mail] FX emails off — not sent: ${subject}\n`).catch(() => {});
+    return;
+  }
   const { raw, list } = await notifyRecipients();
   const to = list.join(', ');
   if (!mailer) return;
@@ -1628,6 +1641,8 @@ function fxHtml(html) {
     .replaceAll('assets/img/engine-640.webp', 'assets/img/fx-hero.webp')
     .replaceAll('assets/img/engine-1280.webp', 'assets/img/fx-hero.webp')
     .replaceAll('assets/img/engine-1920.webp', 'assets/img/fx-hero.webp')
+    .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')
+    .replace(/<div class="navdrop" data-tools>[\s\S]*?<\/div><\/div>/, '')
     .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')
     .replaceAll('YBI Proofs', 'YBI FX Proofs')
     .replaceAll('Artwork proofs · YBI Creative', 'Artwork proofs · YBI FX Proofs')
@@ -1644,7 +1659,7 @@ function fxHtml(html) {
 async function servePage(req, res, name, code = 200) {
   // HTML templates use {{B}} for the mount path, so the app works at /proof (or anywhere)
   let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', base()).replaceAll('{{BRAND}}', activeBrand());
-  if (activeBrand() === 'fx') html = fxHtml(html);
+  if (activeBrand() === 'fx') html = fxHtml(html).replace('data-brand="fx"', `data-brand="fx" data-emails="${fxEmailsEnabled() ? '1' : '0'}"`);
   res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'same-origin' });
   res.end(html);
 }
@@ -1681,6 +1696,7 @@ async function handle(req, res) {
   if (p === '/studio' || p.startsWith('/studio/')) {
     if (u.searchParams.get('key') === studioPassword()) return back(res, base() + p, { 'Set-Cookie': setCookie() });
     if (!isStudio(req)) return back(res, `${base()}/?next=${encodeURIComponent(base() + p)}`);
+    if (activeBrand() === 'fx' && fxStudioRemoved(p)) return back(res, base() + '/studio');
     return servePage(req, res, 'studio.html');
   }
   if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
@@ -1732,6 +1748,7 @@ async function handle(req, res) {
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
+    if (activeBrand() === 'fx' && (p === '/api/calendar' || p.startsWith('/api/calendar/'))) return err(res, 404, 'Not found');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
     if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], '', true);
     if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);

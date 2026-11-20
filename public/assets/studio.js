@@ -8,7 +8,8 @@ const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
 let brand = { id: 'creative', name: 'YBI Creative', email: 'website@ybicreative.com.au', lockup: 'Brand Engineering', site: 'https://www.ybicreative.com.au', siteLabel: 'ybicreative.com.au' };
-const fx = () => brand.id === 'fx';
+const fx = () => document.documentElement.dataset.brand === 'fx' || brand.id === 'fx';
+const fxMail = () => document.documentElement.dataset.emails !== '0';
 const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review], ['changes_requested', STATUS.changes_requested], ['approved', STATUS.approved], ['archive', 'Archive']];
 // Staff tools. Add an entry here to show it in the Tools menu.
 const STUDIO_TOOLS = [
@@ -113,11 +114,15 @@ async function dashboard() {
   const active = jobs.filter(j => !j.archivedAt);
   const counts = { all: active.length, archive: jobs.length - active.length };
   active.forEach(j => counts[j.status] = (counts[j.status] || 0) + 1);
+  const heads = fx()
+    ? '<th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Artwork status</th><th class="hide-m">Version</th><th class="hide-m">Updated</th>'
+    : '<th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Artwork status</th><th>Production</th><th class="hide-m">Version</th><th class="hide-m">Updated</th>';
+  const cols = fx() ? 6 : 7;
   app.innerHTML = band(fx() ? 'YBI FX Studio' : 'YBI Studio · Proofs', fx() ? 'Jobs <span class="ol">list.</span>' : 'Artwork <span class="ol">approvals.</span>', fx() ? 'Quote first, or go straight to artwork proofs. Clients approve on a private link.' : 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New job ${ARROW}</button>`) +
   `<div class="wrap">
    <div class="toolbar"><div class="tabs">${JOB_FILTERS.map(([s, label]) => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${label} ${counts[s] || 0}</button>`).join('')}</div>
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
-   <table class="jobs"><thead><tr><th>Job no.</th><th>Client</th><th class="hide-m">Description</th><th>Artwork status</th><th>Production</th><th class="hide-m">Version</th><th class="hide-m">Updated</th></tr></thead><tbody></tbody></table>
+   <table class="jobs"><thead><tr>${heads}</tr></thead><tbody></tbody></table>
   </div>`;
   const tb = $('tbody', app);
   const draw = () => {
@@ -128,9 +133,12 @@ async function dashboard() {
     const list = query
       ? jobs.filter(j => hay(j).includes(query))
       : (filter === 'archive' ? jobs.filter(j => j.archivedAt) : active).filter(inView);
-    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? 'Nothing in the archive yet. An approved job moves here two days after the client approves it, once production is No production required or Approved for production.' : 'No jobs match.');
-    tb.innerHTML = list.length ? list.map(j => `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td class="who">${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td><td class="prodcell">${productionSelect(j)}</td><td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`).join('')
-      : `<tr><td colspan="7" class="empty">${empty}</td></tr>`;
+    const empty = !jobs.length ? 'No proofs yet — hit “New job” to create the first one.' : (!query && filter === 'archive' ? (fx() ? 'Nothing in the archive yet.' : 'Nothing in the archive yet. An approved job moves here two days after the client approves it, once production is No production required or Approved for production.') : 'No jobs match.');
+    tb.innerHTML = list.length ? list.map(j => {
+      const prod = fx() ? '' : `<td class="prodcell">${productionSelect(j)}</td>`;
+      return `<tr class="row" data-href="${jobHref(j)}"><td class="num">${j.jobNumber ? esc(j.jobNumber) : '—'}${j.unread ? '<span class="dot" title="New client feedback"></span>' : ''}</td><td class="who">${esc(j.clientName)}${j.clientCompany ? `<div class="small dim">${esc(j.clientCompany)}</div>` : ''}</td><td class="hide-m mute">${esc(j.description.slice(0, 80))}${j.description.length > 80 ? '…' : ''}</td><td>${chip(j.status)}${query && j.archivedAt ? ' <span class="small dim">Archive</span>' : ''}</td>${prod}<td class="hide-m">${j.versions.length ? 'V' + j.versions.at(-1).n : '—'}</td><td class="hide-m small dim">${fmtDate(j.updatedAt)}</td></tr>`;
+    }).join('')
+      : `<tr><td colspan="${cols}" class="empty">${empty}</td></tr>`;
     $$('tr.row', tb).forEach(r => r.onclick = () => go(r.dataset.href));
     bindProduction(tb, () => dashboard());
   };
@@ -169,10 +177,13 @@ async function jobPage(key, showV) {
   let linkedQuote = null;
   if (j.quoteId) { try { linkedQuote = await api(`${B}/api/quotes/${j.quoteId}`); } catch { /* quote list still works without it */ } }
   const signOff = fx() ? 'YBI FX' : 'YBI Creative';
-  const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\n${signOff}`)}` : '';
+  const mail = j.clientEmail && fxMail() ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\n${signOff}`)}` : '';
   const phone = j.clientPhone ? `<br><a href="tel:${esc(j.clientPhone)}" class="mute">${esc(j.clientPhone)}</a>` : '';
   const heading = j.jobNumber || String(j.description || '').split('\n')[0].trim().slice(0, 80);
-  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div class="jobflags"><div class="prodlabel"><span class="k">Artwork status</span>${chip(j.status)}</div><div class="prodlabel"><span class="k">Production</span>${productionSelect(j)}</div></div>`) +
+  const flags = fx()
+    ? `<div class="jobflags"><div class="prodlabel"><span class="k">Artwork status</span>${chip(j.status)}</div></div>`
+    : `<div class="jobflags"><div class="prodlabel"><span class="k">Artwork status</span>${chip(j.status)}</div><div class="prodlabel"><span class="k">Production</span>${productionSelect(j)}</div></div>`;
+  app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), flags) +
   `<div class="wrap">
    <div class="panel" style="margin-top:36px"><div class="ver__h"><span class="k" style="margin:0">Client page — send this to ${esc(j.clientName)}</span><button type="button" class="btn btn--sm btn--ghost" data-edit>Edit job</button></div>
     <div class="linkbox"><input readonly value="${esc(j.secureUrl)}" aria-label="Client link" data-main><button class="btn btn--sm" data-copy>Copy link</button><a class="btn btn--sm btn--ghost" href="${esc(j.secureUrl)}" target="_blank" rel="noopener">Open</a>${mail ? `<a class="btn btn--sm btn--ghost" href="${mail}">Email client</a>` : ''}</div>
@@ -1391,10 +1402,14 @@ function markNav() {
 }
 async function route() {
   markNav();
-  const rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
+  let rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
   document.body.classList.toggle('is-quote', rest === 'quote' || rest.startsWith('quote/'));
   document.body.classList.toggle('is-halftone', rest === 'halftone');
   document.body.classList.toggle('is-radio', rest === 'radio');
+  if (fx() && (rest === 'calendar' || rest === 'halftone' || rest === 'radio')) {
+    history.replaceState(null, '', `${B}/studio`);
+    rest = '';
+  }
   try {
     if (rest === 'settings') await settings();
     else if (rest === 'calendar') await calendar();
@@ -1432,8 +1447,8 @@ document.addEventListener('click', e => {
   go(url.pathname + url.search + url.hash);
 });
 window.addEventListener('popstate', () => route());
-bootRadio();
-mountToolsMenu();
+if (!fx()) bootRadio();
+if (!fx()) mountToolsMenu();
 api(B + '/api/brand').then(b => { brand = b || brand; }).catch(() => {}).finally(() => route());
 // light polling so new client feedback shows up on the dashboard
 const onDash = () => !location.pathname.slice(B.length).replace(/^\/studio\/?/, '');

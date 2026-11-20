@@ -6,6 +6,7 @@ import { B, $, esc, fmtDate, api, toast, engineBand } from './common.js';
 const CONFIRM_TO = 'website@ybicreative.com.au';
 const confirmInbox = document.documentElement.dataset.brand === 'fx' ? 'fx@ybicreative.com.au' : CONFIRM_TO;
 const FX = document.documentElement.dataset.brand === 'fx';
+const FX_MAIL = document.documentElement.dataset.emails === '1';
 const app = $('#app');
 const parts = location.pathname.slice(B.length).split('/').filter(Boolean);
 const quoteId = parts[0] === 'quote' ? parts[1] || '' : '';
@@ -100,6 +101,7 @@ function render(openMail) {
 }
 
 function decision(accepted, mail) {
+  if (accepted && FX && !FX_MAIL) return `<div class="state state--approved" data-state="accepted"><h2 class="h3">Thanks — this quote is confirmed.</h2><p class="mute">YBI FX has the approval.</p></div>`;
   if (accepted) return `<div class="state state--approved" data-state="accepted"><h2 class="h3">Thanks — this quote is confirmed.</h2><p class="mute">A confirmation email to YBI should open. If it doesn’t, use the button below. Subject: <b style="color:var(--ink)">QUOTE CONFIRMED: ${esc(String(quote.description || '').split('\n')[0].trim())}</b></p><div class="btns" style="margin-top:18px"><a class="btn" id="q-mail" href="${esc(mail)}">Email confirmation</a></div></div>`;
   const changes = (quote.responses || []).filter(r => r.type === 'changes');
   return `<div class="state" data-state="${quote.status}">
@@ -142,7 +144,7 @@ async function submit(e) {
   try {
     quote = await api(`${API}/decision${kq}`, { method: 'POST', body: JSON.stringify({ type: mode, name, note }) });
     localStorage.setItem('ybi-quote-name', name);
-    const openMail = mode === 'accept';
+    const openMail = mode === 'accept' && (!FX || FX_MAIL);
     toast(openMail ? 'Quote confirmed' : 'Changes sent to YBI');
     mode = null;
     render(openMail);
