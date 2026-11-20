@@ -1,13 +1,47 @@
-<!doctype html><html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!doctype html><html lang="en-AU" data-brand="{{BRAND}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#09090a"><meta name="color-scheme" content="dark"><meta name="robots" content="noindex,nofollow">
 <link rel="icon" href="{{B}}/assets/img/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="{{B}}/assets/img/favicon-32.png"><link rel="apple-touch-icon" href="{{B}}/assets/img/favicon-180.png">
 <link rel="preload" href="{{B}}/assets/fonts/archivo-wdth.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="{{B}}/assets/fonts/work-sans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" as="image" href="{{B}}/assets/img/engine-1280.webp" imagesrcset="{{B}}/assets/img/engine-640.webp 640w, {{B}}/assets/img/engine-1280.webp 1280w, {{B}}/assets/img/engine-1920.webp 1920w" imagesizes="100vw">
-<script>window.BASE="{{B}}";document.documentElement.classList.add('js')</script><link rel="stylesheet" href="{{B}}/assets/app.css"><title>Studio · YBI Proofs</title></head><body class="studio">
+<script>window.BASE="{{B}}";document.documentElement.classList.add('js')</script><link rel="stylesheet" href="{{B}}/assets/app.css">{{ADOBE_FONTS}}<title>Studio · YBI Proofs</title></head><body class="studio">
 <svg class="svgdefs" width="0" height="0" aria-hidden="true" focusable="false"><defs><filter id="ol-m" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="erode" radius="1.4" result="e"/><feComposite in="SourceGraphic" in2="e" operator="out"/></filter><filter id="ol-s" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="erode" radius="1" result="e"/><feComposite in="SourceGraphic" in2="e" operator="out"/></filter></defs></svg>
 <header class="hdr"><div class="wrap"><a class="logo" href="https://www.ybicreative.com.au" target="_blank" rel="noopener" aria-label="YBI Creative"><img src="{{B}}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></a><div class="hdr__r"><a href="{{B}}/studio">Jobs</a><a href="{{B}}/studio/calendar">Calendar</a><a href="{{B}}/studio/quote">Quote</a><div class="navdrop" data-tools><button type="button" class="navdrop__btn" aria-haspopup="menu" aria-expanded="false" aria-controls="tools-menu">Tools <span class="navdrop__caret" aria-hidden="true"></span></button><div class="navdrop__menu" id="tools-menu" role="menu" hidden></div></div><a href="{{B}}/studio/settings">Settings</a><button class="btn btn--sm" data-new>+ New job</button></div></div></header>
 <main id="app"></main>
-<div class="modal" id="newModal" hidden><form class="panel" id="newForm" novalidate>
+<div class="modal" id="newModal" hidden>
+<div class="panel" data-fx-choice hidden>
+ <div class="modal__h"><h2 class="h3">New job</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
+ <p class="mute" style="margin:-6px 0 22px">Start with a quote the client can approve, or go straight to artwork proofs.</p>
+ <div class="fx-choice">
+  <button type="button" class="fx-pick" data-fx-mode="quote"><b>Quote first</b><span>Client, line items, GST and a PDF. Proofs unlock once they approve.</span></button>
+  <button type="button" class="fx-pick" data-fx-mode="proof"><b>Proof only</b><span>No quote. Upload drafts the same way as a YBI proof.</span></button>
+ </div>
+</div>
+<form class="panel" id="quoteJobForm" hidden novalidate>
+ <div class="modal__h"><h2 class="h3">Quote first</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
+ <p class="small mute" style="margin:-8px 0 18px"><button type="button" class="lnk" data-fx-back>Change type</button></p>
+ <div class="grid2">
+  <div class="field"><label for="qj-num">Job number</label><input id="qj-num" name="jobNumber" required placeholder="e.g. FX-2201" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}"></div>
+  <div class="field"><label for="qj-client">Client</label><input id="qj-client" name="client" required maxlength="160"></div>
+  <div class="field"><label for="qj-contact">Contact</label><input id="qj-contact" name="contactName" maxlength="160"></div>
+  <div class="field"><label for="qj-email">Client email <span class="opt">(optional)</span></label><input id="qj-email" name="clientEmail" type="email"></div>
+  <div class="field"><label for="qj-date">Date</label><input id="qj-date" name="date" type="date" required></div>
+  <div class="field"><label for="qj-valid">Valid for</label><select id="qj-valid" name="validity"><option>7 days</option><option selected>30 days</option><option>6 months</option></select></div>
+  <div class="field field--full"><label for="qj-desc">Job description</label><textarea id="qj-desc" name="description" maxlength="4000" placeholder="What’s being quoted — size, finish, where it sits on the truck…"></textarea></div>
+ </div>
+ <div class="q-scroll" style="margin-top:18px"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th></tr></thead><tbody>
+  <tr><td><input name="ld" maxlength="300" placeholder="Line"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal" placeholder="ex GST"></td></tr>
+  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
+  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
+  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
+  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
+  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
+ </tbody></table></div>
+ <div class="field" style="margin-top:16px"><label for="qj-notes">Notes <span class="opt">(optional)</span></label><textarea id="qj-notes" name="notes" style="min-height:70px" maxlength="4000"></textarea></div>
+ <div class="field" style="margin-top:16px"><label for="qj-terms">Terms <span class="opt">(optional)</span></label><textarea id="qj-terms" name="terms" style="min-height:70px" maxlength="4000">Valid for the period shown. Prices are in Australian dollars and exclude GST. Artwork proofs start once this quote is approved.</textarea></div>
+ <div class="btns" style="margin-top:22px"><button class="btn" type="submit" id="qj-go">Save quote &amp; get link</button><button type="button" class="btn btn--ghost" data-close>Cancel</button></div>
+ <p class="msg" id="qj-msg"></p>
+</form>
+<form class="panel" id="newForm" novalidate>
  <div class="modal__h"><h2 class="h3">New job</h2><button type="button" class="ibtn" data-close aria-label="Close">✕</button></div>
  <div class="grid2">
   <div class="field"><label for="n-num">Job number <span class="opt">(the client gets a private link, not this number)</span></label><input id="n-num" name="jobNumber" required placeholder="e.g. 30434" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,39}"></div>

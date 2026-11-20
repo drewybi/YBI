@@ -3,7 +3,7 @@ export const B = (typeof window !== 'undefined' && window.BASE) || '';
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const STATUS = { draft: 'No proof yet', awaiting_review: 'Awaiting review', changes_requested: 'Changes requested', approved: 'Approved' };
+export const STATUS = { draft: 'No proof yet', awaiting_review: 'Awaiting review', changes_requested: 'Changes requested', approved: 'Approved', quoting: 'Quote awaiting approval', quote_changes: 'Quote alterations' };
 export const chip = s => `<span class="chip chip--${s}">${STATUS[s] || s}</span>`;
 export const fmtDate = iso => iso ? new Date(iso).toLocaleString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 export const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';

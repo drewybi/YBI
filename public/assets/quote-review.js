@@ -4,6 +4,8 @@ import { B, $, esc, fmtDate, api, toast, engineBand } from './common.js';
 // notification list (the same addresses as proof alerts) when this decision
 // is saved, so staff are notified even if the client never sends this draft.
 const CONFIRM_TO = 'website@ybicreative.com.au';
+const confirmInbox = document.documentElement.dataset.brand === 'fx' ? 'fx@ybicreative.com.au' : CONFIRM_TO;
+const FX = document.documentElement.dataset.brand === 'fx';
 const app = $('#app');
 const parts = location.pathname.slice(B.length).split('/').filter(Boolean);
 const quoteId = parts[0] === 'quote' ? parts[1] || '' : '';
@@ -32,7 +34,7 @@ function confirmMail(q, name) {
     '',
     name ? `Confirmed by ${name}.` : 'Confirmed.'
   ].filter(line => line != null).join('\n');
-  return `mailto:${CONFIRM_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return `mailto:${CONFIRM_TO}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`.replace(CONFIRM_TO, confirmInbox);
 }
 function savedName() {
   return localStorage.getItem('ybi-quote-name') || quote.contactName || '';
@@ -51,7 +53,7 @@ async function load() {
       : `<div class="wrap" style="padding-top:100px;padding-bottom:100px"><p class="msg err">${esc(e.message)}</p></div>`;
     return;
   }
-  document.title = `Quote · ${quote.client} · YBI Creative`;
+  document.title = `Quote · ${quote.client} · ${FX ? 'YBI FX' : 'YBI Creative'}`;
   render();
 }
 
@@ -90,11 +92,12 @@ function decision(accepted, mail) {
   const changes = (quote.responses || []).filter(r => r.type === 'changes');
   return `<div class="state" data-state="${quote.status}">
     ${changes.length ? changes.map(r => `<div class="fb fb--changes"><div class="small dim">${esc(r.name)} · ${fmtDate(r.at)}</div>${r.note ? `<p>${esc(r.note)}</p>` : ''}</div>`).join('') + '<p class="mute">YBI has your notes. You can add another, or accept the quote.</p>' : '<h2 class="h3">Happy with this quote?</h2>'}
-    <div class="seg"><button type="button" data-a="accept" class="${mode === 'accept' ? 'on' : ''}">Accept quote</button><button type="button" data-a="changes" class="${mode === 'changes' ? 'on' : ''}">Request changes</button></div>
+    ${quote.version > 1 ? `<p class="small mute">Revised quote · V${quote.version}</p>` : ''}
+    <div class="seg"><button type="button" data-a="accept" class="${mode === 'accept' ? 'on' : ''}">${FX ? 'Approve quote' : 'Accept quote'}</button><button type="button" data-a="changes" class="${mode === 'changes' ? 'on' : ''}">${FX ? 'Request alterations' : 'Request changes'}</button></div>
     ${mode ? `<form data-form novalidate class="stack" style="gap:18px">
       <div class="field"><label for="c-name">Your name</label><input id="c-name" maxlength="120" value="${esc(savedName())}" required></div>
       <div class="field"><label for="c-note">${mode === 'changes' ? 'What should change?' : 'Note <span class="opt">(optional)</span>'}</label><textarea id="c-note" maxlength="10000" placeholder="${mode === 'changes' ? 'Tell YBI what to adjust…' : 'Anything you want them to know'}"></textarea></div>
-      <div class="btns"><button class="btn ${mode === 'accept' ? 'btn--ok' : ''}" type="submit" data-go>${mode === 'accept' ? 'Accept quote' : 'Send changes to YBI'}</button></div>
+      <div class="btns"><button class="btn ${mode === 'accept' ? 'btn--ok' : ''}" type="submit" data-go>${mode === 'accept' ? (FX ? 'Approve quote' : 'Accept quote') : (FX ? 'Send alterations' : 'Send changes to YBI')}</button></div>
       <p class="msg" id="c-msg"></p>
     </form>` : ''}
   </div>`;

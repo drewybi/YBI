@@ -32,7 +32,7 @@ async function load() {
 
 function render() {
   const latest = job.versions.at(-1);
-  if (!latest) { app.innerHTML = `<div class="wrap" style="padding-top:100px;padding-bottom:100px"><p class="eyebrow">Job ${esc(job.jobNumber)}</p><h1 class="h2">Proof coming <span class="ol">soon.</span></h1><p class="lede">YBI is still preparing your artwork. Check this link again shortly.</p></div>`; return; }
+  if (!latest) { app.innerHTML = `<div class="wrap" style="padding-top:100px;padding-bottom:100px"><p class="eyebrow">Job ${esc(job.jobNumber)}</p><h1 class="h2">${job.quoting ? 'Quote still <span class="ol">open.</span>' : 'Proof coming <span class="ol">soon.</span>'}</h1><p class="lede">${job.quoting ? 'Artwork proofs open on this link once the quote is approved.' : 'YBI is still preparing your artwork. Check this link again shortly.'}</p></div>`; return; }
   const v = job.versions.find(x => x.n === showN) || latest; const isLatest = v === latest;
   const head = { awaiting_review: ['Your proof is', 'ready.'], changes_requested: ['Changes', 'received.'], approved: ['Artwork', 'approved.'] }[job.status];
   document.title = `Proof ${job.jobNumber} · YBI Creative`;
@@ -51,7 +51,7 @@ function render() {
       ${job.versions.length > 1 ? `<label class="small mute">Versions &nbsp;<select class="vsel" data-vsel>${[...job.versions].reverse().map(x => `<option value="${x.n}" ${x === v ? 'selected' : ''}>V${x.n}${x === latest ? ' (latest)' : ''} — ${fmtDate(x.uploadedAt)}</option>`).join('')}</select></label>` : ''}
      </div>
      ${!isLatest ? `<div class="banner">You’re viewing an earlier version (V${v.n}). <button class="lnk" data-latest style="color:var(--warn)">View latest V${latest.n}</button></div>` : ''}
-     ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from YBI</span><p>${esc(v.studioNote)}</p></div>` : ''}
+     ${v.studioNote ? `<div class="fb" style="margin:0 0 14px"><span class="k" style="margin:0">Note from ${document.documentElement.dataset.brand === 'fx' ? 'YBI FX' : 'YBI'}</span><p>${esc(v.studioNote)}</p></div>` : ''}
      ${isLatest ? '' : versionChanges(v)}
      <div data-viewer></div>
      ${downloadRow(v)}

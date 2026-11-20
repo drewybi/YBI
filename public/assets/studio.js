@@ -7,6 +7,8 @@ const jobKey = j => j.jobNumber || j.id;
 const jobHref = j => `${B}/studio/${encodeURIComponent(jobKey(j))}`;
 const ARROW = '<svg class="ar" viewBox="0 0 18 10" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M0 5h17M12.5 .5 17 5l-4.5 4.5"/></svg>';
 let filter = 'all', q = '';
+let brand = { id: 'creative', name: 'YBI Creative', email: 'website@ybicreative.com.au', lockup: 'Brand Engineering', site: 'https://www.ybicreative.com.au', siteLabel: 'ybicreative.com.au' };
+const fx = () => brand.id === 'fx';
 const JOB_FILTERS = [['all', 'All'], ['awaiting_review', STATUS.awaiting_review], ['changes_requested', STATUS.changes_requested], ['approved', STATUS.approved], ['archive', 'Archive']];
 // Staff tools. Add an entry here to show it in the Tools menu.
 const STUDIO_TOOLS = [
@@ -111,7 +113,7 @@ async function dashboard() {
   const active = jobs.filter(j => !j.archivedAt);
   const counts = { all: active.length, archive: jobs.length - active.length };
   active.forEach(j => counts[j.status] = (counts[j.status] || 0) + 1);
-  app.innerHTML = band('YBI Studio · Proofs', 'Artwork <span class="ol">approvals.</span>', 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New job ${ARROW}</button>`) +
+  app.innerHTML = band(fx() ? 'YBI FX Studio' : 'YBI Studio · Proofs', fx() ? 'Jobs <span class="ol">list.</span>' : 'Artwork <span class="ol">approvals.</span>', fx() ? 'Quote first, or go straight to artwork proofs. Clients approve on a private link.' : 'Upload a proof, send the link, get a yes — or the changes.', `<button class="btn" data-new>+ New job ${ARROW}</button>`) +
   `<div class="wrap">
    <div class="toolbar"><div class="tabs">${JOB_FILTERS.map(([s, label]) => `<button data-f="${s}" class="${filter === s ? 'on' : ''}">${label} ${counts[s] || 0}</button>`).join('')}</div>
    <input class="search" placeholder="Search job no., client, description…" value="${esc(q)}"></div>
@@ -164,7 +166,10 @@ async function jobPage(key, showV) {
   let j = await api(`${B}/api/jobs/${encodeURIComponent(key)}`); const id = j.id;
   if (j.unread) api(`${B}/api/jobs/${id}`, { method: 'PATCH', body: JSON.stringify({ markSeen: true }) }).catch(() => {});
   const latest = j.versions.at(-1); const sel = j.versions.find(v => v.n === +showV) || latest;
-  const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\nYBI Creative`)}` : '';
+  let linkedQuote = null;
+  if (j.quoteId) { try { linkedQuote = await api(`${B}/api/quotes/${j.quoteId}`); } catch { /* quote list still works without it */ } }
+  const signOff = fx() ? 'YBI FX' : 'YBI Creative';
+  const mail = j.clientEmail ? `mailto:${encodeURIComponent(j.clientEmail)}?subject=${encodeURIComponent(`Artwork proof ${j.jobNumber}${latest ? ' — V' + latest.n : ''} ready for review`)}&body=${encodeURIComponent(`Hi ${j.clientName.split(' ')[0]},\n\nYour artwork proof for ${j.jobNumber}${j.description ? ' (' + j.description.split('\n')[0] + ')' : ''} is ready to review:\n\n${j.secureUrl}\n\nYou can approve it or request changes (and attach a file) straight from that page.\n\nThanks,\n${signOff}`)}` : '';
   const phone = j.clientPhone ? `<br><a href="tel:${esc(j.clientPhone)}" class="mute">${esc(j.clientPhone)}</a>` : '';
   const heading = j.jobNumber || String(j.description || '').split('\n')[0].trim().slice(0, 80);
   app.innerHTML = band(`<a href="${B}/studio" style="text-decoration:none">← All jobs</a> &nbsp;/&nbsp; Job`, esc(heading), esc(j.clientName) + (j.clientCompany ? ' · ' + esc(j.clientCompany) : ''), `<div class="jobflags"><div class="prodlabel"><span class="k">Artwork status</span>${chip(j.status)}</div><div class="prodlabel"><span class="k">Production</span>${productionSelect(j)}</div></div>`) +
@@ -184,11 +189,11 @@ async function jobPage(key, showV) {
     <div>${sel ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap"><span class="vtag">V${sel.n}${sel === latest ? ' <span class="small dim" style="font-family:var(--sans);font-weight:400;letter-spacing:.1em">LATEST · CLIENT SEES THIS</span>' : ''}</span>
       ${j.versions.length > 1 ? `<select class="vsel" data-vsel>${[...j.versions].reverse().map(v => `<option value="${v.n}" ${v === sel ? 'selected' : ''}>V${v.n} — ${fmtDate(v.uploadedAt)}</option>`).join('')}</select>` : ''}</div><div data-viewer></div>${downloadRow(sel)}` : '<div class="panel empty">No proof uploaded yet. Upload V1 →</div>'}</div>
     <div class="stack">
-     <div class="panel"><p class="eyebrow" style="margin-bottom:16px">${latest ? `Upload new version (V${latest.n + 1})` : 'Upload V1'}</p>
+     ${j.phase === 'quoting' ? `<div class="panel"><p class="eyebrow" style="margin-bottom:10px">Quote${linkedQuote ? ` · V${linkedQuote.version || 1}` : ''}</p><p class="mute" style="margin:0 0 14px">Artwork proofs stay locked until the client approves this quote. Alterations come back here so you can save a revised version.</p>${linkedQuote ? `<p><a class="lnk" href="${B}/studio/quote/${linkedQuote.id}">Open the quote</a></p><div class="btns" style="margin-top:14px"><a class="btn btn--sm" href="${B}/api/quotes/${linkedQuote.id}/pdf">Download PDF</a><button type="button" class="btn btn--sm btn--ghost" data-qcopy>Copy client link</button></div><p class="small mute" style="margin:12px 0 0">${esc(linkedQuote.clientUrl || '')}</p>` : '<p class="dim">Quote details could not be loaded.</p>'}</div>` : `<div class="panel"><p class="eyebrow" style="margin-bottom:16px">${latest ? `Upload new version (V${latest.n + 1})` : 'Upload V1'}</p>
       <p class="small mute" style="margin:0 0 16px">The client link always shows the newest version. Several PDFs, or several JPG or PNG files, become one version in file-name order. Names stay as you uploaded them. A ZIP is kept as that file and downloaded as it was uploaded.</p>
       <div class="drop" tabindex="0" data-vdrop><span class="ico"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M7 10V1M3 5l4-4 4 4M1 13h12"/></svg></span><span data-vname>${PROOF_EMPTY}</span><input type="file" multiple accept="${PROOF_ACCEPT}"></div>
       <div class="field" style="margin-top:18px"><label>Note to client <span class="opt">(optional — shown on their page)</span></label><textarea data-vnote style="min-height:70px" placeholder="e.g. Logo enlarged, phone number fixed."></textarea></div>
-      <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>
+      <div class="btns" style="margin-top:20px"><button class="btn btn--sm" data-vgo disabled>Upload version</button></div><p class="msg" data-vmsg></p></div>`}
      <div class="panel"><p class="eyebrow" style="margin-bottom:6px">Client feedback &amp; history</p>
       ${j.versions.length ? [...j.versions].reverse().map(v => `<div class="ver"><div class="ver__h"><span class="ver__id"><span class="vtag">V${v.n}</span><span class="small dim">${esc(versionTitle(v))} · ${fmtSize(v.size)} · ${fmtDate(v.uploadedAt)}</span></span><button type="button" class="lnk" data-rmv="${v.n}">Remove proof</button></div>
         ${v.studioNote ? `<p class="small mute" style="margin:8px 0 0">YBI note: ${esc(v.studioNote)}</p>` : ''}
@@ -214,18 +219,22 @@ async function jobPage(key, showV) {
     }).catch(e => $('[data-viewer]', app).innerHTML = `<div class="panel">Could not render: ${esc(e.message)}</div>`);
   }
   const vs = $('[data-vsel]', app); if (vs) vs.onchange = () => jobPage(key, vs.value);
-  let picked = []; const go = $('[data-vgo]', app), msg = $('[data-vmsg]', app);
+  const qCopy = $('[data-qcopy]', app);
+  if (qCopy && linkedQuote) qCopy.onclick = () => copy(linkedQuote.clientUrl);
+  let picked = []; const vgo = $('[data-vgo]', app), msg = $('[data-vmsg]', app);
+  if (vgo) {
   dropzone($('[data-vdrop]', app), fs => {
     const problem = proofError(fs);
-    if (problem) { picked = []; go.disabled = true; msg.className = 'msg err'; msg.textContent = problem; $('[data-vname]', app).innerHTML = PROOF_EMPTY; return; }
-    picked = fs; msg.className = 'msg'; msg.textContent = ''; $('[data-vname]', app).innerHTML = proofLabel(fs); go.disabled = false;
+    if (problem) { picked = []; vgo.disabled = true; msg.className = 'msg err'; msg.textContent = problem; $('[data-vname]', app).innerHTML = PROOF_EMPTY; return; }
+    picked = fs; msg.className = 'msg'; msg.textContent = ''; $('[data-vname]', app).innerHTML = proofLabel(fs); vgo.disabled = false;
   });
-  go.onclick = async () => {
-    if (!picked.length) return; go.disabled = true; msg.className = 'msg';
+  vgo.onclick = async () => {
+    if (!picked.length) return; vgo.disabled = true; msg.className = 'msg';
     const label = picked.length > 1 ? `Uploading ${picked.length} images…` : 'Uploading…';
     try { await sendProof(id, picked, $('[data-vnote]', app).value, p => msg.textContent = `${label} ${Math.round(p * 100)}%`); toast('New version uploaded'); jobPage(key); }
-    catch (e) { msg.className = 'msg err'; msg.textContent = e.message; go.disabled = false; }
+    catch (e) { msg.className = 'msg err'; msg.textContent = e.message; vgo.disabled = false; }
   };
+  }
   $('[data-del]', app).onclick = async () => { if (!confirm(`Delete job ${j.jobNumber} and all its files? The client link will stop working.`)) return; await api(`${B}/api/jobs/${id}`, { method: 'DELETE' }); go(B + '/studio'); };
   $('[data-edit]', app).onclick = () => openEdit(j);
   $$('[data-rmv]', app).forEach(btn => btn.onclick = async () => {
@@ -882,6 +891,13 @@ function defaultCalendarDay() {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return melbourneToday();
 }
+function showNewStep(step) {
+  const choice = $('[data-fx-choice]', modal);
+  const quoteForm = $('#quoteJobForm');
+  if (choice) choice.hidden = step !== 'choice';
+  if (quoteForm) quoteForm.hidden = step !== 'quote';
+  form.hidden = step !== 'proof';
+}
 function openNew() {
   form.reset();
   newFiles = [];
@@ -889,8 +905,13 @@ function openNew() {
   $('#n-msg').textContent = '';
   const date = $('#n-caldate');
   if (date) date.value = defaultCalendarDay();
+  const qDate = $('#qj-date');
+  if (qDate && !qDate.value) qDate.value = melbourneToday();
+  const qMsg = $('#qj-msg');
+  if (qMsg) { qMsg.className = 'msg'; qMsg.textContent = ''; }
   modal.hidden = false;
-  $('#n-num').focus();
+  if (fx()) { showNewStep('choice'); }
+  else { showNewStep('proof'); $('#n-num').focus(); }
 }
 function bindNew() { $$('[data-new]').forEach(b => b.onclick = openNew); }
 $$('[data-close]', modal).forEach(b => b.onclick = () => modal.hidden = true);
@@ -921,6 +942,36 @@ form.onsubmit = async e => {
   } catch (er) { m.className = 'msg err'; m.textContent = er.message; } finally { go.disabled = false; }
 };
 bindNew();
+modal.addEventListener('click', e => {
+  const modeBtn = e.target.closest && e.target.closest('[data-fx-mode]');
+  if (modeBtn) {
+    showNewStep(modeBtn.dataset.fxMode === 'quote' ? 'quote' : 'proof');
+    const focus = modeBtn.dataset.fxMode === 'quote' ? $('#qj-num') : $('#n-num');
+    if (focus) focus.focus();
+    return;
+  }
+  if (e.target.closest && e.target.closest('[data-fx-back]')) showNewStep('choice');
+});
+const quoteJobForm = $('#quoteJobForm');
+if (quoteJobForm) quoteJobForm.onsubmit = async e => {
+  e.preventDefault();
+  const m = $('#qj-msg'), goBtn = $('#qj-go');
+  m.className = 'msg'; m.textContent = '';
+  const data = Object.fromEntries(new FormData(quoteJobForm));
+  const desc = [...quoteJobForm.querySelectorAll('[name="ld"]')].map(el => el.value);
+  const qty = [...quoteJobForm.querySelectorAll('[name="lq"]')].map(el => el.value);
+  const price = [...quoteJobForm.querySelectorAll('[name="lp"]')].map(el => el.value);
+  const lines = Array.from({ length: QUOTE_LINES }, (_, i) => ({ description: desc[i] || '', qty: qty[i] || '', price: price[i] || '' }));
+  if (!String(data.jobNumber || '').trim() || !String(data.client || '').trim()) { m.className = 'msg err'; m.textContent = 'Job number and client are required.'; return; }
+  goBtn.disabled = true;
+  try {
+    const job = await api(B + '/api/jobs', { method: 'POST', body: JSON.stringify({ mode: 'quote', jobNumber: data.jobNumber.trim(), client: data.client.trim(), clientName: data.client.trim(), contactName: data.contactName || '', clientEmail: data.clientEmail || '', date: data.date, validity: data.validity, description: data.description || '', notes: data.notes || '', terms: data.terms || '', lines }) });
+    modal.hidden = true;
+    toast('Quote saved — send the client link');
+    go(jobHref(job));
+  } catch (err) { m.className = 'msg err'; m.textContent = err.message; }
+  finally { goBtn.disabled = false; }
+};
 
 function setEditColour(value) {
   const want = CAL_COLOURS.some(([name]) => name === value) ? value : 'grey';
@@ -1096,7 +1147,7 @@ async function quotePage(rawId) {
         <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
         <div class="q-brand__in">
           <div class="q-brand__row">
-            <div class="logo"><img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span></div>
+            <div class="logo">${fx() ? `<img src="${B}/assets/img/ybifx-logo.png" alt="YBI FX">` : `<img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span>`}</div>
             <p class="q-brand__title">Quote<span class="ol">.</span></p>
           </div>
         </div>
@@ -1116,16 +1167,17 @@ async function quotePage(rawId) {
         <div><span>GST 10%</span><b data-q-gst>$0.00</b></div>
         <div class="grand"><span>Total <span class="dim">(inc GST)</span></span><b data-q-grand>$0.00</b></div>
       </div>
-      <div class="btns q-actions" style="margin-top:26px"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div>
+      <div class="btns q-actions" style="margin-top:26px"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote && fx() ? `<a class="btn btn--ghost" href="${B}/api/quotes/${quote.id}/pdf">Download PDF</a>` : ''}${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div>
       <p class="msg" id="q-msg"></p>
       </div>
       <footer class="q-brandfoot">
         <div class="q-brandfoot__cols">
-          <div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
+          ${fx() ? `<div><span class="k">YBI FX</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
+          <div><span class="k">Get in touch</span><a href="mailto:fx@ybicreative.com.au">fx@ybicreative.com.au</a><a href="https://www.ybifx.com">ybifx.com</a></div>` : `<div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
           <div><span class="k">YBI SA</span><address>PO Box 188<br>Williamstown SA 5351<br><a href="tel:+61885246345">(08) 8524 6345</a></address></div>
-          <div><span class="k">Get in touch</span><a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a><a href="https://www.ybicreative.com.au">ybicreative.com.au</a></div>
+          <div><span class="k">Get in touch</span><a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a><a href="https://www.ybicreative.com.au">ybicreative.com.au</a></div>`}
         </div>
-        <p class="q-brandfoot__base">Brand Engineering · Bendigo VIC · Williamstown SA</p>
+        <p class="q-brandfoot__base">${fx() ? 'Truck Art · Bendigo VIC' : 'Brand Engineering · Bendigo VIC · Williamstown SA'}</p>
       </footer>
     </form>
   </div>`;
@@ -1330,7 +1382,7 @@ document.addEventListener('click', e => {
 window.addEventListener('popstate', () => route());
 bootRadio();
 mountToolsMenu();
-route();
+api(B + '/api/brand').then(b => { brand = b || brand; }).catch(() => {}).finally(() => route());
 // light polling so new client feedback shows up on the dashboard
 const onDash = () => !location.pathname.slice(B.length).replace(/^\/studio\/?/, '');
 const onCal = () => location.pathname.replace(/\/$/, '').endsWith('/studio/calendar');
