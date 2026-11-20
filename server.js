@@ -65,20 +65,6 @@ function brandSecret() {
 function studioSession() {
   return crypto.createHmac('sha256', brandSecret()).update('studio:' + studioPassword()).digest('hex');
 }
-// ADOBE_FONTS_KIT_ID — Adobe Fonts (Typekit) kit id for Acumin Pro Wide.
-// Acumin Black Extended Italic is the YBI FX heading face ('acumin-pro-wide',
-// weight 900 italic). When this env var is set, pages load
-// https://use.typekit.net/<id>.css. Leave it unset to use the self-hosted
-// Archivo Black Italic fallback (font-stretch 125%). PDF quotes always embed
-// that fallback: Adobe web fonts cannot be embedded in a PDF.
-function adobeKitId() {
-  const id = String(process.env.ADOBE_FONTS_KIT_ID || '').trim();
-  return /^[A-Za-z0-9]+$/.test(id) ? id : '';
-}
-function adobeFontTag() {
-  const id = adobeKitId();
-  return id ? `<link rel="stylesheet" href="https://use.typekit.net/${id}.css">` : '';
-}
 function publicBrand() {
   const fx = activeBrand() === 'fx';
   return {
@@ -1591,7 +1577,7 @@ function fxHtml(html) {
 }
 async function servePage(req, res, name, code = 200) {
   // HTML templates use {{B}} for the mount path, so the app works at /proof (or anywhere)
-  let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', B).replaceAll('{{BRAND}}', activeBrand()).replaceAll('{{ADOBE_FONTS}}', adobeFontTag());
+  let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', B).replaceAll('{{BRAND}}', activeBrand());
   if (activeBrand() === 'fx') html = fxHtml(html);
   res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'same-origin' });
   res.end(html);
@@ -1974,7 +1960,6 @@ if (require.main === module) {
     console.log(`  Brand: ${activeBrand()}${activeBrand() === 'fx' ? ' (proofs.ybifx.com)' : ''}`);
     console.log(`  Studio password: ${pw === 'ybi-proof' || pw === 'ybi-fx-proof' ? pw + ' (default — set ' + (activeBrand() === 'fx' ? 'STUDIO_PASSWORD_FX' : 'STUDIO_PASSWORD') + ' to change)' : '(from env)'}`);
     console.log(`  Data folder: ${dataRoot()}`);
-    console.log(`  Adobe Fonts kit: ${adobeKitId() || '(not set — Archivo Black Italic fallback)'}`);
     seedFxDemo().catch(e => console.error('[seed]', e));
     console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}`);
     loadSettings().then(s => {

@@ -502,14 +502,14 @@ body.is-halftone main{padding-bottom:0}
   .ht-tools .ht-garments{margin-left:0}
 }
 
-/* YBI FX — same black layout as YBI Proofs. Headings, job titles and buttons use
-   Acumin Pro Wide (acumin-pro-wide, 900 italic) when ADOBE_FONTS_KIT_ID is set,
-   otherwise the self-hosted Archivo Black Italic fallback at stretch 125%.
-   Accent colours are sampled from the official YBI FX logo. */
+/* YBI FX display face: Archivo Black Italic at width 125 (OFL). Closest free
+   match to the logo tagline, which is a black extended italic grotesque.
+   Body copy stays Work Sans. */
 @font-face{font-family:"Archivo FX";src:url(fonts/archivo-black-italic-ext.woff2) format("woff2");font-weight:900;font-style:italic;font-stretch:125%;font-display:swap}
 html[data-brand="fx"]{
   --fx:#0077C3;--fx-pink:#F00090;--fx-mid:#C1398D;
   --fx-grad:linear-gradient(90deg,#0077C3 0%,#C1398D 52%,#F00090 100%);
+  --fx-display:"Archivo FX",sans-serif;
   --g:var(--fx);--ok:var(--fx-pink);--warn:var(--fx-mid);
 }
 html[data-brand="fx"] .h1,
@@ -519,15 +519,37 @@ html[data-brand="fx"] .vtag,
 html[data-brand="fx"] .btn,
 html[data-brand="fx"] .q-brand__title,
 html[data-brand="fx"] .eyebrow,
-html[data-brand="fx"] .jobs td.num{
-  font-family:"acumin-pro-wide","Archivo FX",sans-serif;
+html[data-brand="fx"] .k,
+html[data-brand="fx"] .field label,
+html[data-brand="fx"] .jobs th,
+html[data-brand="fx"] .jobs td.num,
+html[data-brand="fx"] .chip,
+html[data-brand="fx"] .tabs button{
+  font-family:var(--fx-display);
   font-weight:900;font-style:italic;font-stretch:125%;
+  text-transform:uppercase;
 }
+html[data-brand="fx"] .h1,
+html[data-brand="fx"] .h2,
+html[data-brand="fx"] .h3,
+html[data-brand="fx"] .q-brand__title,
+html[data-brand="fx"] .jobs td.num{letter-spacing:-.01em}
+html[data-brand="fx"] .btn,
+html[data-brand="fx"] .eyebrow,
+html[data-brand="fx"] .k,
+html[data-brand="fx"] .field label,
+html[data-brand="fx"] .jobs th,
+html[data-brand="fx"] .chip,
+html[data-brand="fx"] .tabs button,
+html[data-brand="fx"] .hdr__r{letter-spacing:.04em}
+html[data-brand="fx"] .hdr__r,
+html[data-brand="fx"] .hdr__r a,
+html[data-brand="fx"] .hdr__r button{font-family:var(--fx-display);font-weight:900;font-style:italic;font-stretch:125%;text-transform:uppercase}
 html[data-brand="fx"] .hdr{border-bottom-color:transparent}
 html[data-brand="fx"] .hdr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--fx-grad)}
 html[data-brand="fx"] .logo img{width:168px;height:auto}
 html[data-brand="fx"] .logo span{display:none}
-html[data-brand="fx"] .btn{background:var(--fx);border-color:var(--fx);color:#fff;letter-spacing:.08em}
+html[data-brand="fx"] .btn{background:var(--fx);border-color:var(--fx);color:#fff}
 html[data-brand="fx"] .btn:hover{color:#09090a;border-color:var(--fx-pink)}
 html[data-brand="fx"] .btn--ghost{background:transparent;color:var(--ink);border-color:var(--line2)}
 html[data-brand="fx"] .btn--ok{background:var(--fx-pink);border-color:var(--fx-pink);color:#fff}
@@ -547,15 +569,17 @@ html[data-brand="fx"] .eband .ol,
 html[data-brand="fx"] .q-brand .ol{background:none;-webkit-text-fill-color:#F00090;color:#F00090}
 .fx-choice{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .fx-pick{display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left;padding:18px 16px;border-radius:16px;border:1px solid var(--line2);background:transparent;color:var(--ink);cursor:pointer}
-.fx-pick b{font-family:"acumin-pro-wide","Archivo FX",sans-serif;font-weight:900;font-style:italic;font-stretch:125%;font-size:1.35rem;letter-spacing:-.02em}
+.fx-pick b{font-family:"Archivo FX",sans-serif;font-weight:900;font-style:italic;font-stretch:125%;font-size:1.35rem;letter-spacing:-.01em;text-transform:uppercase}
 .fx-pick span{color:var(--mute);font:400 .92rem/1.45 var(--sans);letter-spacing:0;text-transform:none}
 .fx-pick:hover{border-color:var(--fx,#0077C3)}
 @media (max-width:700px){.fx-choice{grid-template-columns:1fr}}
 @media print{
-  html[data-brand="fx"] .q-brand__title,
   html[data-brand="fx"] .h1,
   html[data-brand="fx"] .h2,
-  html[data-brand="fx"] .btn{font-family:"Archivo FX",sans-serif!important}
+  html[data-brand="fx"] .h3,
+  html[data-brand="fx"] .btn,
+  html[data-brand="fx"] .k,
+  html[data-brand="fx"] .q-brand__title{font-family:"Archivo FX",sans-serif!important}
 }
 
 /* YBI Radio — dash photo, screen in the YBI site type with green and red highlights. */

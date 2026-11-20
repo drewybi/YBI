@@ -1,6 +1,5 @@
 // Branded quote PDF. Headings use the self-hosted Archivo Black Italic
-// (extended) fallback. Adobe Fonts (acumin-pro-wide) are web-only and are
-// not embedded here.
+// at width 125, the free face that matches the YBI FX logo tagline.
 'use strict';
 const fs = require('fs');
 const path = require('path');
