@@ -381,7 +381,8 @@ body.is-cal-drag .calev{pointer-events:none}
 .qlines th{font:500 .62rem/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--dim);text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
 .qlines td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
 .qlines .num{width:2.2rem;color:var(--dim);font:500 .72rem/1 var(--sans)}
-.qlines .qty{width:6.5rem}.qlines .price{width:8rem}.qlines .amt,.qlines th.amt{width:8rem;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.qlines .qty{width:6.5rem}.qlines .price{width:8rem}.qlines .amt,.qlines th.amt{width:8rem;white-space:nowrap}
+.qlines .qty,.qlines .price,.qlines .amt,.qlines th.qty,.qlines th.price,.qlines th.amt{text-align:right;font-variant-numeric:tabular-nums}
 .qlines input{width:100%;background:transparent;border:0;border-bottom:1px solid transparent;color:var(--ink);padding:8px 0;border-radius:0}
 .qlines input:focus{outline:0;border-bottom-color:var(--g)}
 .qlines input::placeholder{color:var(--dim)}
@@ -562,7 +563,9 @@ html[data-brand="fx"] .eband{min-height:clamp(300px,38vh,460px)}
 html[data-brand="fx"] .eband__vid{display:none}
 html[data-brand="fx"] .eband__still{filter:grayscale(1) contrast(1.08) brightness(.55);object-position:58% 46%;animation:none;transform:none}
 html[data-brand="fx"] .eband__media::after{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;background:linear-gradient(120deg,#00B4E6 0%,#6d4dff 42%,#c026a8 70%,#F00090 100%);mix-blend-mode:color}
-html[data-brand="fx"] .eband::before{background:linear-gradient(180deg,rgba(9,9,10,.62) 0%,rgba(9,9,10,.22) 36%,rgba(9,9,10,.72) 78%,#09090a 100%),linear-gradient(90deg,rgba(9,9,10,.78),transparent 64%)}
+html[data-brand="fx"] .eband::before{background:linear-gradient(180deg,rgba(9,9,10,.66) 0%,rgba(9,9,10,.12) 24%,rgba(9,9,10,.34) 46%,rgba(9,9,10,.82) 68%,rgba(9,9,10,.94) 84%,#09090a 100%),linear-gradient(90deg,rgba(9,9,10,.88) 0%,rgba(9,9,10,.62) 32%,rgba(9,9,10,.46) 58%,rgba(9,9,10,.7) 82%,rgba(9,9,10,.86) 100%)}
+html[data-brand="fx"] .jobs td.who{white-space:nowrap;width:1%}
+@media (max-width:720px){html[data-brand="fx"] .jobs td.who{white-space:normal;width:auto}}
 html[data-brand="fx"] .state--approved{border-color:rgba(243,241,236,.4);background:linear-gradient(160deg,rgba(243,241,236,.07),var(--bg2) 62%)}
 html[data-brand="fx"] .msg.err{color:#F00090}
 html[data-brand="fx"] .prod--awaiting_approval{color:#9ae7ff;border-color:rgba(0,196,238,.55);background-color:rgba(0,180,230,.16)}

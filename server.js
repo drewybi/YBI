@@ -15,29 +15,30 @@ const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const brandAls = new AsyncLocalStorage();
 
-// Brand is pinned with BRAND=fx|creative (its own Render service) or chosen
-// from the host. proofs.ybifx.com (and any *.ybifx.com host) is YBI FX.
-// FX data lives in FX_DATA_DIR, or in DATA_DIR when BRAND=fx, otherwise data-fx/.
+// YBI FX is the same service, under /fx. /proof (and every other path) stays YBI Creative.
+// FX files sit in DATA_DIR/fx on the existing disk. No host switch and no second service.
+const FX_PREFIX = '/fx';
+function requestPath(req) {
+  try { return decodeURIComponent(new URL(req.url || '/', 'http://x').pathname); }
+  catch { return '/'; }
+}
+function isFxPath(pathname) {
+  return pathname === FX_PREFIX || pathname.startsWith(FX_PREFIX + '/');
+}
 function activeBrand() {
   const store = brandAls.getStore();
   if (store && (store.brand === 'fx' || store.brand === 'creative')) return store.brand;
-  if (process.env.BRAND === 'fx' || process.env.BRAND === 'creative') return process.env.BRAND;
   return 'creative';
 }
 function brandForRequest(req) {
-  if (process.env.BRAND === 'fx' || process.env.BRAND === 'creative') return process.env.BRAND;
-  const raw = String((req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '');
-  const host = raw.split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
-  if (host === 'proofs.ybifx.com' || host.endsWith('.ybifx.com')) return 'fx';
-  return 'creative';
+  return isFxPath(requestPath(req)) ? 'fx' : 'creative';
+}
+function creativeRoot() {
+  return process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
 }
 function dataRoot() {
-  if (activeBrand() === 'fx') {
-    if (process.env.BRAND === 'fx' && process.env.DATA_DIR) return path.resolve(process.env.DATA_DIR);
-    if (process.env.FX_DATA_DIR) return path.resolve(process.env.FX_DATA_DIR);
-    return path.join(ROOT, 'data-fx');
-  }
-  return process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
+  if (activeBrand() === 'fx') return path.join(creativeRoot(), 'fx');
+  return creativeRoot();
 }
 const jobsDir = () => path.join(dataRoot(), 'jobs');
 const filesDir = () => path.join(dataRoot(), 'files');
@@ -46,7 +47,7 @@ const logPath = () => path.join(dataRoot(), 'notifications.log');
 const calPath = () => path.join(dataRoot(), 'calendar-events.json');
 const quotePath = () => path.join(dataRoot(), 'quotes.json');
 function studioPassword() {
-  if (activeBrand() === 'fx') return process.env.STUDIO_PASSWORD_FX || 'ybi-fx-proof';
+  if (activeBrand() === 'fx' && process.env.STUDIO_PASSWORD_FX) return process.env.STUDIO_PASSWORD_FX;
   return process.env.STUDIO_PASSWORD || 'ybi-proof';
 }
 function studioCookieName() { return activeBrand() === 'fx' ? 'ybi_fx_studio' : 'ybi_studio'; }
@@ -93,7 +94,7 @@ function publicBrand() {
     email: fx ? contact.email : 'website@ybicreative.com.au',
     phone: fx ? contact.phone : '(03) 5444 2127',
     address: fx ? contact.address : '51 Pratts Park Road, Bendigo VIC 3551',
-    logo: `${B}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
+    logo: `${base()}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
     lockup: fx ? 'Truck Art' : 'Brand Engineering',
     confirmTo: fx ? contact.email : 'website@ybicreative.com.au'
   };
@@ -104,6 +105,15 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/$/, ''); // origin only, e.g. https://www.ybicreative.com.au
 // Path prefix the app is mounted at (default /proof). Use BASE_PATH= (empty) to mount at the root.
 const B = ('BASE_PATH' in process.env ? process.env.BASE_PATH : '/proof').replace(/\/+$/, '').replace(/^(?=[^/])/, '/');
+// Public mount for the request's brand. FX mirrors YBI under /fx, so /proof/studio is /fx/proof/studio.
+function base() {
+  if (activeBrand() !== 'fx') return B;
+  return B ? FX_PREFIX + B : FX_PREFIX;
+}
+function cookiePath() {
+  if (activeBrand() === 'fx') return FX_PREFIX;
+  return B || '/';
+}
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
 const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'halftone', 'radio', 'login', 'logout', 'favicon.ico', 'robots.txt']);
@@ -804,7 +814,7 @@ function jobEvent(job, override) {
     notes: '',
     colour: (override && normalColour(override.colour)) || 'grey',
     dayOrder: override ? storedDayOrder(override.dayOrder) : null,
-    href: `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`,
+    href: `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };
@@ -1247,7 +1257,7 @@ async function studioQuote(req, q, math) {
     ...pub,
     status: quoteStatus(q),
     responses: publicResponses(q),
-    clientUrl: `${origin(req)}${B}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
+    clientUrl: `${origin(req)}${base()}/quote/${q.id}?k=${encodeURIComponent(q.token)}`,
     ...(q.jobId ? { jobId: q.jobId } : {}),
     ...(job && job.jobNumber ? { jobNumber: job.jobNumber } : {})
   };
@@ -1501,7 +1511,7 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
 }
 
 const origin = req => PUBLIC_URL || `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-const numPath = job => `${B}/${encodeURIComponent(job.jobNumber || job.id)}`;
+const numPath = job => `${base()}/${encodeURIComponent(job.jobNumber || job.id)}`;
 function reviewUrl(req, job) { return origin(req) + numPath(job); }
 function secureUrl(req, job) { return `${origin(req)}${numPath(job)}?k=${job.token}`; }
 function publicVersion(job, v, q) {
@@ -1524,7 +1534,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), phase: job.phase === 'quoting' ? 'quoting' : 'proofs', ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), phase: job.phase === 'quoting' ? 'quoting' : 'proofs', ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1556,8 +1566,8 @@ async function notifyQuote(req, quote, response, job) {
   const pub = publicQuote(quote, math);
   const jobLine = String(quote.description || '').split('\n')[0].trim();
   const label = response.type === 'accept' ? 'CONFIRMED' : 'CHANGES REQUESTED';
-  const studioLink = origin(req) + `${B}/studio/quote/${quote.id}`;
-  const proofLink = job ? origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}` : '';
+  const studioLink = origin(req) + `${base()}/studio/quote/${quote.id}`;
+  const proofLink = job ? origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}` : '';
   const lines = [
     `${label} — Quote for ${quote.client}`, '',
     `Client: ${quote.client}`,
@@ -1581,7 +1591,7 @@ async function notifyQuote(req, quote, response, job) {
 
 async function notify(req, job, fb, v) {
   const label = fb.type === 'approve' ? 'APPROVED' : 'CHANGES REQUESTED';
-  const studioLink = origin(req) + `${B}/studio/${encodeURIComponent(job.jobNumber)}`;
+  const studioLink = origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber)}`;
   const lines = [
     `${label} — Job ${job.jobNumber} (V${v.n})`, '',
     `Client: ${job.clientName}${job.clientCompany ? ' / ' + job.clientCompany : ''}`,
@@ -1598,8 +1608,8 @@ async function notify(req, job, fb, v) {
 // ---------- auth ----------
 const cookies = req => Object.fromEntries((req.headers.cookie || '').split(';').map(c => c.trim().split('=').map(decodeURIComponent)).filter(p => p[0]));
 const isStudio = req => cookies(req)[studioCookieName()] === studioSession() || req.headers['x-studio-key'] === studioPassword();
-const setCookie = () => `${studioCookieName()}=${studioSession()}; Path=${B || '/'}; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}`;
-const clearCookie = () => `${studioCookieName()}=; Path=${B || '/'}; Max-Age=0`;
+const setCookie = () => `${studioCookieName()}=${studioSession()}; Path=${cookiePath()}; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}`;
+const clearCookie = () => `${studioCookieName()}=; Path=${cookiePath()}; Max-Age=0`;
 
 // ---------- static ----------
 async function serveFile(req, res, file, extra = {}) {
@@ -1629,7 +1639,7 @@ function fxHtml(html) {
 }
 async function servePage(req, res, name, code = 200) {
   // HTML templates use {{B}} for the mount path, so the app works at /proof (or anywhere)
-  let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', B).replaceAll('{{BRAND}}', activeBrand());
+  let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', base()).replaceAll('{{BRAND}}', activeBrand());
   if (activeBrand() === 'fx') html = fxHtml(html);
   res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'same-origin' });
   res.end(html);
@@ -1646,24 +1656,27 @@ const back = (res, loc, extra = {}) => send(res, 302, '', { Location: loc, ...ex
 async function handle(req, res) {
   const u = new URL(req.url, 'http://x'); let p; try { p = decodeURIComponent(u.pathname); } catch { return err(res, 400, 'Bad URL'); }
   const m = req.method; let r;
+  brandSecret();
 
+  // /fx mirrors the YBI mount. /fx/proof/studio is FX; /proof/studio stays YBI.
+  if (isFxPath(p)) p = p.slice(FX_PREFIX.length) || '/';
   // Works whether the proxy keeps the /proof prefix or strips it.
   if (B && (p === B || p.startsWith(B + '/'))) p = p.slice(B.length) || '/';
-  else if (B && p === '/') return back(res, B);
+  else if (B && p === '/') return back(res, base());
   const k = u.searchParams.get('k') || '';
 
   // legacy links → new shape
   if ((r = p.match(/^\/p\/([\w-]{10,})\/?$/))) { const job = await jobByToken(r[1]); return job ? back(res, `${numPath(job)}?k=${job.token}`) : servePage(req, res, 'review.html', 404); }
-  if (p === '/studio.html' || p === '/review.html' || p === '/login.html') return back(res, B + '/');
+  if (p === '/studio.html' || p === '/review.html' || p === '/login.html') return back(res, base() + '/');
 
   // pages
   if (p === '/' || p === '/login') {
-    if (isStudio(req)) return back(res, B + '/studio');
+    if (isStudio(req)) return back(res, base() + '/studio');
     return servePage(req, res, 'login.html');
   }
   if (p === '/studio' || p.startsWith('/studio/')) {
-    if (u.searchParams.get('key') === studioPassword()) return back(res, B + p, { 'Set-Cookie': setCookie() });
-    if (!isStudio(req)) return back(res, `${B}/?next=${encodeURIComponent(B + p)}`);
+    if (u.searchParams.get('key') === studioPassword()) return back(res, base() + p, { 'Set-Cookie': setCookie() });
+    if (!isStudio(req)) return back(res, `${base()}/?next=${encodeURIComponent(base() + p)}`);
     return servePage(req, res, 'studio.html');
   }
   if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
@@ -1885,7 +1898,7 @@ async function handle(req, res) {
       }
     }
     if (p === '/api/settings') {
-      if (m === 'GET') { const s = await loadSettings(); return send(res, 200, { ...s, emailEnabled: !!mailer, publicUrl: PUBLIC_URL, basePath: B, defaultAccess: DEFAULT_ACCESS }); }
+      if (m === 'GET') { const s = await loadSettings(); return send(res, 200, { ...s, emailEnabled: !!mailer, publicUrl: PUBLIC_URL, basePath: base(), defaultAccess: DEFAULT_ACCESS }); }
       if (m === 'POST') {
         const b = await readJSON(req);
         const notifyEmail = String(b.notifyEmail || '').trim();
@@ -2007,11 +2020,13 @@ async function seedFxDemo() {
 if (require.main === module) {
   startArchiveSweep();
   createAppServer().listen(PORT, HOST, () => {
-    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · halftone: ${B}/studio/halftone · job pages: ${B}/{jobNumber})`);
-    const pw = studioPassword();
-    console.log(`  Brand: ${activeBrand()}${activeBrand() === 'fx' ? ' (proofs.ybifx.com)' : ''}`);
-    console.log(`  Studio password: ${pw === 'ybi-proof' || pw === 'ybi-fx-proof' ? pw + ' (default — set ' + (activeBrand() === 'fx' ? 'STUDIO_PASSWORD_FX' : 'STUDIO_PASSWORD') + ' to change)' : '(from env)'}`);
-    console.log(`  Data folder: ${dataRoot()}`);
+    const fxMount = B ? FX_PREFIX + B : FX_PREFIX;
+    console.log(`\n  YBI Proofs running →  http://localhost:${PORT}${B || '/'}  (studio: ${B}/studio · calendar: ${B}/studio/calendar · quotes: ${B}/studio/quote · halftone: ${B}/studio/halftone · job pages: ${B}/{jobNumber})`);
+    console.log(`  YBI FX →  http://localhost:${PORT}${fxMount}/studio  (same service, data in ${path.join(creativeRoot(), 'fx')})`);
+    const pw = process.env.STUDIO_PASSWORD || 'ybi-proof';
+    console.log(`  Studio password: ${process.env.STUDIO_PASSWORD ? '(from env)' : pw + ' (default — set STUDIO_PASSWORD to change)'}`);
+    console.log(`  FX studio password: ${process.env.STUDIO_PASSWORD_FX ? 'STUDIO_PASSWORD_FX' : 'falls back to the YBI studio password'}`);
+    console.log(`  Data folder: ${creativeRoot()}`);
     seedFxDemo().catch(e => console.error('[seed]', e));
     console.log(`  Email alerts: ${mailer ? 'ON (SMTP)' : 'off — dashboard + data/notifications.log'}`);
     loadSettings().then(s => {

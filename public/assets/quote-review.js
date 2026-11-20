@@ -15,6 +15,10 @@ const kq = K ? `?k=${encodeURIComponent(K)}` : '';
 let quote, mode = null;
 
 const aud = cents => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100);
+const audPrice = raw => {
+  const n = Number(String(raw ?? '').replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) ? new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(n) : '—';
+};
 function showDay(iso) {
   const [y, m, d] = String(iso || '').split('-').map(Number);
   if (!y || !m || !d) return iso || '';
@@ -59,7 +63,7 @@ async function load() {
 
 function lineRows(lines) {
   if (!lines.length) return '<p class="empty">No priced lines on this quote.</p>';
-  return `<div class="q-scroll"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="amt">Amount</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.description) || '—'}</td><td>${esc(line.qty || '1')}</td><td>${line.price ? esc(line.price) : '—'}</td><td class="amt">${aud(line.amount)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="q-scroll"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="amt">Amount</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.description) || '—'}</td><td class="qty">${esc(line.qty || '1')}</td><td class="price">${line.price ? audPrice(line.price) : '—'}</td><td class="amt">${aud(line.amount)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function showUntil(iso) {
