@@ -35,7 +35,7 @@ function render() {
   if (!latest) { app.innerHTML = `<div class="wrap" style="padding-top:100px;padding-bottom:100px"><p class="eyebrow">Job ${esc(job.jobNumber)}</p><h1 class="h2">${job.quoting ? 'Quote still <span class="ol">open.</span>' : 'Proof coming <span class="ol">soon.</span>'}</h1><p class="lede">${job.quoting ? 'Artwork proofs open on this link once the quote is approved.' : 'YBI is still preparing your artwork. Check this link again shortly.'}</p></div>`; return; }
   const v = job.versions.find(x => x.n === showN) || latest; const isLatest = v === latest;
   const head = { awaiting_review: ['Your proof is', 'ready.'], changes_requested: ['Changes', 'received.'], approved: ['Artwork', 'approved.'] }[job.status];
-  document.title = `Proof ${job.jobNumber} · YBI Creative`;
+  document.title = `Proof ${job.jobNumber} · ${document.documentElement.dataset.brand === 'fx' ? 'YBI FX' : 'YBI Creative'}`;
   app.innerHTML = engineBand(`<p class="eyebrow">Artwork proof · <span style="color:var(--ink)">Job ${esc(job.jobNumber)}</span></p>
     <h1 class="h1">${head[0]} <span class="ol">${head[1]}</span></h1>
     <div class="meta">

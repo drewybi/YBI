@@ -910,6 +910,7 @@ function openNew() {
   const qMsg = $('#qj-msg');
   if (qMsg) { qMsg.className = 'msg'; qMsg.textContent = ''; }
   modal.hidden = false;
+  qjEnsure();
   if (fx()) { showNewStep('choice'); }
   else { showNewStep('proof'); $('#n-num').focus(); }
 }
@@ -952,16 +953,67 @@ modal.addEventListener('click', e => {
   }
   if (e.target.closest && e.target.closest('[data-fx-back]')) showNewStep('choice');
 });
+function qjMoney(cents) { return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100); }
+function qjRow() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="qj-d" maxlength="300" placeholder="Description"></td><td><input class="qj-q" inputmode="decimal" placeholder="1"></td><td><input class="qj-p" inputmode="decimal" placeholder="0.00"></td><td class="amt qj-amt">—</td><td><button type="button" class="lnk" data-qj-rm>Remove</button></td>`;
+  return tr;
+}
+function qjPaint() {
+  const body = $('#qj-lines');
+  if (!body) return;
+  const lines = [...body.querySelectorAll('tr')].map(tr => ({
+    description: tr.querySelector('.qj-d').value,
+    qty: tr.querySelector('.qj-q').value,
+    price: tr.querySelector('.qj-p').value
+  }));
+  const totals = quoteTotals(lines);
+  body.querySelectorAll('tr').forEach((tr, i) => {
+    const amt = totals.amounts[i];
+    tr.querySelector('.qj-amt').textContent = amt == null ? '—' : qjMoney(amt);
+  });
+  const sub = $('[data-qj-sub]'), gst = $('[data-qj-gst]'), grand = $('[data-qj-grand]');
+  if (sub) sub.textContent = qjMoney(totals.subtotal);
+  if (gst) gst.textContent = qjMoney(totals.gst);
+  if (grand) grand.textContent = qjMoney(totals.total);
+  return totals;
+}
+function qjEnsure() {
+  const body = $('#qj-lines');
+  if (!body || body.children.length) return;
+  body.append(qjRow(), qjRow());
+  qjPaint();
+}
 const quoteJobForm = $('#quoteJobForm');
+if (quoteJobForm) {
+  quoteJobForm.addEventListener('input', e => { if (e.target.closest('#qj-lines')) qjPaint(); });
+  quoteJobForm.addEventListener('click', e => {
+    if (e.target.closest('[data-qj-add]')) {
+      const body = $('#qj-lines');
+      if (body && body.children.length < QUOTE_LINES) body.append(qjRow());
+      qjPaint();
+    }
+    const rm = e.target.closest('[data-qj-rm]');
+    if (rm) {
+      const body = $('#qj-lines');
+      if (body && body.children.length > 1) rm.closest('tr').remove();
+      qjPaint();
+    }
+  });
+}
 if (quoteJobForm) quoteJobForm.onsubmit = async e => {
   e.preventDefault();
   const m = $('#qj-msg'), goBtn = $('#qj-go');
   m.className = 'msg'; m.textContent = '';
   const data = Object.fromEntries(new FormData(quoteJobForm));
-  const desc = [...quoteJobForm.querySelectorAll('[name="ld"]')].map(el => el.value);
-  const qty = [...quoteJobForm.querySelectorAll('[name="lq"]')].map(el => el.value);
-  const price = [...quoteJobForm.querySelectorAll('[name="lp"]')].map(el => el.value);
-  const lines = Array.from({ length: QUOTE_LINES }, (_, i) => ({ description: desc[i] || '', qty: qty[i] || '', price: price[i] || '' }));
+  const rows = [...$('#qj-lines').querySelectorAll('tr')].map(tr => ({
+    description: tr.querySelector('.qj-d').value,
+    qty: tr.querySelector('.qj-q').value,
+    price: tr.querySelector('.qj-p').value
+  }));
+  const totals = qjPaint();
+  if (totals.errors.length) { m.className = 'msg err'; m.textContent = totals.errors[0]; return; }
+  const lines = Array.from({ length: QUOTE_LINES }, (_, i) => rows[i] || { description: '', qty: '', price: '' });
   if (!String(data.jobNumber || '').trim() || !String(data.client || '').trim()) { m.className = 'msg err'; m.textContent = 'Job number and client are required.'; return; }
   goBtn.disabled = true;
   try {
@@ -1144,10 +1196,10 @@ async function quotePage(rawId) {
     ${quoteShare(quote)}
     <form class="panel q-sheet" id="quoteForm" novalidate>
       <header class="q-brand">
-        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
+        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/${fx() ? 'fx-hero.webp' : 'engine-1280.webp'}" alt=""></div>
         <div class="q-brand__in">
           <div class="q-brand__row">
-            <div class="logo">${fx() ? `<img src="${B}/assets/img/ybifx-logo.png" alt="YBI FX">` : `<img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span>`}</div>
+            <div class="logo">${fx() ? `<img src="${B}/assets/img/ybifx-logo-white.svg" alt="YBI FX">` : `<img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span>`}</div>
             <p class="q-brand__title">Quote<span class="ol">.</span></p>
           </div>
         </div>

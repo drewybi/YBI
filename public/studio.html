@@ -28,14 +28,13 @@
   <div class="field"><label for="qj-valid">Valid for</label><select id="qj-valid" name="validity"><option>7 days</option><option selected>30 days</option><option>6 months</option></select></div>
   <div class="field field--full"><label for="qj-desc">Job description</label><textarea id="qj-desc" name="description" maxlength="4000" placeholder="What’s being quoted — size, finish, where it sits on the truck…"></textarea></div>
  </div>
- <div class="q-scroll" style="margin-top:18px"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th></tr></thead><tbody>
-  <tr><td><input name="ld" maxlength="300" placeholder="Line"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal" placeholder="ex GST"></td></tr>
-  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
-  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
-  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
-  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
-  <tr><td><input name="ld" maxlength="300"></td><td><input name="lq" inputmode="decimal"></td><td><input name="lp" inputmode="decimal"></td></tr>
- </tbody></table></div>
+ <div class="q-scroll" style="margin-top:18px"><table class="qlines" id="qj-table"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Unit price</th><th class="amt">Amount</th><th></th></tr></thead><tbody id="qj-lines"></tbody></table></div>
+ <div class="btns" style="margin-top:12px"><button type="button" class="btn btn--sm btn--ghost" data-qj-add>+ Add line</button></div>
+ <div class="qtotals" aria-live="polite">
+  <div><span>Subtotal <span class="dim">(ex GST)</span></span><b data-qj-sub>$0.00</b></div>
+  <div><span>GST 10%</span><b data-qj-gst>$0.00</b></div>
+  <div class="grand"><span>Total <span class="dim">(inc GST)</span></span><b data-qj-grand>$0.00</b></div>
+ </div>
  <div class="field" style="margin-top:16px"><label for="qj-notes">Notes <span class="opt">(optional)</span></label><textarea id="qj-notes" name="notes" style="min-height:70px" maxlength="4000"></textarea></div>
  <div class="field" style="margin-top:16px"><label for="qj-terms">Terms <span class="opt">(optional)</span></label><textarea id="qj-terms" name="terms" style="min-height:70px" maxlength="4000">Valid for the period shown. Prices are in Australian dollars and exclude GST. Artwork proofs start once this quote is approved.</textarea></div>
  <div class="btns" style="margin-top:22px"><button class="btn" type="submit" id="qj-go">Save quote &amp; get link</button><button type="button" class="btn btn--ghost" data-close>Cancel</button></div>

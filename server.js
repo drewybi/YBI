@@ -65,19 +65,37 @@ function brandSecret() {
 function studioSession() {
   return crypto.createHmac('sha256', brandSecret()).update('studio:' + studioPassword()).digest('hex');
 }
+function phoneHref(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('0')) return `tel:+61${digits.slice(1)}`;
+  if (digits.startsWith('61')) return `tel:+${digits}`;
+  return digits ? `tel:+${digits}` : '';
+}
+// FX contact defaults match ybifx.com (fx@ybicreative.com.au, +61 3 5444 2127,
+// 51 Pratts Park Road, Bendigo). Override with FX_EMAIL, FX_PHONE, FX_ADDRESS.
+// YBI Proofs does not publish an ABN, so none is invented here.
+function fxContact() {
+  return {
+    email: process.env.FX_EMAIL || 'fx@ybicreative.com.au',
+    phone: process.env.FX_PHONE || '(03) 5444 2127',
+    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Bendigo VIC 3551'
+  };
+}
 function publicBrand() {
   const fx = activeBrand() === 'fx';
+  const contact = fxContact();
   return {
     id: fx ? 'fx' : 'creative',
     name: fx ? 'YBI FX' : 'YBI Creative',
     product: fx ? 'YBI FX Proofs' : 'YBI Proofs',
     site: fx ? 'https://www.ybifx.com' : 'https://www.ybicreative.com.au',
     siteLabel: fx ? 'ybifx.com' : 'ybicreative.com.au',
-    email: fx ? 'fx@ybicreative.com.au' : 'website@ybicreative.com.au',
-    phone: '(03) 5444 2127',
-    logo: `${B}/assets/img/${fx ? 'ybifx-logo.png' : 'logo-white-300.png'}`,
+    email: fx ? contact.email : 'website@ybicreative.com.au',
+    phone: fx ? contact.phone : '(03) 5444 2127',
+    address: fx ? contact.address : '51 Pratts Park Road, Bendigo VIC 3551',
+    logo: `${B}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
     lockup: fx ? 'Truck Art' : 'Brand Engineering',
-    confirmTo: fx ? 'fx@ybicreative.com.au' : 'website@ybicreative.com.au'
+    confirmTo: fx ? contact.email : 'website@ybicreative.com.au'
   };
 }
 
@@ -616,7 +634,7 @@ function parseNotifyAddresses(raw) {
 function fallbackNotifyEmail() {
   const env = String(process.env.NOTIFY_EMAIL || '').trim();
   if (parseNotifyAddresses(env).length) return env;
-  if (activeBrand() === 'fx') return 'fx@ybicreative.com.au';
+  if (activeBrand() === 'fx') return process.env.FX_EMAIL || 'fx@ybicreative.com.au';
   return DEFAULT_NOTIFY_EMAIL;
 }
 
@@ -1397,13 +1415,40 @@ async function createJobFromQuote(quote) {
   return job;
 }
 
+function addValidity(date, validity) {
+  const [y, m, d] = String(date || '').split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (validity === '7 days') dt.setUTCDate(dt.getUTCDate() + 7);
+  else if (validity === '6 months') dt.setUTCMonth(dt.getUTCMonth() + 6);
+  else dt.setUTCDate(dt.getUTCDate() + 30);
+  return dt.toISOString().slice(0, 10);
+}
+async function quoteSheet(quote, math) {
+  const pub = publicQuote(quote, math);
+  const job = quote.jobId ? await loadJob(quote.jobId) : null;
+  const jobNumber = job && job.jobNumber ? job.jobNumber : '';
+  return {
+    ...pub,
+    jobNumber,
+    clientEmail: (job && job.clientEmail) || '',
+    quoteNo: `Q-${jobNumber || String(quote.id).slice(0, 6).toUpperCase()}-V${quote.version || 1}`,
+    validUntil: addValidity(quote.date, quote.validity)
+  };
+}
+async function clientQuotePayload(quote, math) {
+  const view = clientQuote(quote, math);
+  if (activeBrand() !== 'fx') return view;
+  const sheet = await quoteSheet(quote, math);
+  return { ...view, jobNumber: sheet.jobNumber, clientEmail: sheet.clientEmail, quoteNo: sheet.quoteNo, validUntil: sheet.validUntil };
+}
 async function sendQuotePdf(req, res, qid, k, studio) {
   const math = await quoteMathReady;
   const quote = (await loadQuotes()).quotes.find(q => q.id === qid);
   if (!quote) return err(res, 404, 'No quote with that id.');
   if (!studio && k !== quote.token) return err(res, 403, 'This quote is private — please use the secure link YBI sent you.');
-  const pub = publicQuote(quote, math);
-  const pdf = await buildQuotePdf(pub, pub, publicBrand());
+  const pub = await quoteSheet(quote, math);
+  const pdf = await buildQuotePdf(pub, publicBrand());
   const fname = `${activeBrand() === 'fx' ? 'YBI-FX' : 'YBI'}-quote-${safeName(quote.client)}.pdf`;
   res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${fname}"`, 'Content-Length': pdf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   return req.method === 'HEAD' ? res.end() : res.end(pdf);
@@ -1416,7 +1461,7 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
   const quote = doc.quotes.find(q => q.id === qid);
   if (!quote) { miss(req); return err(res, 404, 'We couldn’t find that quote.'); }
   if (k !== quote.token) { miss(req); return err(res, 403, 'This quote is private — please use the secure link YBI sent you.'); }
-  if (!action && m === 'GET') return send(res, 200, clientQuote(quote, math));
+  if (!action && m === 'GET') return send(res, 200, await clientQuotePayload(quote, math));
   if (action === '/decision' && m === 'POST') {
     const b = await readJSON(req);
     if (!b || !['accept', 'changes'].includes(b.type)) return err(res, 400, 'Bad action');
@@ -1450,7 +1495,7 @@ async function handlePublicQuote(req, res, qid, action, m, k) {
     });
     if (result.error) return err(res, result.status, result.error);
     await notifyQuote(req, result.quote, result.response, result.job);
-    return send(res, 200, clientQuote(result.quote, math));
+    return send(res, 200, await clientQuotePayload(result.quote, math));
   }
   return err(res, 405, 'Method not allowed');
 }
@@ -1495,7 +1540,7 @@ async function deliverStaffMail({ subject, text, replyTo }) {
     return;
   }
   // fire-and-forget so the client never waits on SMTP
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER || (activeBrand() === 'fx' ? 'YBI FX Proofs <fx@ybicreative.com.au>' : 'proofs@ybicreative.com.au');
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || (activeBrand() === 'fx' ? `YBI FX Proofs <${process.env.FX_EMAIL || 'fx@ybicreative.com.au'}>` : 'proofs@ybicreative.com.au');
   mailer.sendMail({ from, to, replyTo: replyTo || undefined, subject, text })
     .then(() => fsp.appendFile(logPath(), `[mail] sent to ${to}\n`))
     .catch(e => { console.error('[mail] send failed:', e.message); return fsp.appendFile(logPath(), `[mail] FAILED to ${to}: ${e.message}\n`); });
@@ -1566,13 +1611,20 @@ async function serveFile(req, res, file, extra = {}) {
 }
 const htmlCache = {};
 function fxHtml(html) {
+  const c = fxContact();
   return html
-    .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo.png')
+    .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
+    .replaceAll('width="300" height="126" ', '')
+    .replaceAll('assets/img/engine-640.webp', 'assets/img/fx-hero.webp')
+    .replaceAll('assets/img/engine-1280.webp', 'assets/img/fx-hero.webp')
+    .replaceAll('assets/img/engine-1920.webp', 'assets/img/fx-hero.webp')
     .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')
     .replaceAll('YBI Creative', 'YBI FX')
     .replaceAll('Brand<br>Engineering', 'Truck Art')
     .replaceAll('Brand Engineering', 'Truck Art')
-    .replaceAll('website@ybicreative.com.au', 'fx@ybicreative.com.au')
+    .replaceAll('website@ybicreative.com.au', c.email)
+    .replaceAll('(03) 5444 2127', c.phone)
+    .replaceAll('tel:+61354442127', phoneHref(c.phone))
     .replaceAll('>ybicreative.com.au<', '>ybifx.com<');
 }
 async function servePage(req, res, name, code = 200) {
@@ -1922,9 +1974,9 @@ async function seedFxDemo() {
   await saveJob(proof);
   const cleaned = await cleanQuote({
     client: "Hovey's Transport",
-    contactName: 'Geelong',
+    contactName: 'Sam Hovey',
     clientEmail: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: melbourneDay(new Date()),
     description: 'Full scroll package and town names, both doors.',
     validity: '30 days',
     notes: 'Colours to be confirmed on the truck.',

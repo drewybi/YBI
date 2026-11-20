@@ -62,16 +62,23 @@ function lineRows(lines) {
   return `<div class="q-scroll"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="amt">Amount</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.description) || '—'}</td><td>${esc(line.qty || '1')}</td><td>${line.price ? esc(line.price) : '—'}</td><td class="amt">${aud(line.amount)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
+function showUntil(iso) {
+  const [y, m, d] = String(iso || '').split('-').map(Number);
+  if (!y || !m || !d) return iso || '—';
+  return new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, d)));
+}
 function render(openMail) {
   const accepted = quote.status === 'accepted';
   const mail = confirmMail(quote, savedName());
-  app.innerHTML = engineBand(`<p class="eyebrow">Quote · <span style="color:var(--ink)">${esc(quote.client)}</span></p>
-    <h1 class="h1">${accepted ? 'Quote <span class="ol">confirmed.</span>' : 'Your <span class="ol">quote.</span>'}</h1>
+  const jobBit = quote.jobNumber ? `Job ${quote.jobNumber}` : 'Quote';
+  const headline = accepted ? 'Quote <span class="ol">confirmed.</span>' : (FX ? 'Your quote is <span class="ol">ready.</span>' : 'Your <span class="ol">quote.</span>');
+  app.innerHTML = engineBand(`<p class="eyebrow">${FX ? `Quote · <span style="color:var(--ink)">${esc(jobBit)}</span>` : `Quote · <span style="color:var(--ink)">${esc(quote.client)}</span>`}</p>
+    <h1 class="h1">${headline}</h1>
     <div class="meta">
       <div><span class="k">Client</span>${esc(quote.client)}</div>
       <div><span class="k">Contact</span>${esc(quote.contactName) || '—'}</div>
       <div><span class="k">Date</span>${esc(showDay(quote.date))}</div>
-      <div><span class="k">Valid for</span>${esc(quote.validity)}</div>
+      <div><span class="k">Valid until</span>${esc(showUntil(quote.validUntil) || quote.validity)}</div>
       <div style="grid-column:1/-1"><span class="k">Job description</span>${esc(quote.description) || '—'}</div>
     </div>`) + `<div class="wrap" style="padding-bottom:72px">
     <div class="panel" style="margin-top:28px">
@@ -82,6 +89,7 @@ function render(openMail) {
         <div class="grand"><span>Total <span class="dim">(inc GST)</span></span><b>${aud(quote.total)}</b></div>
       </div>
     </div>
+    <div class="btns" style="margin-top:18px">${FX ? `<a class="btn btn--ghost" href="${B}/api/quote/${encodeURIComponent(quoteId)}/pdf${kq}">Download PDF</a>` : ''}</div>
     <div style="margin-top:22px">${decision(accepted, mail)}</div>
   </div>`;
   bind(openMail ? mail : '');
@@ -91,13 +99,15 @@ function decision(accepted, mail) {
   if (accepted) return `<div class="state state--approved" data-state="accepted"><h2 class="h3">Thanks — this quote is confirmed.</h2><p class="mute">A confirmation email to YBI should open. If it doesn’t, use the button below. Subject: <b style="color:var(--ink)">QUOTE CONFIRMED: ${esc(String(quote.description || '').split('\n')[0].trim())}</b></p><div class="btns" style="margin-top:18px"><a class="btn" id="q-mail" href="${esc(mail)}">Email confirmation</a></div></div>`;
   const changes = (quote.responses || []).filter(r => r.type === 'changes');
   return `<div class="state" data-state="${quote.status}">
-    ${changes.length ? changes.map(r => `<div class="fb fb--changes"><div class="small dim">${esc(r.name)} · ${fmtDate(r.at)}</div>${r.note ? `<p>${esc(r.note)}</p>` : ''}</div>`).join('') + '<p class="mute">YBI has your notes. You can add another, or accept the quote.</p>' : '<h2 class="h3">Happy with this quote?</h2>'}
+    ${changes.length ? changes.map(r => `<div class="fb fb--changes"><div class="small dim">${esc(r.name)} · ${fmtDate(r.at)}</div>${r.note ? `<p>${esc(r.note)}</p>` : ''}</div>`).join('') + '<p class="mute">YBI has your notes. You can add another, or approve the quote.</p>' : (FX ? '' : '<h2 class="h3">Happy with this quote?</h2>')}
     ${quote.version > 1 ? `<p class="small mute">Revised quote · V${quote.version}</p>` : ''}
-    <div class="seg"><button type="button" data-a="accept" class="${mode === 'accept' ? 'on' : ''}">${FX ? 'Approve quote' : 'Accept quote'}</button><button type="button" data-a="changes" class="${mode === 'changes' ? 'on' : ''}">${FX ? 'Request alterations' : 'Request changes'}</button></div>
+    ${FX
+      ? `<div class="btns" style="margin-top:8px"><button type="button" class="btn${mode === 'accept' ? ' on' : ''}" data-a="accept">Approve quote</button><button type="button" class="btn btn--ghost${mode === 'changes' ? ' on' : ''}" data-a="changes">Request alterations</button></div>`
+      : `<div class="seg"><button type="button" data-a="accept" class="${mode === 'accept' ? 'on' : ''}">Accept quote</button><button type="button" data-a="changes" class="${mode === 'changes' ? 'on' : ''}">Request changes</button></div>`}
     ${mode ? `<form data-form novalidate class="stack" style="gap:18px">
       <div class="field"><label for="c-name">Your name</label><input id="c-name" maxlength="120" value="${esc(savedName())}" required></div>
       <div class="field"><label for="c-note">${mode === 'changes' ? 'What should change?' : 'Note <span class="opt">(optional)</span>'}</label><textarea id="c-note" maxlength="10000" placeholder="${mode === 'changes' ? 'Tell YBI what to adjust…' : 'Anything you want them to know'}"></textarea></div>
-      <div class="btns"><button class="btn ${mode === 'accept' ? 'btn--ok' : ''}" type="submit" data-go>${mode === 'accept' ? (FX ? 'Approve quote' : 'Accept quote') : (FX ? 'Send alterations' : 'Send changes to YBI')}</button></div>
+      <div class="btns"><button class="btn ${mode === 'accept' && !FX ? 'btn--ok' : ''} ${mode === 'changes' && FX ? 'btn--ghost' : ''}" type="submit" data-go>${mode === 'accept' ? (FX ? 'Approve quote' : 'Accept quote') : (FX ? 'Send alterations' : 'Send changes to YBI')}</button></div>
       <p class="msg" id="c-msg"></p>
     </form>` : ''}
   </div>`;
