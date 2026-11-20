@@ -475,7 +475,7 @@ function bindKnob(el, { onDelta, onClick }) {
 
 let clockTimer = 0;
 export async function radioPage() {
-  document.title = 'YBI Radio · Studio';
+  document.title = document.documentElement.dataset.brand === 'fx' ? 'YBI Radio · YBI FX Proofs' : 'YBI Radio · Studio';
   if (current) bank = current.bank;
   const app = document.getElementById('app');
   app.innerHTML = `<div class="rx" data-rx>

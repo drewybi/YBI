@@ -57,7 +57,7 @@ async function load() {
       : `<div class="wrap" style="padding-top:100px;padding-bottom:100px"><p class="msg err">${esc(e.message)}</p></div>`;
     return;
   }
-  document.title = `Quote · ${quote.client} · ${FX ? 'YBI FX' : 'YBI Creative'}`;
+  document.title = `Quote · ${quote.client} · ${FX ? 'YBI FX Proofs' : 'YBI Creative'}`;
   render();
 }
 

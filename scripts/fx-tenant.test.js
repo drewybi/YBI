@@ -63,8 +63,11 @@ const lines = [
     assert.ok(fxPage.text.includes('data-brand="fx"'), 'fx login is branded');
     assert.ok(fxPage.text.includes(`${FX}/assets/img/ybifx-logo-white.svg`), 'fx logo url');
     assert.ok(fxPage.text.includes(`${FX}/assets/app.css`), 'fx css url');
+    assert.ok(fxPage.text.includes('<title>Artwork proofs · YBI FX Proofs</title>'));
+    assert.ok(!fxPage.text.includes('property="og:'));
     const ybiPage = await req(server, 'GET', `${Y}/`);
     assert.ok(ybiPage.text.includes('data-brand="creative"'));
+    assert.ok(ybiPage.text.includes('<title>Artwork proofs · YBI Creative</title>'));
     assert.ok(!ybiPage.text.includes('ybifx-logo-white.svg'));
 
     const logo = await req(server, 'GET', `${FX}/assets/img/ybifx-logo-white.svg`);
@@ -93,6 +96,26 @@ const lines = [
     const ybiWithFxKey = await req(server, 'GET', `${Y}/api/jobs`, { key: 'fx-secret' });
     assert.strictEqual(ybiWithFxKey.status, 401);
 
+    const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
+    assert.strictEqual(fxStudio.status, 200);
+    assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
+    for (const path of ['/studio/calendar', '/studio/quote', '/studio/settings', '/studio/halftone', '/studio/radio']) {
+      const page = await req(server, 'GET', `${FX}${path}`, { headers: { Cookie: fxCookie } });
+      assert.strictEqual(page.status, 200, path);
+      assert.ok(page.text.includes('<title>Studio · YBI FX Proofs</title>'), path);
+    }
+    const ybiStudio = await req(server, 'GET', `${Y}/studio`, { headers: { Cookie: ybiCookie } });
+    assert.ok(ybiStudio.text.includes('<title>Studio · YBI Proofs</title>'));
+    assert.ok(!ybiStudio.text.includes('YBI FX Proofs'));
+    const fxQuotePage = await req(server, 'GET', `${FX}/quote/0123456789abcdef`);
+    assert.ok(fxQuotePage.text.includes('<title>Quote · YBI FX Proofs</title>'));
+    const fxProofPage = await req(server, 'GET', `${FX}/FX-1`);
+    assert.ok(fxProofPage.text.includes('<title>Artwork proof · YBI FX Proofs</title>'));
+    const halftoneJs = await req(server, 'GET', `${FX}/assets/halftone.js`);
+    assert.ok(halftoneJs.text.includes('Halftone · YBI FX Proofs'));
+    const radioJs = await req(server, 'GET', `${FX}/assets/radio.js`);
+    assert.ok(radioJs.text.includes('YBI Radio · YBI FX Proofs'));
+
     const creativeJob = await req(server, 'POST', `${Y}/api/jobs`, { key: 'creative-secret', body: { jobNumber: '30434', clientName: 'Creative Client', description: 'YBI poster' } });
     assert.strictEqual(creativeJob.status, 201);
     assert.ok(creativeJob.json.secureUrl.includes(`${Y}/30434?k=`));
@@ -103,9 +126,9 @@ const lines = [
     const ybiProof = await req(server, 'GET', `${Y}/api/review/30434?k=${encodeURIComponent(creativeJob.json.token)}`);
     assert.strictEqual(ybiProof.status, 200);
     assert.strictEqual(ybiProof.json.jobNumber, '30434');
-    const ybiStudio = await req(server, 'GET', `${Y}/studio/halftone`, { key: 'creative-secret' });
-    assert.strictEqual(ybiStudio.status, 200);
-    assert.ok(ybiStudio.text.includes('data-brand="creative"'));
+    const ybiHalftone = await req(server, 'GET', `${Y}/studio/halftone`, { key: 'creative-secret' });
+    assert.strictEqual(ybiHalftone.status, 200);
+    assert.ok(ybiHalftone.text.includes('data-brand="creative"'));
     const ybiRadio = await req(server, 'GET', `${Y}/studio/radio`, { key: 'creative-secret' });
     assert.strictEqual(ybiRadio.status, 200);
     const fxHalftone = await req(server, 'GET', `${FX}/studio/halftone`, { key: 'fx-secret' });
