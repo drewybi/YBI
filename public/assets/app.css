@@ -130,6 +130,8 @@ main{flex:1;padding-top:var(--hdr)}
 .prod--approved_for_production{color:var(--ok);border-color:rgba(159,211,168,.55);background-color:rgba(159,211,168,.16)}
 .prodcell{min-width:220px}
 .chip--draft::before{background:transparent;border:1px solid var(--dim)}
+.chip--quoting::before{background:var(--g)}
+.chip--quote_changes{color:var(--warn);border-color:rgba(231,194,122,.4)}.chip--quote_changes::before{background:var(--warn)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);margin-left:8px;vertical-align:middle}
 
 /* studio table */
@@ -508,10 +510,7 @@ body.is-halftone main{padding-bottom:0}
    Body copy stays Work Sans. */
 @font-face{font-family:"Archivo FX";src:url(fonts/archivo-black-italic-ext.woff2) format("woff2");font-weight:900;font-style:italic;font-stretch:125%;font-display:swap}
 html[data-brand="fx"]{
-  --fx:#00C4EE;
-  --fx-grad:linear-gradient(100deg,#f3f1ec 0%,#00C4EE 100%);
   --fx-display:"Archivo FX",sans-serif;
-  --g:var(--fx);--ok:#f3f1ec;--warn:#a7a49e;
 }
 html[data-brand="fx"] .h1,
 html[data-brand="fx"] .h2,
@@ -546,55 +545,12 @@ html[data-brand="fx"] .hdr__r{letter-spacing:.04em}
 html[data-brand="fx"] .hdr__r,
 html[data-brand="fx"] .hdr__r a,
 html[data-brand="fx"] .hdr__r button{font-family:var(--fx-display);font-weight:900;font-style:italic;font-stretch:125%;text-transform:uppercase}
-html[data-brand="fx"] .hdr{border-bottom-color:transparent}
-html[data-brand="fx"] .hdr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--fx-grad)}
 html[data-brand="fx"] .logo img,
 html[data-brand="fx"] .ftr__logo img,
 html[data-brand="fx"] body.is-quote .q-brand .logo img{height:38px;width:auto;max-width:none}
 html[data-brand="fx"] .logo span{display:none}
-html[data-brand="fx"] body,
-html[data-brand="fx"]{
-  background:
-    radial-gradient(540px 380px at -8% -10%, rgba(0,180,230,.14), transparent 58%),
-    radial-gradient(480px 340px at 108% 108%, rgba(0,196,238,.08), transparent 55%),
-    #09090a;
-}
-html[data-brand="fx"] .eband{min-height:clamp(300px,38vh,460px)}
-html[data-brand="fx"] .eband__vid{display:none}
-html[data-brand="fx"] .eband__still{filter:grayscale(1) contrast(1.08) brightness(.55);object-position:58% 46%;animation:none;transform:none}
-html[data-brand="fx"] .eband__media::after{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;background:linear-gradient(120deg,#8a8d92 0%,#5ec8ea 46%,#00C4EE 100%);mix-blend-mode:color}
-html[data-brand="fx"] .eband::before{background:linear-gradient(180deg,rgba(9,9,10,.66) 0%,rgba(9,9,10,.12) 24%,rgba(9,9,10,.34) 46%,rgba(9,9,10,.82) 68%,rgba(9,9,10,.94) 84%,#09090a 100%),linear-gradient(90deg,rgba(9,9,10,.88) 0%,rgba(9,9,10,.62) 32%,rgba(9,9,10,.46) 58%,rgba(9,9,10,.7) 82%,rgba(9,9,10,.86) 100%)}
 html[data-brand="fx"] .jobs td.who{white-space:nowrap;width:1%}
 @media (max-width:720px){html[data-brand="fx"] .jobs td.who{white-space:normal;width:auto}}
-html[data-brand="fx"] .state--approved{border-color:rgba(243,241,236,.4);background:linear-gradient(160deg,rgba(243,241,236,.07),var(--bg2) 62%)}
-html[data-brand="fx"] .msg.err{color:#9ae7ff}
-html[data-brand="fx"] .state--changes_requested{border-color:rgba(243,241,236,.4);background:linear-gradient(160deg,rgba(243,241,236,.08),var(--bg2) 62%)}
-html[data-brand="fx"] .prod--awaiting_approval{color:#9ae7ff;border-color:rgba(0,196,238,.55);background-color:rgba(0,180,230,.16)}
-html[data-brand="fx"] .prod--no_production,
-html[data-brand="fx"] .prod--approved_for_production{color:#f3f1ec;border-color:rgba(243,241,236,.55);background-color:transparent}
-html[data-brand="fx"] .chip--awaiting_review,
-html[data-brand="fx"] .chip--draft,
-html[data-brand="fx"] .chip--quoting{color:#9ae7ff;border-color:rgba(0,196,238,.5)}
-html[data-brand="fx"] .chip--awaiting_review::before,
-html[data-brand="fx"] .chip--quoting::before{background:#00C4EE}
-html[data-brand="fx"] .chip--changes_requested,
-html[data-brand="fx"] .chip--quote_changes{color:#f3f1ec;border-color:rgba(243,241,236,.7);background:rgba(243,241,236,.08)}
-html[data-brand="fx"] .chip--changes_requested::before,
-html[data-brand="fx"] .chip--quote_changes::before{background:#f3f1ec}
-html[data-brand="fx"] .chip--approved{color:#f3f1ec;border-color:#f3f1ec}
-html[data-brand="fx"] .chip--approved::before{background:#f3f1ec}
-html[data-brand="fx"] .btn{background:var(--fx);border-color:var(--fx);color:#fff}
-html[data-brand="fx"] .btn:hover{color:#09090a;border-color:#f3f1ec}
-html[data-brand="fx"] .btn--ghost{background:transparent;color:var(--ink);border-color:var(--line2)}
-html[data-brand="fx"] .btn--ok{background:#f3f1ec;border-color:#f3f1ec;color:#09090a}
-html[data-brand="fx"] .tabs button.on{background:var(--fx-grad);color:#09090a;border-color:transparent}
-html[data-brand="fx"] .seg button.on[data-a=approve],
-html[data-brand="fx"] .seg button.on[data-a=accept]{background:#f3f1ec;border-color:#f3f1ec;color:#09090a}
-html[data-brand="fx"] .seg button.on[data-a=changes]{background:var(--fx);border-color:var(--fx);color:#fff}
-html[data-brand="fx"] .eband .h1,
-html[data-brand="fx"] .q-brand__title{background:var(--fx-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
-html[data-brand="fx"] .eband .ol,
-html[data-brand="fx"] .q-brand .ol{background:none;-webkit-text-fill-color:#00C4EE;color:#00C4EE}
 html[data-brand="fx"] #newForm .field:has(#n-caldate),
 html[data-brand="fx"] #newForm .field:has(#n-colour-label),
 html[data-brand="fx"] #editForm .field:has(#e-caldate),
@@ -603,7 +559,7 @@ html[data-brand="fx"] #editForm .field:has(#e-colour-label){display:none}
 .fx-pick{display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left;padding:18px 16px;border-radius:16px;border:1px solid var(--line2);background:transparent;color:var(--ink);cursor:pointer}
 .fx-pick b{font-family:"Archivo FX",sans-serif;font-weight:900;font-style:italic;font-stretch:125%;font-size:1.35rem;letter-spacing:-.01em;text-transform:uppercase}
 .fx-pick span{color:var(--mute);font:400 .92rem/1.45 var(--sans);letter-spacing:0;text-transform:none}
-.fx-pick:hover{border-color:var(--fx,#00C4EE)}
+.fx-pick:hover{border-color:var(--g)}
 @media (max-width:700px){.fx-choice{grid-template-columns:1fr}}
 @media print{
   html[data-brand="fx"] .h1,

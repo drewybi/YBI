@@ -76,8 +76,7 @@ const lines = [
     const logo = await req(server, 'GET', `${FX}/assets/img/ybifx-logo-white.svg`);
     assert.strictEqual(logo.status, 200);
     assert.ok(logo.text.includes('<svg'), 'svg bytes');
-    const hero = await req(server, 'GET', `${FX}/assets/img/fx-hero.webp`);
-    assert.strictEqual(hero.status, 200);
+    assert.ok(!fxPage.text.includes('fx-hero.webp'));
 
     const ybiLogin = await req(server, 'POST', `${Y}/api/login`, { body: { password: 'creative-secret' } });
     assert.strictEqual(ybiLogin.status, 200);
@@ -102,6 +101,8 @@ const lines = [
     const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
     assert.strictEqual(fxStudio.status, 200);
     assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
+    assert.ok(fxStudio.text.includes('/assets/img/engine-1280.webp'), 'fx uses the YBI hero');
+    assert.ok(!fxStudio.text.includes('fx-hero.webp'));
     assert.ok(!fxStudio.text.includes('/studio/calendar'), 'fx nav has no calendar');
     assert.ok(!fxStudio.text.includes('data-tools'), 'fx nav has no tools menu');
     for (const path of ['/studio/quote', '/studio/settings']) {

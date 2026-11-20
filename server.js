@@ -1638,9 +1638,6 @@ function fxHtml(html) {
   return html
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
     .replaceAll('width="300" height="126" ', '')
-    .replaceAll('assets/img/engine-640.webp', 'assets/img/fx-hero.webp')
-    .replaceAll('assets/img/engine-1280.webp', 'assets/img/fx-hero.webp')
-    .replaceAll('assets/img/engine-1920.webp', 'assets/img/fx-hero.webp')
     .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')
     .replace(/<div class="navdrop" data-tools>[\s\S]*?<\/div><\/div>/, '')
     .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')

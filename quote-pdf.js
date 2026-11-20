@@ -10,15 +10,15 @@ const DISPLAY = path.join(__dirname, 'public/assets/fonts/archivo-black-italic-e
 const SANS = path.join(__dirname, 'public/assets/fonts/work-sans-regular.ttf');
 const SANS_BOLD = path.join(__dirname, 'public/assets/fonts/work-sans-semibold.ttf');
 const LOCKUP = path.join(__dirname, 'public/assets/img/ybifx-logo-white.png');
-const CYAN = rgb(0 / 255, 196 / 255, 238 / 255);
-const CYAN_RGB = [0, 196, 238];
-const GREY_RGB = [168, 170, 174];
-const INK = rgb(0.07, 0.07, 0.08);
+// Same colours as :root in public/assets/app.css: --bg, --g, --dim, --ink.
+const BG = rgb(9 / 255, 9 / 255, 10 / 255);
+const ACCENT = rgb(167 / 255, 169 / 255, 172 / 255);
+const DIM = rgb(111 / 255, 108 / 255, 103 / 255);
+const PAPER = rgb(243 / 255, 241 / 255, 236 / 255);
+const INK = rgb(9 / 255, 9 / 255, 10 / 255);
 const MUTE = rgb(0.33, 0.32, 0.31);
 const HAIR = rgb(0.82, 0.82, 0.84);
 const ZEBR = rgb(0.96, 0.96, 0.97);
-const WHITE = rgb(1, 1, 1);
-const BLACK = rgb(0.035, 0.035, 0.04);
 
 const aud = cents => new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format((Number(cents) || 0) / 100);
 function showDay(iso) {
@@ -38,16 +38,6 @@ function wrap(text, font, size, width) {
   if (line) lines.push(line);
   return lines.length ? lines : [];
 }
-function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
-function gradientBar(page, x, y, w, h) {
-  const n = 90;
-  const stops = [GREY_RGB, CYAN_RGB];
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1);
-    const c = mix(stops[0], stops[1], t);
-    page.drawRectangle({ x: x + (w * i) / n, y, width: (w / n) + 0.35, height: h, color: rgb(c[0] / 255, c[1] / 255, c[2] / 255) });
-  }
-}
 
 async function buildQuotePdf(quote, brand) {
   const pdf = await PDFDocument.create();
@@ -58,7 +48,7 @@ async function buildQuotePdf(quote, brand) {
   const page = pdf.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();
   const headerH = 45 * 72 / 25.4;
-  page.drawRectangle({ x: 0, y: height - headerH, width, height: headerH, color: BLACK });
+  page.drawRectangle({ x: 0, y: height - headerH, width, height: headerH, color: BG });
   if (fs.existsSync(LOCKUP)) {
     const png = await pdf.embedPng(fs.readFileSync(LOCKUP));
     const logoH = headerH - 36;
@@ -68,14 +58,14 @@ async function buildQuotePdf(quote, brand) {
     const h = w * (png.height / png.width);
     page.drawImage(png, { x: 40, y: height - headerH + (headerH - h) / 2, width: w, height: h });
   }
-  const ruleY = height - headerH - 4;
-  gradientBar(page, 0, ruleY, width, 3.2);
+  const ruleY = height - headerH - 3;
+  page.drawRectangle({ x: 0, y: ruleY, width, height: 1.5, color: ACCENT });
 
   let y = ruleY - 36;
   page.drawText('QUOTE', { x: 40, y, size: 26, font: display, color: INK });
   const no = String(quote.quoteNo || `Q-V${quote.version || 1}`);
   const noW = display.widthOfTextAtSize(no, 11);
-  page.drawText(no, { x: width - 40 - noW, y: y + 4, size: 11, font: display, color: CYAN });
+  page.drawText(no, { x: width - 40 - noW, y: y + 4, size: 11, font: display, color: INK });
   y -= 28;
 
   const meta = [
@@ -83,15 +73,15 @@ async function buildQuotePdf(quote, brand) {
     ['Valid until', showDay(quote.validUntil)]
   ];
   for (const [label, value] of meta) {
-    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: display, color: CYAN });
+    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: display, color: DIM });
     page.drawText(value || '—', { x: 130, y: y - 1, size: 10, font: sans, color: INK });
     y -= 16;
   }
   y -= 10;
 
   const colW = (width - 80) / 2;
-  page.drawText('PREPARED FOR', { x: 40, y, size: 8, font: display, color: CYAN });
-  page.drawText('FROM', { x: 40 + colW, y, size: 8, font: display, color: CYAN });
+  page.drawText('PREPARED FOR', { x: 40, y, size: 8, font: display, color: DIM });
+  page.drawText('FROM', { x: 40 + colW, y, size: 8, font: display, color: DIM });
   y -= 16;
   const prepared = [quote.client, quote.contactName, quote.clientEmail].filter(Boolean);
   const from = [brand.name || 'YBI FX', brand.address, brand.phone, brand.email].filter(Boolean);
@@ -111,15 +101,15 @@ async function buildQuotePdf(quote, brand) {
   y -= 16;
 
   const xDesc = 40, xQty = 318, tableR = width - 40;
-  page.drawText('DESCRIPTION', { x: xDesc, y, size: 8, font: display, color: CYAN });
-  page.drawText('QTY', { x: xQty, y, size: 8, font: display, color: CYAN });
+  page.drawText('DESCRIPTION', { x: xDesc, y, size: 8, font: display, color: DIM });
+  page.drawText('QTY', { x: xQty, y, size: 8, font: display, color: DIM });
   const priceLabel = 'UNIT PRICE';
   const priceHeadX = 430;
-  page.drawText(priceLabel, { x: priceHeadX, y, size: 8, font: display, color: CYAN });
+  page.drawText(priceLabel, { x: priceHeadX, y, size: 8, font: display, color: DIM });
   const amtLabel = 'AMOUNT';
-  page.drawText(amtLabel, { x: tableR - display.widthOfTextAtSize(amtLabel, 8), y, size: 8, font: display, color: CYAN });
+  page.drawText(amtLabel, { x: tableR - display.widthOfTextAtSize(amtLabel, 8), y, size: 8, font: display, color: DIM });
   y -= 8;
-  page.drawRectangle({ x: xDesc, y, width: tableR - xDesc, height: 0.6, color: CYAN });
+  page.drawRectangle({ x: xDesc, y, width: tableR - xDesc, height: 0.6, color: ACCENT });
   y -= 4;
 
   const lines = (quote.lines || []).filter(line => String(line.description || '').trim() || String(line.price || '').trim());
@@ -152,10 +142,10 @@ async function buildQuotePdf(quote, brand) {
   let ty = y + 2;
   for (const [label, value, last] of totals) {
     if (last) {
-      page.drawRectangle({ x: boxX - 0.4, y: boxBottom - 0.4, width: boxW + 0.8, height: 28, color: CYAN });
-      page.drawText(label.toUpperCase(), { x: boxX + 10, y: boxBottom + 8, size: 8, font: display, color: WHITE });
+      page.drawRectangle({ x: boxX - 0.4, y: boxBottom - 0.4, width: boxW + 0.8, height: 28, color: BG });
+      page.drawText(label.toUpperCase(), { x: boxX + 10, y: boxBottom + 8, size: 8, font: display, color: PAPER });
       const vw = display.widthOfTextAtSize(value, 11);
-      page.drawText(value, { x: boxX + boxW - 10 - vw, y: boxBottom + 7, size: 11, font: display, color: WHITE });
+      page.drawText(value, { x: boxX + boxW - 10 - vw, y: boxBottom + 7, size: 11, font: display, color: PAPER });
     } else {
       page.drawText(label, { x: boxX + 10, y: ty, size: 9, font: sans, color: MUTE });
       const vw = sans.widthOfTextAtSize(value, 10);
