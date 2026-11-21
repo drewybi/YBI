@@ -1436,6 +1436,33 @@ async function createJobFromQuote(quote) {
   await saveJob(job);
   return job;
 }
+// Staff "Save quote & open job". An existing job is opened as it is.
+// A quote with no job is linked through the same create path as a client accept.
+async function openQuoteJob(req, res, qid) {
+  const quote = (await loadQuotes()).quotes.find(q => q.id === qid);
+  if (!quote) return err(res, 404, 'No quote with that id.');
+  let job = quote.jobId ? await loadJob(quote.jobId) : null;
+  if (!job) {
+    try {
+      job = await createJobFromQuote({ ...quote, jobId: '' });
+    } catch (e) {
+      if (e && e.code) return err(res, e.code, e.message);
+      throw e;
+    }
+  }
+  if (quote.jobId !== job.id) {
+    const linked = await withQuotes(async () => {
+      const doc = await readQuotesDoc();
+      const row = doc.quotes.find(q => q.id === qid);
+      if (!row) return null;
+      row.jobId = job.id;
+      await writeQuotesDoc(doc);
+      return row;
+    });
+    if (!linked) return err(res, 404, 'No quote with that id.');
+  }
+  return send(res, 200, studioJob(req, job));
+}
 
 function addValidity(date, validity) {
   const [y, m, d] = String(date || '').split('-').map(Number);
@@ -1755,6 +1782,7 @@ async function handle(req, res) {
     if (activeBrand() === 'fx' && (p === '/api/calendar' || p.startsWith('/api/calendar/'))) return err(res, 404, 'Not found');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
     if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], '', true);
+    if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/job$/)) && m === 'POST') return openQuoteJob(req, res, r[1]);
     if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);
     if ((r = p.match(/^\/api\/jobs\/([^/]+)\/versions\/(\d+)$/))) {
       if (m !== 'DELETE') return err(res, 405, 'Method not allowed');
