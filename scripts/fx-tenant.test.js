@@ -116,6 +116,8 @@ const lines = [
     assert.ok(commonJs.includes('preload="auto"') && commonJs.includes('disablepictureinpicture'));
     const css = fs.readFileSync(path.join(__dirname, '../public/assets/app.css'), 'utf8');
     assert.ok(!css.includes('Archivo FX'), 'fx uses the YBI type, not a separate display face');
+    assert.ok(css.includes('html[data-brand="fx"] .jobs td.num{white-space:nowrap}'), 'fx job numbers stay on one line');
+    assert.ok(!/\.jobs \.num\{[^}]*nowrap/.test(css), 'YBI job numbers keep their own column');
     assert.ok(css.includes('html[data-brand="fx"] .eband__media{inset:-6% 0;z-index:-2}'));
     const hero = await req(server, 'GET', `${FX}/assets/video/fx-hero-1920.mp4`);
     assert.strictEqual(hero.status, 200);
