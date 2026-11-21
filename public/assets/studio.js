@@ -1235,12 +1235,13 @@ async function quotePage(rawId) {
       </div>
       <footer class="q-brandfoot">
         <div class="q-brandfoot__cols">
-          ${fx() ? `<div><span class="k">YBI FX</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
-          <div><span class="k">Get in touch</span><a href="mailto:fx@ybicreative.com.au">fx@ybicreative.com.au</a><a href="https://www.ybifx.com">ybifx.com</a></div>` : `<div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
+          ${fx() ? `<div><span class="k">YBI FX</span><address>51 Pratts Park Road<br>Strathdale VIC 3550</address></div>
+          <div><span class="k">Phone</span><address><a href="tel:+61354442127">Office (03) 5444 2127</a><a href="tel:+61419386142">Direct 0419 386 142</a></address></div>
+          <div><span class="k">Get in touch</span><a href="mailto:fx@ybicreative.com.au">Email fx@ybicreative.com.au</a><a href="https://www.ybifx.com">Website www.ybifx.com</a></div>` : `<div><span class="k">YBI VIC</span><address>51 Pratts Park Road<br>Bendigo VIC 3551<br><a href="tel:+61354442127">(03) 5444 2127</a></address></div>
           <div><span class="k">YBI SA</span><address>PO Box 188<br>Williamstown SA 5351<br><a href="tel:+61885246345">(08) 8524 6345</a></address></div>
           <div><span class="k">Get in touch</span><a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a><a href="https://www.ybicreative.com.au">ybicreative.com.au</a></div>`}
         </div>
-        <p class="q-brandfoot__base">${fx() ? 'Truck Art · Bendigo VIC' : 'Brand Engineering · Bendigo VIC · Williamstown SA'}</p>
+        <p class="q-brandfoot__base">${fx() ? 'Fleet & Commercial Signage • Hand Painted Truck Art & Signage • Custom Graphics & Wrapping' : 'Brand Engineering · Bendigo VIC · Williamstown SA'}</p>
       </footer>
     </form>
   </div>`;

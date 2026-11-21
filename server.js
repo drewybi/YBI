@@ -81,14 +81,16 @@ function phoneHref(phone) {
   if (digits.startsWith('61')) return `tel:+${digits}`;
   return digits ? `tel:+${digits}` : '';
 }
-// FX contact defaults match ybifx.com (fx@ybicreative.com.au, +61 3 5444 2127,
-// 51 Pratts Park Road, Bendigo). Override with FX_EMAIL, FX_PHONE, FX_ADDRESS.
+// FX contact defaults: fx@ybicreative.com.au, office (03) 5444 2127,
+// direct 0419 386 142, 51 Pratts Park Road, Strathdale VIC 3550, www.ybifx.com.
+// Override with FX_EMAIL, FX_PHONE, FX_DIRECT, FX_ADDRESS.
 // YBI Proofs does not publish an ABN, so none is invented here.
 function fxContact() {
   return {
     email: process.env.FX_EMAIL || 'fx@ybicreative.com.au',
     phone: process.env.FX_PHONE || '(03) 5444 2127',
-    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Bendigo VIC 3551'
+    direct: process.env.FX_DIRECT || '0419 386 142',
+    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Strathdale VIC 3550'
   };
 }
 function publicBrand() {
@@ -99,9 +101,10 @@ function publicBrand() {
     name: fx ? 'YBI FX' : 'YBI Creative',
     product: fx ? 'YBI FX Proofs' : 'YBI Proofs',
     site: fx ? 'https://www.ybifx.com' : 'https://www.ybicreative.com.au',
-    siteLabel: fx ? 'ybifx.com' : 'ybicreative.com.au',
+    siteLabel: fx ? 'www.ybifx.com' : 'ybicreative.com.au',
     email: fx ? contact.email : 'website@ybicreative.com.au',
     phone: fx ? contact.phone : '(03) 5444 2127',
+    direct: fx ? contact.direct : '',
     address: fx ? contact.address : '51 Pratts Park Road, Bendigo VIC 3551',
     logo: `${base()}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
     lockup: fx ? 'Truck Art' : 'Brand Engineering',
@@ -1635,7 +1638,10 @@ async function serveFile(req, res, file, extra = {}) {
 const htmlCache = {};
 function fxHtml(html) {
   const c = fxContact();
+  const ybiFoot = '<span><a href="tel:+61354442127">(03) 5444 2127</a> &nbsp;·&nbsp; <a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a> &nbsp;·&nbsp; <a href="https://www.ybicreative.com.au" target="_blank" rel="noopener">ybicreative.com.au</a></span>';
+  const fxFoot = `<span>${c.address} &nbsp;·&nbsp; <a href="${phoneHref(c.phone)}">Office ${c.phone}</a> &nbsp;·&nbsp; <a href="${phoneHref(c.direct)}">Direct ${c.direct}</a> &nbsp;·&nbsp; <a href="mailto:${c.email}">${c.email}</a> &nbsp;·&nbsp; <a href="https://www.ybifx.com" target="_blank" rel="noopener">www.ybifx.com</a></span>`;
   return html
+    .replaceAll(ybiFoot, fxFoot)
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
     .replaceAll('width="300" height="126" ', '')
     .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')

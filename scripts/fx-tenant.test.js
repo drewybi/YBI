@@ -68,10 +68,16 @@ const lines = [
     assert.ok(fxPage.text.includes(`${FX}/assets/app.css`), 'fx css url');
     assert.ok(fxPage.text.includes('<title>Artwork proofs · YBI FX Proofs</title>'));
     assert.ok(!fxPage.text.includes('property="og:'));
+    assert.ok(fxPage.text.includes('51 Pratts Park Road, Strathdale VIC 3550'), 'fx footer address');
+    assert.ok(fxPage.text.includes('Direct 0419 386 142'), 'fx direct number');
+    assert.ok(fxPage.text.includes('>www.ybifx.com<'), 'fx site label');
+    assert.ok(!fxPage.text.includes('Bendigo VIC 3551'), 'fx no longer uses the Bendigo address');
     const ybiPage = await req(server, 'GET', `${Y}/`);
     assert.ok(ybiPage.text.includes('data-brand="creative"'));
     assert.ok(ybiPage.text.includes('<title>Artwork proofs · YBI Creative</title>'));
     assert.ok(!ybiPage.text.includes('ybifx-logo-white.svg'));
+    assert.ok(!ybiPage.text.includes('Strathdale'), 'YBI pages keep their own address');
+    assert.ok(!ybiPage.text.includes('0419 386 142'));
 
     const logo = await req(server, 'GET', `${FX}/assets/img/ybifx-logo-white.svg`);
     assert.strictEqual(logo.status, 200);

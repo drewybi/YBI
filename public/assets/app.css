@@ -568,6 +568,7 @@ html[data-brand="fx"] #editForm .field:has(#e-colour-label){display:none}
   html[data-brand="fx"] .btn,
   html[data-brand="fx"] .k,
   html[data-brand="fx"] .q-brand__title{font-family:"Archivo FX",sans-serif!important}
+  html[data-brand="fx"] body.is-quote .q-brandfoot__base{text-transform:none;letter-spacing:.04em;font-size:.68rem}
 }
 
 /* YBI Radio — dash photo, screen in the YBI site type with green and red highlights. */
