@@ -1207,7 +1207,7 @@ async function quotePage(rawId) {
     ${quoteShare(quote)}
     <form class="panel q-sheet" id="quoteForm" novalidate>
       <header class="q-brand">
-        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/engine-1280.webp" alt=""></div>
+        <div class="q-brand__media" aria-hidden="true"><img src="${B}/assets/img/${fx() ? 'fx-hero-poster-1920.webp' : 'engine-1280.webp'}" alt=""></div>
         <div class="q-brand__in">
           <div class="q-brand__row">
             <div class="logo">${fx() ? `<img src="${B}/assets/img/ybifx-logo-white.svg" alt="YBI FX">` : `<img src="${B}/assets/img/logo-white-300.png" width="300" height="126" alt="YBI"><span>Brand<br>Engineering</span>`}</div>

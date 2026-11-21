@@ -505,70 +505,31 @@ body.is-halftone main{padding-bottom:0}
   .ht-tools .ht-garments{margin-left:0}
 }
 
-/* YBI FX display face: Archivo Black Italic at width 125 (OFL). Closest free
-   match to the logo tagline, which is a black extended italic grotesque.
-   Body copy stays Work Sans. */
-@font-face{font-family:"Archivo FX";src:url(fonts/archivo-black-italic-ext.woff2) format("woff2");font-weight:900;font-style:italic;font-stretch:125%;font-display:swap}
-html[data-brand="fx"]{
-  --fx-display:"Archivo FX",sans-serif;
-}
-html[data-brand="fx"] .h1,
-html[data-brand="fx"] .h2,
-html[data-brand="fx"] .h3,
-html[data-brand="fx"] .vtag,
-html[data-brand="fx"] .btn,
-html[data-brand="fx"] .q-brand__title,
-html[data-brand="fx"] .eyebrow,
-html[data-brand="fx"] .k,
-html[data-brand="fx"] .field label,
-html[data-brand="fx"] .jobs th,
-html[data-brand="fx"] .jobs td.num,
-html[data-brand="fx"] .chip,
-html[data-brand="fx"] .tabs button{
-  font-family:var(--fx-display);
-  font-weight:900;font-style:italic;font-stretch:125%;
-  text-transform:uppercase;
-}
-html[data-brand="fx"] .h1,
-html[data-brand="fx"] .h2,
-html[data-brand="fx"] .h3,
-html[data-brand="fx"] .q-brand__title{letter-spacing:-.01em}
-html[data-brand="fx"] .jobs td.num{letter-spacing:-.01em;white-space:nowrap;width:1%}
-html[data-brand="fx"] .btn,
-html[data-brand="fx"] .eyebrow,
-html[data-brand="fx"] .k,
-html[data-brand="fx"] .field label,
-html[data-brand="fx"] .jobs th,
-html[data-brand="fx"] .chip,
-html[data-brand="fx"] .tabs button,
-html[data-brand="fx"] .hdr__r{letter-spacing:.04em}
-html[data-brand="fx"] .hdr__r,
-html[data-brand="fx"] .hdr__r a,
-html[data-brand="fx"] .hdr__r button{font-family:var(--fx-display);font-weight:900;font-style:italic;font-stretch:125%;text-transform:uppercase}
-html[data-brand="fx"] .logo img,
-html[data-brand="fx"] .ftr__logo img,
-html[data-brand="fx"] body.is-quote .q-brand .logo img{height:38px;width:auto;max-width:none}
+/* FX shares the YBI type. The wordmark is the only logo change, at the same
+   height as the YBI mark. The hero film is the FX truck; the fades stay. */
+html[data-brand="fx"] .logo img{height:28px;width:auto;max-width:none}
+html[data-brand="fx"] .ftr__logo img{height:20px;width:auto;max-width:none}
 html[data-brand="fx"] .logo span{display:none}
-html[data-brand="fx"] .jobs td.who{white-space:nowrap;width:1%}
-@media (max-width:720px){html[data-brand="fx"] .jobs td.who{white-space:normal;width:auto}}
 html[data-brand="fx"] #newForm .field:has(#n-caldate),
 html[data-brand="fx"] #newForm .field:has(#n-colour-label),
 html[data-brand="fx"] #editForm .field:has(#e-caldate),
 html[data-brand="fx"] #editForm .field:has(#e-colour-label){display:none}
+html[data-brand="fx"] .eband{background:transparent}
+html[data-brand="fx"] .eband__media{inset:-6% 0;z-index:-2}
+html[data-brand="fx"] .eband__still,
+html[data-brand="fx"] .eband__vid{object-fit:cover;object-position:center;width:100%;height:100%;animation:none}
+@media (prefers-reduced-motion:no-preference){
+  html[data-brand="fx"] .eband__still,
+  html[data-brand="fx"] .eband__vid{transform:scale(1.06)}
+}
 .fx-choice{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .fx-pick{display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left;padding:18px 16px;border-radius:16px;border:1px solid var(--line2);background:transparent;color:var(--ink);cursor:pointer}
-.fx-pick b{font-family:"Archivo FX",sans-serif;font-weight:900;font-style:italic;font-stretch:125%;font-size:1.35rem;letter-spacing:-.01em;text-transform:uppercase}
+.fx-pick b{font-family:var(--display);font-stretch:125%;font-weight:800;font-size:1.35rem;letter-spacing:-.015em;line-height:1.02;text-transform:uppercase}
 .fx-pick span{color:var(--mute);font:400 .92rem/1.45 var(--sans);letter-spacing:0;text-transform:none}
 .fx-pick:hover{border-color:var(--g)}
 @media (max-width:700px){.fx-choice{grid-template-columns:1fr}}
 @media print{
-  html[data-brand="fx"] .h1,
-  html[data-brand="fx"] .h2,
-  html[data-brand="fx"] .h3,
-  html[data-brand="fx"] .btn,
-  html[data-brand="fx"] .k,
-  html[data-brand="fx"] .q-brand__title{font-family:"Archivo FX",sans-serif!important}
-  html[data-brand="fx"] body.is-quote .q-brandfoot__base{text-transform:none;letter-spacing:.04em;font-size:.68rem}
+  html[data-brand="fx"] body.is-quote .q-brand .logo img{height:33px;width:auto;max-width:none}
 }
 
 /* YBI Radio — dash photo, screen in the YBI site type with green and red highlights. */

@@ -1642,6 +1642,7 @@ function fxHtml(html) {
   const fxFoot = `<span>${c.address} &nbsp;·&nbsp; <a href="${phoneHref(c.phone)}">Office ${c.phone}</a> &nbsp;·&nbsp; <a href="${phoneHref(c.direct)}">Direct ${c.direct}</a> &nbsp;·&nbsp; <a href="mailto:${c.email}">${c.email}</a> &nbsp;·&nbsp; <a href="https://www.ybifx.com" target="_blank" rel="noopener">www.ybifx.com</a></span>`;
   return html
     .replaceAll(ybiFoot, fxFoot)
+    .replace(/<link rel="preload" as="image" href="[^"]*engine-1280\.webp"[^>]*>/, `<link rel="preload" as="image" href="${base()}/assets/img/fx-hero-poster-1920.webp">`)
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
     .replaceAll('width="300" height="126" ', '')
     .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')

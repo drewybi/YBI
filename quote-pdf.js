@@ -1,12 +1,12 @@
-// YBI FX quote PDF. Archivo Black Italic (width 125) for the title, section
-// labels and totals. Work Sans for the details, line items and terms.
+// YBI FX quote PDF. Same faces as the YBI Proofs pages: Archivo at weight 800
+// and width 125 for the title and grand total, Work Sans for everything else.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument, rgb } = require('pdf-lib');
 const fontkit = require('@pdf-lib/fontkit');
 
-const DISPLAY = path.join(__dirname, 'public/assets/fonts/archivo-black-italic-ext.ttf');
+const DISPLAY = path.join(__dirname, 'public/assets/fonts/archivo-800-ext.ttf');
 const SANS = path.join(__dirname, 'public/assets/fonts/work-sans-regular.ttf');
 const SANS_BOLD = path.join(__dirname, 'public/assets/fonts/work-sans-semibold.ttf');
 const LOCKUP = path.join(__dirname, 'public/assets/img/ybifx-logo-white.png');
@@ -68,10 +68,9 @@ async function buildQuotePdf(quote, brand) {
   const page = pdf.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();
   const margin = 40;
-  // Printed YBI masthead: short dark bar, logo left, Quote. on the right.
-  // FX wordmark uses the print height (38px). Contact lives in the footer.
+  // Printed YBI masthead: short bar, mark on the left at 78px wide, Quote. on the right.
   const pad = 8 * 72 / 96;
-  const logoH = 38 * 72 / 96;
+  const logoH = 78 * (126 / 300) * 72 / 96;
   const titleSize = 1.7 * 12;
   const headerH = pad * 2 + logoH;
   page.drawRectangle({ x: 0, y: height - headerH, width, height: headerH, color: BG });
@@ -86,17 +85,18 @@ async function buildQuotePdf(quote, brand) {
     page.drawImage(png, { x: margin, y: rowMid - logoH / 2, width: logoW, height: logoH });
   }
   const title = 'QUOTE';
-  const titleW = display.widthOfTextAtSize(title, titleSize);
+  const titleTrack = -titleSize * 0.015;
+  const titleW = trackedWidth(title, display, titleSize, titleTrack);
   const dotW = display.widthOfTextAtSize('.', titleSize);
   const titleX = width - margin - titleW - dotW;
   const titleY = rowMid - titleSize * 0.32;
-  page.drawText(title, { x: titleX, y: titleY, size: titleSize, font: display, color: PAPER });
+  drawTracked(page, title, titleX, titleY, titleSize, display, PAPER, titleTrack);
   page.drawText('.', { x: titleX + titleW, y: titleY, size: titleSize, font: display, color: ACCENT });
 
   let y = height - headerH - 28;
   const no = String(quote.quoteNo || `Q-V${quote.version || 1}`);
-  const noW = display.widthOfTextAtSize(no, 11);
-  page.drawText(no, { x: width - margin - noW, y, size: 11, font: display, color: INK });
+  const noW = bold.widthOfTextAtSize(no, 11);
+  page.drawText(no, { x: width - margin - noW, y, size: 11, font: bold, color: INK });
   y -= 4;
 
   const meta = [
@@ -104,15 +104,15 @@ async function buildQuotePdf(quote, brand) {
     ['Valid until', showDay(quote.validUntil)]
   ];
   for (const [label, value] of meta) {
-    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: display, color: DIM });
+    page.drawText(label.toUpperCase(), { x: 40, y, size: 8, font: bold, color: DIM });
     page.drawText(value || '—', { x: 130, y: y - 1, size: 10, font: sans, color: INK });
     y -= 16;
   }
   y -= 10;
 
   const colW = (width - 80) / 2;
-  page.drawText('PREPARED FOR', { x: 40, y, size: 8, font: display, color: DIM });
-  page.drawText('FROM', { x: 40 + colW, y, size: 8, font: display, color: DIM });
+  page.drawText('PREPARED FOR', { x: 40, y, size: 8, font: bold, color: DIM });
+  page.drawText('FROM', { x: 40 + colW, y, size: 8, font: bold, color: DIM });
   y -= 16;
   const prepared = [quote.client, quote.contactName, quote.clientEmail].filter(Boolean);
   const from = [
@@ -139,13 +139,13 @@ async function buildQuotePdf(quote, brand) {
   y -= 16;
 
   const xDesc = 40, xQty = 318, tableR = width - 40;
-  page.drawText('DESCRIPTION', { x: xDesc, y, size: 8, font: display, color: DIM });
-  page.drawText('QTY', { x: xQty, y, size: 8, font: display, color: DIM });
+  page.drawText('DESCRIPTION', { x: xDesc, y, size: 8, font: bold, color: DIM });
+  page.drawText('QTY', { x: xQty, y, size: 8, font: bold, color: DIM });
   const priceLabel = 'UNIT PRICE';
   const priceHeadX = 430;
-  page.drawText(priceLabel, { x: priceHeadX, y, size: 8, font: display, color: DIM });
+  page.drawText(priceLabel, { x: priceHeadX, y, size: 8, font: bold, color: DIM });
   const amtLabel = 'AMOUNT';
-  page.drawText(amtLabel, { x: tableR - display.widthOfTextAtSize(amtLabel, 8), y, size: 8, font: display, color: DIM });
+  page.drawText(amtLabel, { x: tableR - bold.widthOfTextAtSize(amtLabel, 8), y, size: 8, font: bold, color: DIM });
   y -= 8;
   page.drawRectangle({ x: xDesc, y, width: tableR - xDesc, height: 0.6, color: ACCENT });
   y -= 4;
@@ -160,7 +160,7 @@ async function buildQuotePdf(quote, brand) {
     page.drawText(String(line.qty || '1'), { x: xQty, y, size: 10, font: sans, color: INK });
     const price = line.price ? aud(Math.round(Number(String(line.price).replace(/[$,]/g, '')) * 100)) : '—';
     const amount = aud(line.amount);
-    const priceRight = priceHeadX + display.widthOfTextAtSize(priceLabel, 8);
+    const priceRight = priceHeadX + bold.widthOfTextAtSize(priceLabel, 8);
     page.drawText(price, { x: priceRight - sans.widthOfTextAtSize(price, 10), y, size: 10, font: sans, color: INK });
     page.drawText(amount, { x: tableR - sans.widthOfTextAtSize(amount, 10), y, size: 10, font: sans, color: INK });
     page.drawRectangle({ x: xDesc, y: y - 6, width: tableR - xDesc, height: 0.4, color: HAIR });
@@ -192,12 +192,13 @@ async function buildQuotePdf(quote, brand) {
     }
   }
 
-  const servicesSize = 7.5;
+  const servicesText = SERVICES.toUpperCase();
+  const servicesSize = 8;
   const servicesMax = width - margin * 2;
-  let tracking = servicesSize * 0.08;
-  if (trackedWidth(SERVICES, sans, servicesSize, tracking) > servicesMax) {
-    const bare = trackedWidth(SERVICES, sans, servicesSize, 0);
-    tracking = Math.max(0, (servicesMax - bare) / Math.max(1, SERVICES.length - 1));
+  let tracking = servicesSize * 0.14;
+  if (trackedWidth(servicesText, sans, servicesSize, tracking) > servicesMax) {
+    const bare = trackedWidth(servicesText, sans, servicesSize, 0);
+    tracking = Math.max(0, (servicesMax - bare) / Math.max(1, servicesText.length - 1));
   }
   const footCol = servicesMax / 3;
   const lineSize = 8;
@@ -215,14 +216,14 @@ async function buildQuotePdf(quote, brand) {
   const labelY = footH - padFoot - 2;
   cols.forEach((col, i) => {
     const x = margin + i * footCol;
-    if (col.label) drawTracked(page, col.label, x, labelY, 6.2, sans, DIM, 6.2 * 0.2);
+    if (col.label) drawTracked(page, col.label, x, labelY, 7, sans, DIM, 7 * 0.26);
     col.lines.forEach((line, n) => {
       page.drawText(line.t, { x, y: labelY - 16 - n * lead, size: lineSize, font: sans, color: line.c });
     });
   });
   const ruleY = padFoot + servicesSize + 10;
   page.drawRectangle({ x: margin, y: ruleY, width: servicesMax, height: 0.6, color: FOOT_RULE });
-  drawTracked(page, SERVICES, margin, padFoot, servicesSize, sans, DIM, tracking);
+  drawTracked(page, servicesText, margin, padFoot, servicesSize, sans, DIM, tracking);
 
   const notes = [];
   if (quote.notes) notes.push(...wrap(quote.notes, sans, 8, width - 80));

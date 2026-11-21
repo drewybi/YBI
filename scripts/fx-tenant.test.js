@@ -83,6 +83,7 @@ const lines = [
     assert.strictEqual(logo.status, 200);
     assert.ok(logo.text.includes('<svg'), 'svg bytes');
     assert.ok(!fxPage.text.includes('fx-hero.webp'));
+    assert.ok(!fxPage.text.includes('engine-1280.webp'));
 
     const ybiLogin = await req(server, 'POST', `${Y}/api/login`, { body: { password: 'creative-secret' } });
     assert.strictEqual(ybiLogin.status, 200);
@@ -107,8 +108,20 @@ const lines = [
     const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
     assert.strictEqual(fxStudio.status, 200);
     assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
-    assert.ok(fxStudio.text.includes('/assets/img/engine-1280.webp'), 'fx uses the YBI hero');
+    assert.ok(fxStudio.text.includes('/assets/img/fx-hero-poster-1920.webp'), 'fx preloads the truck poster');
+    assert.ok(!fxStudio.text.includes('engine-1280.webp'), 'fx studio does not preload the engine');
     assert.ok(!fxStudio.text.includes('fx-hero.webp'));
+    const commonJs = fs.readFileSync(path.join(__dirname, '../public/assets/common.js'), 'utf8');
+    assert.ok(commonJs.includes('fx-hero-1920.mp4') && commonJs.includes('media="(min-width: 721px)"') && commonJs.includes('fx-hero-960.mp4'));
+    assert.ok(commonJs.includes('preload="auto"') && commonJs.includes('disablepictureinpicture'));
+    const css = fs.readFileSync(path.join(__dirname, '../public/assets/app.css'), 'utf8');
+    assert.ok(!css.includes('Archivo FX'), 'fx uses the YBI type, not a separate display face');
+    assert.ok(css.includes('html[data-brand="fx"] .eband__media{inset:-6% 0;z-index:-2}'));
+    const hero = await req(server, 'GET', `${FX}/assets/video/fx-hero-1920.mp4`);
+    assert.strictEqual(hero.status, 200);
+    assert.ok(hero.headers['content-type'].includes('video/mp4') || hero.text.length > 1000);
+    const poster = await req(server, 'GET', `${FX}/assets/img/fx-hero-poster-1920.webp`);
+    assert.strictEqual(poster.status, 200);
     assert.ok(!fxStudio.text.includes('/studio/calendar'), 'fx nav has no calendar');
     assert.ok(!fxStudio.text.includes('data-tools'), 'fx nav has no tools menu');
     for (const path of ['/studio/quote', '/studio/settings']) {
