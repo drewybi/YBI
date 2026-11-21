@@ -50,6 +50,15 @@ function studioPassword() {
   if (activeBrand() === 'fx' && process.env.STUDIO_PASSWORD_FX) return process.env.STUDIO_PASSWORD_FX;
   return process.env.STUDIO_PASSWORD || 'ybi-proof';
 }
+// FX mail is off until FX_EMAILS_ENABLED=1. YBI mail is unchanged.
+function fxEmailsEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.FX_EMAILS_ENABLED || '').trim());
+}
+function fxStudioRemoved(p) {
+  return p === '/studio/calendar' || p.startsWith('/studio/calendar/')
+    || p === '/studio/halftone' || p.startsWith('/studio/halftone/')
+    || p === '/studio/radio' || p.startsWith('/studio/radio/');
+}
 function studioCookieName() { return activeBrand() === 'fx' ? 'ybi_fx_studio' : 'ybi_studio'; }
 const brandSecrets = new Map();
 function brandSecret() {
@@ -72,14 +81,16 @@ function phoneHref(phone) {
   if (digits.startsWith('61')) return `tel:+${digits}`;
   return digits ? `tel:+${digits}` : '';
 }
-// FX contact defaults match ybifx.com (fx@ybicreative.com.au, +61 3 5444 2127,
-// 51 Pratts Park Road, Bendigo). Override with FX_EMAIL, FX_PHONE, FX_ADDRESS.
+// FX contact defaults: fx@ybicreative.com.au, office (03) 5444 2127,
+// direct 0419 386 142, 51 Pratts Park Road, Strathdale VIC 3550, www.ybifx.com.
+// Override with FX_EMAIL, FX_PHONE, FX_DIRECT, FX_ADDRESS.
 // YBI Proofs does not publish an ABN, so none is invented here.
 function fxContact() {
   return {
     email: process.env.FX_EMAIL || 'fx@ybicreative.com.au',
     phone: process.env.FX_PHONE || '(03) 5444 2127',
-    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Bendigo VIC 3551'
+    direct: process.env.FX_DIRECT || '0419 386 142',
+    address: process.env.FX_ADDRESS || '51 Pratts Park Road, Strathdale VIC 3550'
   };
 }
 function publicBrand() {
@@ -90,9 +101,10 @@ function publicBrand() {
     name: fx ? 'YBI FX' : 'YBI Creative',
     product: fx ? 'YBI FX Proofs' : 'YBI Proofs',
     site: fx ? 'https://www.ybifx.com' : 'https://www.ybicreative.com.au',
-    siteLabel: fx ? 'ybifx.com' : 'ybicreative.com.au',
+    siteLabel: fx ? 'www.ybifx.com' : 'ybicreative.com.au',
     email: fx ? contact.email : 'website@ybicreative.com.au',
     phone: fx ? contact.phone : '(03) 5444 2127',
+    direct: fx ? contact.direct : '',
     address: fx ? contact.address : '51 Pratts Park Road, Bendigo VIC 3551',
     logo: `${base()}/assets/img/${fx ? 'ybifx-logo-white.svg' : 'logo-white-300.png'}`,
     lockup: fx ? 'Truck Art' : 'Brand Engineering',
@@ -1542,6 +1554,10 @@ function setMailerForTests(next) { mailer = next || null; }
 try { if (process.env.SMTP_HOST) { const nm = require('nodemailer'); mailer = nm.createTransport({ host: process.env.SMTP_HOST, port: +(process.env.SMTP_PORT || 587), secure: process.env.SMTP_SECURE === 'true', auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined }); } } catch (e) { console.warn('[mail] nodemailer not installed — run `npm install` to enable email. Falling back to dashboard + log only.'); }
 
 async function deliverStaffMail({ subject, text, replyTo }) {
+  if (activeBrand() === 'fx' && !fxEmailsEnabled()) {
+    await fsp.appendFile(logPath(), `[mail] FX emails off — not sent: ${subject}\n`).catch(() => {});
+    return;
+  }
   const { raw, list } = await notifyRecipients();
   const to = list.join(', ');
   if (!mailer) return;
@@ -1622,13 +1638,20 @@ async function serveFile(req, res, file, extra = {}) {
 const htmlCache = {};
 function fxHtml(html) {
   const c = fxContact();
+  const ybiFoot = '<span><a href="tel:+61354442127">(03) 5444 2127</a> &nbsp;·&nbsp; <a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a> &nbsp;·&nbsp; <a href="https://www.ybicreative.com.au" target="_blank" rel="noopener">ybicreative.com.au</a></span>';
+  const fxFoot = `<span>${c.address} &nbsp;·&nbsp; <a href="${phoneHref(c.phone)}">Office ${c.phone}</a> &nbsp;·&nbsp; <a href="${phoneHref(c.direct)}">Direct ${c.direct}</a> &nbsp;·&nbsp; <a href="mailto:${c.email}">${c.email}</a> &nbsp;·&nbsp; <a href="https://www.ybifx.com" target="_blank" rel="noopener">www.ybifx.com</a></span>`;
   return html
+    .replaceAll(ybiFoot, fxFoot)
+    .replace(/<link rel="preload" as="image" href="[^"]*engine-1280\.webp"[^>]*>/, `<link rel="preload" as="image" href="${base()}/assets/img/fx-hero-poster-1920.webp">`)
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
     .replaceAll('width="300" height="126" ', '')
-    .replaceAll('assets/img/engine-640.webp', 'assets/img/fx-hero.webp')
-    .replaceAll('assets/img/engine-1280.webp', 'assets/img/fx-hero.webp')
-    .replaceAll('assets/img/engine-1920.webp', 'assets/img/fx-hero.webp')
+    .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')
+    .replace(/<div class="navdrop" data-tools>[\s\S]*?<\/div><\/div>/, '')
     .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')
+    .replaceAll('YBI Proofs', 'YBI FX Proofs')
+    .replaceAll('Artwork proofs · YBI Creative', 'Artwork proofs · YBI FX Proofs')
+    .replaceAll('Artwork proof · YBI Creative', 'Artwork proof · YBI FX Proofs')
+    .replaceAll('Quote · YBI Creative', 'Quote · YBI FX Proofs')
     .replaceAll('YBI Creative', 'YBI FX')
     .replaceAll('Brand<br>Engineering', 'Truck Art')
     .replaceAll('Brand Engineering', 'Truck Art')
@@ -1640,7 +1663,7 @@ function fxHtml(html) {
 async function servePage(req, res, name, code = 200) {
   // HTML templates use {{B}} for the mount path, so the app works at /proof (or anywhere)
   let html = (htmlCache[name] ||= (await fsp.readFile(path.join(PUB, name), 'utf8'))).replaceAll('{{B}}', base()).replaceAll('{{BRAND}}', activeBrand());
-  if (activeBrand() === 'fx') html = fxHtml(html);
+  if (activeBrand() === 'fx') html = fxHtml(html).replace('data-brand="fx"', `data-brand="fx" data-emails="${fxEmailsEnabled() ? '1' : '0'}"`);
   res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'same-origin' });
   res.end(html);
 }
@@ -1677,6 +1700,7 @@ async function handle(req, res) {
   if (p === '/studio' || p.startsWith('/studio/')) {
     if (u.searchParams.get('key') === studioPassword()) return back(res, base() + p, { 'Set-Cookie': setCookie() });
     if (!isStudio(req)) return back(res, `${base()}/?next=${encodeURIComponent(base() + p)}`);
+    if (activeBrand() === 'fx' && fxStudioRemoved(p)) return back(res, base() + '/studio');
     return servePage(req, res, 'studio.html');
   }
   if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
@@ -1728,6 +1752,7 @@ async function handle(req, res) {
   // studio API
   if (p.startsWith('/api/')) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
+    if (activeBrand() === 'fx' && (p === '/api/calendar' || p.startsWith('/api/calendar/'))) return err(res, 404, 'Not found');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
     if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], '', true);
     if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);

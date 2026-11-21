@@ -50,6 +50,7 @@ PUBLIC_URL='https://www.ybicreative.com.au' BASE_PATH=/proof node server.js
 | `BASE_PATH` | `/proof` | Path prefix the app lives under (`''` = root) |
 | `PUBLIC_URL` | *(request host)* | **Origin only** (no path) used to build client links, e.g. `https://www.ybicreative.com.au`. `X-Forwarded-Host/Proto` are honoured if it isn't set. |
 | `STUDIO_PASSWORD` | `ybi-proof` | Studio password. **Change it before going online.** |
+| `FX_EMAILS_ENABLED` | off | Set to `1` to send YBI FX staff and client notification mail. Unset, nothing under `/fx` sends email. YBI mail is unchanged. |
 | `DEFAULT_ACCESS` | `private` | Kept for Render config. The app always requires the secure link; it does not honour `public`. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_SECURE` | — | Outbound mail. Alerts stay off until `SMTP_HOST` is set. |
 | `NOTIFY_EMAIL` | drew@, nicola@ and rob@ybicreative.com.au | Default recipient list until Studio → Settings saves one. Commas or semicolons. |

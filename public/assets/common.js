@@ -73,15 +73,22 @@ export function pdfStackGap(stageHeight, pageHeight, nextPageHeight = pageHeight
   return (pdfStackEdgePad(stageHeight, pageHeight) + pdfStackEdgePad(stageHeight, nextPageHeight)) / 4;
 }
 
-// Engine header. The film is the ybicreative.com.au hero loop; the still shows if motion is reduced or the video has not started.
+// Engine header. YBI plays the ybicreative.com.au engine loop. FX plays Drew's
+// truck film, with the poster when motion is reduced. The still shows until
+// the video starts.
 export function engineBand(inner) {
+  const fx = typeof document !== 'undefined' && document.documentElement.dataset.brand === 'fx';
+  if (fx) {
+    const poster = `${B}/assets/img/fx-hero-poster-1920.webp`;
+    const video = `${B}/assets/video`;
+    return `<section class="eband">
+    <div class="eband__media" aria-hidden="true"><img class="eband__still" src="${poster}" width="1920" height="1080" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="auto" poster="${poster}" aria-hidden="true" disablepictureinpicture><source src="${video}/fx-hero-1920.mp4" type="video/mp4" media="(min-width: 721px)"><source src="${video}/fx-hero-960.mp4" type="video/mp4"></video></div>
+    <div class="wrap eband__in">${inner}</div>
+  </section>`;
+  }
   const src = `${B}/assets/img`;
-  const fx = document.documentElement.dataset.brand === 'fx';
-  const media = fx
-    ? `<img class="eband__still" src="${src}/fx-hero.webp" width="2139" height="1800" alt="">`
-    : `<img class="eband__still" src="${src}/engine-1280.webp" srcset="${src}/engine-640.webp 640w, ${src}/engine-1280.webp 1280w, ${src}/engine-1920.webp 1920w" sizes="100vw" width="1280" height="720" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="metadata" poster="${src}/engine-1280.webp"><source src="${B}/assets/video/engine.mp4" type="video/mp4"></video>`;
   return `<section class="eband">
-    <div class="eband__media" aria-hidden="true">${media}</div>
+    <div class="eband__media" aria-hidden="true"><img class="eband__still" src="${src}/engine-1280.webp" srcset="${src}/engine-640.webp 640w, ${src}/engine-1280.webp 1280w, ${src}/engine-1920.webp 1920w" sizes="100vw" width="1280" height="720" alt=""><video class="eband__vid" autoplay muted loop playsinline preload="metadata" poster="${src}/engine-1280.webp"><source src="${B}/assets/video/engine.mp4" type="video/mp4"></video></div>
     <div class="wrap eband__in">${inner}</div>
   </section>`;
 }

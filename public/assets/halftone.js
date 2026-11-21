@@ -866,7 +866,7 @@ function bind() {
 }
 
 export async function halftonePage() {
-  document.title = 'Halftone · YBI Proofs';
+  document.title = document.documentElement.dataset.brand === 'fx' ? 'Halftone · YBI FX Proofs' : 'Halftone · YBI Proofs';
   shell();
   bind();
 }

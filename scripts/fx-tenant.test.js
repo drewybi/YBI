@@ -14,9 +14,12 @@ process.env.STUDIO_PASSWORD = 'creative-secret';
 process.env.STUDIO_PASSWORD_FX = 'fx-secret';
 delete process.env.BRAND;
 delete process.env.DEMO_SEED;
+delete process.env.FX_EMAILS_ENABLED;
 process.env.PORT = '0';
 
-const { createAppServer } = require('../server');
+const { createAppServer, setMailerForTests } = require('../server');
+const sentMail = [];
+setMailerForTests({ sendMail(opts) { sentMail.push(opts); return Promise.resolve(); } });
 
 function req(server, method, urlPath, { headers = {}, body, key } = {}) {
   const { port } = server.address();
@@ -63,15 +66,24 @@ const lines = [
     assert.ok(fxPage.text.includes('data-brand="fx"'), 'fx login is branded');
     assert.ok(fxPage.text.includes(`${FX}/assets/img/ybifx-logo-white.svg`), 'fx logo url');
     assert.ok(fxPage.text.includes(`${FX}/assets/app.css`), 'fx css url');
+    assert.ok(fxPage.text.includes('<title>Artwork proofs · YBI FX Proofs</title>'));
+    assert.ok(!fxPage.text.includes('property="og:'));
+    assert.ok(fxPage.text.includes('51 Pratts Park Road, Strathdale VIC 3550'), 'fx footer address');
+    assert.ok(fxPage.text.includes('Direct 0419 386 142'), 'fx direct number');
+    assert.ok(fxPage.text.includes('>www.ybifx.com<'), 'fx site label');
+    assert.ok(!fxPage.text.includes('Bendigo VIC 3551'), 'fx no longer uses the Bendigo address');
     const ybiPage = await req(server, 'GET', `${Y}/`);
     assert.ok(ybiPage.text.includes('data-brand="creative"'));
+    assert.ok(ybiPage.text.includes('<title>Artwork proofs · YBI Creative</title>'));
     assert.ok(!ybiPage.text.includes('ybifx-logo-white.svg'));
+    assert.ok(!ybiPage.text.includes('Strathdale'), 'YBI pages keep their own address');
+    assert.ok(!ybiPage.text.includes('0419 386 142'));
 
     const logo = await req(server, 'GET', `${FX}/assets/img/ybifx-logo-white.svg`);
     assert.strictEqual(logo.status, 200);
     assert.ok(logo.text.includes('<svg'), 'svg bytes');
-    const hero = await req(server, 'GET', `${FX}/assets/img/fx-hero.webp`);
-    assert.strictEqual(hero.status, 200);
+    assert.ok(!fxPage.text.includes('fx-hero.webp'));
+    assert.ok(!fxPage.text.includes('engine-1280.webp'));
 
     const ybiLogin = await req(server, 'POST', `${Y}/api/login`, { body: { password: 'creative-secret' } });
     assert.strictEqual(ybiLogin.status, 200);
@@ -93,6 +105,53 @@ const lines = [
     const ybiWithFxKey = await req(server, 'GET', `${Y}/api/jobs`, { key: 'fx-secret' });
     assert.strictEqual(ybiWithFxKey.status, 401);
 
+    const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
+    assert.strictEqual(fxStudio.status, 200);
+    assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
+    assert.ok(fxStudio.text.includes('/assets/img/fx-hero-poster-1920.webp'), 'fx preloads the truck poster');
+    assert.ok(!fxStudio.text.includes('engine-1280.webp'), 'fx studio does not preload the engine');
+    assert.ok(!fxStudio.text.includes('fx-hero.webp'));
+    const commonJs = fs.readFileSync(path.join(__dirname, '../public/assets/common.js'), 'utf8');
+    assert.ok(commonJs.includes('fx-hero-1920.mp4') && commonJs.includes('media="(min-width: 721px)"') && commonJs.includes('fx-hero-960.mp4'));
+    assert.ok(commonJs.includes('preload="auto"') && commonJs.includes('disablepictureinpicture'));
+    const css = fs.readFileSync(path.join(__dirname, '../public/assets/app.css'), 'utf8');
+    assert.ok(!css.includes('Archivo FX'), 'fx uses the YBI type, not a separate display face');
+    assert.ok(css.includes('html[data-brand="fx"] .jobs td.num{white-space:nowrap}'), 'fx job numbers stay on one line');
+    assert.ok(!/\.jobs \.num\{[^}]*nowrap/.test(css), 'YBI job numbers keep their own column');
+    assert.ok(css.includes('html[data-brand="fx"] .eband__media{inset:-6% 0;z-index:-2}'));
+    const hero = await req(server, 'GET', `${FX}/assets/video/fx-hero-1920.mp4`);
+    assert.strictEqual(hero.status, 200);
+    assert.ok(hero.headers['content-type'].includes('video/mp4') || hero.text.length > 1000);
+    const poster = await req(server, 'GET', `${FX}/assets/img/fx-hero-poster-1920.webp`);
+    assert.strictEqual(poster.status, 200);
+    assert.ok(!fxStudio.text.includes('/studio/calendar'), 'fx nav has no calendar');
+    assert.ok(!fxStudio.text.includes('data-tools'), 'fx nav has no tools menu');
+    for (const path of ['/studio/quote', '/studio/settings']) {
+      const page = await req(server, 'GET', `${FX}${path}`, { headers: { Cookie: fxCookie } });
+      assert.strictEqual(page.status, 200, path);
+      assert.ok(page.text.includes('<title>Studio · YBI FX Proofs</title>'), path);
+    }
+    for (const path of ['/studio/calendar', '/studio/halftone', '/studio/radio']) {
+      const page = await req(server, 'GET', `${FX}${path}`, { headers: { Cookie: fxCookie } });
+      assert.strictEqual(page.status, 302, path);
+      assert.ok(String(page.headers.location).endsWith('/studio'), page.headers.location);
+    }
+    const fxCal = await req(server, 'GET', `${FX}/api/calendar`, { key: 'fx-secret' });
+    assert.strictEqual(fxCal.status, 404);
+    const ybiStudio = await req(server, 'GET', `${Y}/studio`, { headers: { Cookie: ybiCookie } });
+    assert.ok(ybiStudio.text.includes('<title>Studio · YBI Proofs</title>'));
+    assert.ok(ybiStudio.text.includes('/studio/calendar'));
+    assert.ok(ybiStudio.text.includes('data-tools'));
+    assert.ok(!ybiStudio.text.includes('YBI FX Proofs'));
+    const fxQuotePage = await req(server, 'GET', `${FX}/quote/0123456789abcdef`);
+    assert.ok(fxQuotePage.text.includes('<title>Quote · YBI FX Proofs</title>'));
+    const fxProofPage = await req(server, 'GET', `${FX}/FX-1`);
+    assert.ok(fxProofPage.text.includes('<title>Artwork proof · YBI FX Proofs</title>'));
+    const halftoneJs = await req(server, 'GET', `${FX}/assets/halftone.js`);
+    assert.ok(halftoneJs.text.includes('Halftone · YBI FX Proofs'));
+    const radioJs = await req(server, 'GET', `${FX}/assets/radio.js`);
+    assert.ok(radioJs.text.includes('YBI Radio · YBI FX Proofs'));
+
     const creativeJob = await req(server, 'POST', `${Y}/api/jobs`, { key: 'creative-secret', body: { jobNumber: '30434', clientName: 'Creative Client', description: 'YBI poster' } });
     assert.strictEqual(creativeJob.status, 201);
     assert.ok(creativeJob.json.secureUrl.includes(`${Y}/30434?k=`));
@@ -103,14 +162,13 @@ const lines = [
     const ybiProof = await req(server, 'GET', `${Y}/api/review/30434?k=${encodeURIComponent(creativeJob.json.token)}`);
     assert.strictEqual(ybiProof.status, 200);
     assert.strictEqual(ybiProof.json.jobNumber, '30434');
-    const ybiStudio = await req(server, 'GET', `${Y}/studio/halftone`, { key: 'creative-secret' });
-    assert.strictEqual(ybiStudio.status, 200);
-    assert.ok(ybiStudio.text.includes('data-brand="creative"'));
+    const ybiHalftone = await req(server, 'GET', `${Y}/studio/halftone`, { key: 'creative-secret' });
+    assert.strictEqual(ybiHalftone.status, 200);
+    assert.ok(ybiHalftone.text.includes('data-brand="creative"'));
     const ybiRadio = await req(server, 'GET', `${Y}/studio/radio`, { key: 'creative-secret' });
     assert.strictEqual(ybiRadio.status, 200);
     const fxHalftone = await req(server, 'GET', `${FX}/studio/halftone`, { key: 'fx-secret' });
-    assert.strictEqual(fxHalftone.status, 200);
-    assert.ok(fxHalftone.text.includes('data-brand="fx"'));
+    assert.strictEqual(fxHalftone.status, 302);
     const fxRadioBlocked = await req(server, 'GET', `${FX}/studio/radio`, { key: 'creative-secret' });
     assert.strictEqual(fxRadioBlocked.status, 302);
 
@@ -172,6 +230,18 @@ const lines = [
     });
     assert.strictEqual(clientOk.status, 200, clientOk.text);
     assert.strictEqual(clientOk.json.status, 'approved');
+    assert.strictEqual(sentMail.length, 0, 'FX quote and proof mail stays off');
+
+    const ybiUp = await req(server, 'POST', `${Y}/api/jobs/30434/versions?name=poster.pdf`, {
+      key: 'creative-secret', headers: { 'Content-Type': 'application/pdf' }, body: '%PDF-1.1'
+    });
+    assert.strictEqual(ybiUp.status, 201, ybiUp.text);
+    const ybiOk = await req(server, 'POST', `${Y}/api/review/30434/decision?k=${encodeURIComponent(creativeJob.json.token)}`, {
+      body: { type: 'approve', name: 'Creative Client', note: 'Yes', version: 1 }
+    });
+    assert.strictEqual(ybiOk.status, 200, ybiOk.text);
+    assert.ok(sentMail.some(m => String(m.subject).includes('[YBI Proof]')), 'YBI mail still sends');
+    assert.ok(!sentMail.some(m => String(m.subject).includes('[YBI FX]')));
 
     const proofOnly = await req(server, 'POST', `${FX}/api/jobs`, { key: 'fx-secret', body: { jobNumber: 'FX-2208', clientName: 'AJM Transport', description: 'Door lettering' } });
     assert.strictEqual(proofOnly.status, 201);
