@@ -1230,7 +1230,7 @@ async function quotePage(rawId) {
         <div><span>GST 10%</span><b data-q-gst>$0.00</b></div>
         <div class="grand"><span>Total <span class="dim">(inc GST)</span></span><b data-q-grand>$0.00</b></div>
       </div>
-      <div class="btns q-actions" style="margin-top:26px"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote && fx() ? `<a class="btn btn--ghost" href="${B}/api/quotes/${quote.id}/pdf">Download PDF</a>` : ''}${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div>
+      <div class="q-actions"><div class="q-save"><button class="btn" type="submit" id="q-go">Save quote</button><button class="btn btn--ghost" type="submit" id="q-open">Save quote &amp; open job</button></div><div class="btns"><button class="btn btn--ghost" type="button" data-q-print>Print / PDF</button>${quote && fx() ? `<a class="btn btn--ghost" href="${B}/api/quotes/${quote.id}/pdf">Download PDF</a>` : ''}${quote ? '<button class="btn btn--ghost" type="button" data-q-del>Delete</button>' : ''}</div></div>
       <p class="msg" id="q-msg"></p>
       </div>
       <footer class="q-brandfoot">
@@ -1289,17 +1289,23 @@ async function quotePage(rawId) {
   };
   form.onsubmit = async e => {
     e.preventDefault();
-    const msg = $('#q-msg', form), go = $('#q-go', form);
+    const openJob = e.submitter && e.submitter.id === 'q-open';
+    const msg = $('#q-msg', form), buttons = $$('#q-go, #q-open', form);
     msg.className = 'msg'; msg.textContent = '';
     const data = readQuoteForm(form);
     if (!data.client) { msg.className = 'msg err'; msg.textContent = 'Add a client.'; $('#q-client', form).focus(); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) { msg.className = 'msg err'; msg.textContent = 'Pick a date.'; $('#q-date', form).focus(); return; }
     const totals = paintQuoteTotals(form);
     if (totals.errors.length) { msg.className = 'msg err'; msg.textContent = totals.errors[0]; return; }
-    go.disabled = true;
+    buttons.forEach(b => { b.disabled = true; });
     try {
       const saved = await api(quote ? `${B}/api/quotes/${quote.id}` : `${B}/api/quotes`, { method: quote ? 'PUT' : 'POST', body: JSON.stringify(data) });
       toast(quote ? 'Quote updated' : 'Quote saved');
+      if (openJob) {
+        const job = await api(`${B}/api/quotes/${saved.id}/job`, { method: 'POST', body: '{}' });
+        go(`${B}/studio/${encodeURIComponent(job.jobNumber || job.id)}`);
+        return;
+      }
       const next = `${B}/studio/quote/${saved.id}`;
       if (location.pathname.replace(/\/$/, '') !== next) history.replaceState(null, '', next);
       markNav();
@@ -1307,7 +1313,7 @@ async function quotePage(rawId) {
     } catch (err) {
       msg.className = 'msg err';
       msg.textContent = err.message;
-      go.disabled = false;
+      buttons.forEach(b => { b.disabled = false; });
     }
   };
   if (quote) form.scrollIntoView({ block: 'start' });

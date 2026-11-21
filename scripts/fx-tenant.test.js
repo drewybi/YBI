@@ -179,6 +179,11 @@ const lines = [
     assert.strictEqual(quoteJob.status, 201, quoteJob.text);
     assert.strictEqual(quoteJob.json.phase, 'quoting');
     assert.ok(quoteJob.json.quote.clientUrl.includes(`${FX}/quote/`), quoteJob.json.quote.clientUrl);
+    const openedQuoteJob = await req(server, 'POST', `${FX}/api/quotes/${quoteJob.json.quote.id}/job`, { key: 'fx-secret', body: {} });
+    assert.strictEqual(openedQuoteJob.status, 200, openedQuoteJob.text);
+    assert.strictEqual(openedQuoteJob.json.id, quoteJob.json.id, 'an existing quote job is opened, not replaced');
+    assert.strictEqual(openedQuoteJob.json.jobNumber, 'FX-2201');
+    assert.strictEqual(openedQuoteJob.json.phase, 'quoting', 'opening the job does not convert a quote-first job');
     assert.ok(quoteJob.json.secureUrl.includes(`${FX}/FX-2201?k=`));
 
     const sameNumber = await req(server, 'POST', `${Y}/api/jobs`, { key: 'creative-secret', body: { jobNumber: 'FX-2201', clientName: 'Not FX' } });

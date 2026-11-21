@@ -78,6 +78,13 @@ main{flex:1;padding-top:var(--hdr)}
 
 /* buttons */
 .btns{display:flex;flex-wrap:wrap;gap:12px 14px;align-items:center}
+.q-actions{display:flex;flex-wrap:wrap;gap:12px 14px;align-items:center;margin-top:26px}
+.q-save{display:flex;flex-wrap:nowrap;gap:12px 14px;align-items:stretch}
+.q-save .btn{height:52px}
+@media (max-width:720px){
+  .q-save{flex-direction:column;width:100%}
+  .q-save .btn{width:100%}
+}
 .btn{--b:var(--ink);position:relative;display:inline-flex;align-items:center;justify-content:center;gap:12px;height:52px;padding:0 26px;border-radius:999px;font:500 .76rem/1 var(--sans);letter-spacing:.18em;text-transform:uppercase;border:1px solid var(--b);background:var(--ink);color:var(--bg);overflow:hidden;isolation:isolate;transition:color .45s var(--ease),border-color .45s var(--ease),opacity .3s;cursor:pointer;white-space:nowrap;text-decoration:none}
 .btn::before{content:"";position:absolute;inset:0;background:var(--g);transform:translateY(101%);transition:transform .5s var(--ease);z-index:-1;border-radius:inherit}
 .btn:hover{color:#09090a;border-color:var(--g)}.btn:hover::before{transform:none}
