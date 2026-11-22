@@ -11,6 +11,7 @@ const { buildChangesPdf } = require('./changes-pdf');
 
 const { AsyncLocalStorage } = require('async_hooks');
 const { buildQuotePdf } = require('./quote-pdf');
+const { buildSurveyPdf } = require('./survey-pdf');
 const ROOT = __dirname;
 const PUB = path.join(ROOT, 'public');
 const brandAls = new AsyncLocalStorage();
@@ -128,7 +129,7 @@ function cookiePath() {
 }
 // Client access is always the secure ?k= link. A job number alone never opens a proof, even if a stored job says "public" or DEFAULT_ACCESS is set.
 const DEFAULT_ACCESS = 'private';
-const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'halftone', 'radio', 'login', 'logout', 'favicon.ico', 'robots.txt']);
+const RESERVED = new Set(['studio', 'api', 'assets', 'vendor', 'f', 'p', 'settings', 'calendar', 'quote', 'survey', 'halftone', 'radio', 'login', 'logout', 'favicon.ico', 'robots.txt']);
 const JOBNUM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 const norm = s => String(s || '').trim().toLowerCase();
 const MAX_PROOF = 300 * 1024 * 1024, MAX_ATT = 100 * 1024 * 1024;
@@ -1573,7 +1574,7 @@ function publicJob(job, k) {
     versions: job.versions.map(v => publicVersion(job, v, q))
   };
 }
-function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), phase: job.phase === 'quoting' ? 'quoting' : 'proofs', ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}) }; }
+function studioJob(req, job) { return { ...publicJob(job, job.token), id: job.id, token: job.token, access: accessOf(job), secureUrl: secureUrl(req, job), studioUrl: origin(req) + `${base()}/studio/${encodeURIComponent(job.jobNumber || job.id)}`, clientEmail: job.clientEmail, clientPhone: job.clientPhone, reviewUrl: reviewUrl(req, job), unread: !!job.unread, updatedAt: job.updatedAt, seenAt: job.seenAt || null, archivedAt: job.archivedAt || null, production: productionOf(job), phase: job.phase === 'quoting' ? 'quoting' : 'proofs', ...(typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? { quoteId: job.quoteId } : {}), ...(typeof job.surveyId === 'string' && /^[a-f0-9]{16}$/.test(job.surveyId) ? { surveyId: job.surveyId } : {}) }; }
 
 // ---------- notifications ----------
 let mailer = null;
@@ -1648,6 +1649,784 @@ async function notify(req, job, fb, v) {
   await deliverStaffMail({ subject: `${activeBrand() === 'fx' ? '[YBI FX Proof]' : '[YBI Proof]'} ${label}: ${job.jobNumber} — ${job.clientName} (V${v.n})`, text: lines, replyTo: job.clientEmail || undefined });
 }
 
+// ---------- site surveys (YBI FX only) ----------
+// Staff measure-up on a phone. Stored in DATA_DIR/fx/surveys.json with photos under files/surveys.
+// YBI /proof never mounts these routes. No client email is sent from here.
+const SURVEY_TYPES = { fascia: 'Fascia', pylon: 'Pylon', window: 'Window', wall: 'Wall', vehicle: 'Vehicle', wayfinding: 'Wayfinding', other: 'Other' };
+const SURVEY_LIGHTS = { none: 'Not illuminated', front: 'Front lit', halo: 'Halo / back lit', internal: 'Internal', neon: 'Neon', other: 'Other' };
+const MAX_SIGNS = 30;
+const MAX_SIGN_PHOTOS = 8;
+const MAX_SURVEY_PHOTO = 8 * 1024 * 1024;
+const surveyPath = () => path.join(dataRoot(), 'surveys.json');
+let surveyChain = Promise.resolve();
+function withSurveys(fn) {
+  const run = surveyChain.then(fn, fn);
+  surveyChain = run.then(() => {}, () => {});
+  return run;
+}
+function clipLine(v, n) {
+  return String(v ?? '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+}
+function clipBlock(v, n) {
+  return String(v ?? '').replace(/\r\n/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n);
+}
+function cleanMm(v, label) {
+  if (v == null || String(v).trim() === '') return { value: null };
+  const n = Number(String(v).trim().replace(/,/g, '').replace(/mm\s*$/i, '').trim());
+  if (!Number.isFinite(n) || n < 0 || n > 100000) return { error: `${label} needs to be a size in millimetres.` };
+  return { value: Math.round(n) };
+}
+function cleanCoord(v, min, max) {
+  if (v == null || v === '') return { value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < min || n > max) return { error: true };
+  return { value: Math.round(n * 1e6) / 1e6 };
+}
+function cleanSurveyHeader(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { error: 'That survey isn’t valid.' };
+  const client = clipLine(b.client, 160);
+  if (!client) return { error: 'Add a client or site name.' };
+  const date = String(b.date ?? '').trim();
+  if (!validDate(date)) return { error: 'That date isn’t valid.' };
+  const lat = cleanCoord(b.lat, -90, 90);
+  if (lat.error) return { error: 'That latitude isn’t valid.' };
+  const lng = cleanCoord(b.lng, -180, 180);
+  if (lng.error) return { error: 'That longitude isn’t valid.' };
+  if ((lat.value == null) !== (lng.value == null)) return { error: 'Location needs both latitude and longitude.' };
+  return {
+    client,
+    address: clipLine(b.address, 300),
+    lat: lat.value,
+    lng: lng.value,
+    date,
+    surveyor: clipLine(b.surveyor, 120),
+    contact: clipLine(b.contact, 160),
+    notes: clipBlock(b.notes, 4000)
+  };
+}
+function cleanSign(b, fallbackName) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { error: 'That sign isn’t valid.' };
+  const type = String(b.type || 'other');
+  if (!Object.prototype.hasOwnProperty.call(SURVEY_TYPES, type)) return { error: 'Pick a sign type.' };
+  const light = String(b.illumination ?? '');
+  if (light && !Object.prototype.hasOwnProperty.call(SURVEY_LIGHTS, light)) return { error: 'Pick an illumination.' };
+  let quantity = 1;
+  if (b.quantity != null && String(b.quantity).trim() !== '') {
+    const n = Number(String(b.quantity).trim());
+    if (!Number.isInteger(n) || n < 1 || n > 999) return { error: 'Quantity needs to be a whole number from 1 to 999.' };
+    quantity = n;
+  }
+  const width = cleanMm(b.widthMm, 'Width');
+  if (width.error) return { error: width.error };
+  const height = cleanMm(b.heightMm, 'Height');
+  if (height.error) return { error: height.error };
+  const install = cleanMm(b.installHeightMm, 'Install height');
+  if (install.error) return { error: install.error };
+  const depth = cleanMm(b.depthMm, 'Depth');
+  if (depth.error) return { error: depth.error };
+  const name = clipLine(b.name, 160) || fallbackName || 'Untitled sign';
+  return {
+    name,
+    location: clipLine(b.location, 500),
+    type,
+    widthMm: width.value,
+    heightMm: height.value,
+    installHeightMm: install.value,
+    depthMm: depth.value,
+    substrate: clipLine(b.substrate, 200),
+    access: clipBlock(b.access, 1000),
+    illumination: light,
+    quantity,
+    notes: clipBlock(b.notes, 4000)
+  };
+}
+function unit(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : null;
+}
+function cleanMarkup(raw) {
+  if (raw == null) return { value: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { error: 'Those marks aren’t valid.' };
+  const src = Array.isArray(raw.items) ? raw.items.slice(0, 80) : [];
+  const items = [];
+  for (const it of src) {
+    if (!it || typeof it !== 'object') continue;
+    if (it.type === 'text') {
+      const x = unit(it.x), y = unit(it.y);
+      const text = clipLine(it.text, 80);
+      if (x == null || y == null || !text) continue;
+      items.push({ type: 'text', x, y, text });
+    } else if (it.type === 'rect') {
+      const x = unit(it.x), y = unit(it.y), w = unit(it.w), h = unit(it.h);
+      if ([x, y, w, h].some(v => v == null) || w < 0.004 || h < 0.004) continue;
+      items.push({ type: 'rect', x, y, w, h });
+    } else if (it.type === 'line' || it.type === 'arrow' || it.type === 'dim') {
+      const x1 = unit(it.x1), y1 = unit(it.y1), x2 = unit(it.x2), y2 = unit(it.y2);
+      if ([x1, y1, x2, y2].some(v => v == null)) continue;
+      const item = { type: it.type, x1, y1, x2, y2 };
+      if (it.type === 'dim') item.label = clipLine(it.label, 40);
+      items.push(item);
+    }
+  }
+  let scale = null;
+  if (raw.scale && typeof raw.scale === 'object') {
+    const mm = Number(raw.scale.mm);
+    const x1 = unit(raw.scale.x1), y1 = unit(raw.scale.y1), x2 = unit(raw.scale.x2), y2 = unit(raw.scale.y2);
+    if ([x1, y1, x2, y2].every(v => v != null) && Number.isFinite(mm) && mm > 0 && mm <= 1000000) scale = { x1, y1, x2, y2, mm: Math.round(mm) };
+  }
+  const value = scale ? { items, scale } : { items };
+  if (JSON.stringify(value).length > 100000) return { error: 'Those marks are too large.' };
+  return { value: items.length || scale ? value : null };
+}
+function photoRel(surveyId, signId, photoId, mark) {
+  return `surveys/${surveyId}/${signId}/${photoId}${mark ? '-mark' : ''}.jpg`;
+}
+function surveyAbs(rel) {
+  if (typeof rel !== 'string' || !rel) return null;
+  const root = path.resolve(filesDir());
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  return abs;
+}
+async function isJpeg(file) {
+  let fh;
+  try {
+    fh = await fsp.open(file, 'r');
+    const buf = Buffer.alloc(3);
+    const { bytesRead } = await fh.read(buf, 0, 3, 0);
+    return bytesRead === 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  } catch { return false; }
+  finally { if (fh) await fh.close(); }
+}
+async function readSurveysDoc() {
+  let raw;
+  try { raw = await fsp.readFile(surveyPath(), 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return { surveys: [] }; throw e; }
+  let data;
+  try { data = JSON.parse(raw); }
+  catch { throw Object.assign(new Error('Survey data could not be read'), { code: 500 }); }
+  const list = data && Array.isArray(data.surveys) ? data.surveys : null;
+  if (!list) throw Object.assign(new Error('Survey data could not be read'), { code: 500 });
+  const surveys = [];
+  for (const s of list) {
+    if (!s || typeof s.id !== 'string' || !/^[a-f0-9]{16}$/.test(s.id)) continue;
+    const header = cleanSurveyHeader(s);
+    if (header.error) continue;
+    const signs = [];
+    for (const sign of Array.isArray(s.signs) ? s.signs : []) {
+      if (!sign || typeof sign.id !== 'string' || !/^[a-f0-9]{12}$/.test(sign.id)) continue;
+      const cleaned = cleanSign(sign, 'Untitled sign');
+      if (cleaned.error) continue;
+      const photos = [];
+      for (const photo of Array.isArray(sign.photos) ? sign.photos : []) {
+        if (!photo || typeof photo.id !== 'string' || !/^[a-f0-9]{12}$/.test(photo.id)) continue;
+        const stored = photoRel(s.id, sign.id, photo.id, false);
+        if (photo.stored !== stored) continue;
+        const mark = photoRel(s.id, sign.id, photo.id, true);
+        const annotated = photo.annotated === mark ? mark : '';
+        const markup = cleanMarkup(photo.markup || null);
+        photos.push({
+          id: photo.id,
+          originalName: clipLine(photo.originalName, 180) || 'photo.jpg',
+          stored,
+          annotated,
+          size: Number.isFinite(photo.size) ? photo.size : 0,
+          at: typeof photo.at === 'string' ? photo.at : now(),
+          ...(annotated && photo.markedAt ? { markedAt: String(photo.markedAt) } : {}),
+          ...(markup.value ? { markup: markup.value } : {})
+        });
+      }
+      signs.push({ id: sign.id, ...cleaned, photos });
+    }
+    const jobId = typeof s.jobId === 'string' && /^[a-f0-9]{12}$/.test(s.jobId) ? s.jobId : '';
+    const quoteId = typeof s.quoteId === 'string' && /^[a-f0-9]{16}$/.test(s.quoteId) ? s.quoteId : '';
+    surveys.push({
+      id: s.id,
+      ...header,
+      signs,
+      ...(jobId ? { jobId } : {}),
+      ...(quoteId ? { quoteId } : {}),
+      createdAt: typeof s.createdAt === 'string' ? s.createdAt : now(),
+      updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : now()
+    });
+  }
+  return { surveys };
+}
+async function writeSurveysDoc(doc) {
+  const tmp = surveyPath() + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify({ surveys: doc.surveys }, null, 2));
+  await fsp.rename(tmp, surveyPath());
+}
+async function loadSurveys() {
+  return withSurveys(() => readSurveysDoc());
+}
+function signLine(sign) {
+  const type = SURVEY_TYPES[sign.type] || 'Sign';
+  const size = sign.widthMm || sign.heightMm ? `${sign.widthMm || '—'} x ${sign.heightMm || '—'} mm` : '';
+  const light = sign.illumination ? SURVEY_LIGHTS[sign.illumination] : '';
+  return [sign.name, type, size, sign.location, light].filter(Boolean).join(' · ').slice(0, 300);
+}
+function surveyJobDescription(survey) {
+  const signs = survey.signs.map(s => s.name).filter(Boolean);
+  return [
+    survey.address ? `Site: ${survey.address}` : '',
+    survey.notes ? survey.notes.replace(/\s+/g, ' ').trim() : '',
+    signs.length ? `Signs: ${signs.join(', ')}` : ''
+  ].filter(Boolean).join(' · ').slice(0, 2000);
+}
+function surveyQuoteNotes(survey) {
+  const extra = survey.signs.map(s => {
+    const bits = [];
+    if (s.installHeightMm) bits.push(`install height ${s.installHeightMm} mm`);
+    if (s.depthMm) bits.push(`depth ${s.depthMm} mm`);
+    if (s.substrate) bits.push(s.substrate);
+    if (s.access) bits.push(s.access.replace(/\s+/g, ' ').trim());
+    if (s.notes) bits.push(s.notes.replace(/\s+/g, ' ').trim());
+    return bits.length ? `${s.name}: ${bits.join('; ')}` : '';
+  }).filter(Boolean);
+  const more = survey.signs.length > 20 ? [`This survey has ${survey.signs.length} signs. The quote lists the first 20.`] : [];
+  return [...more, ...extra].join('\n').slice(0, 4000);
+}
+function gpsText(lat, lng) {
+  if (lat == null || lng == null) return '';
+  const ns = lat >= 0 ? 'N' : 'S';
+  const ew = lng >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(5)} ${ns}, ${Math.abs(lng).toFixed(5)} ${ew}`;
+}
+async function presentSurvey(req, survey, summary) {
+  let job = null;
+  if (survey.jobId) job = await loadJob(survey.jobId);
+  const photoCount = survey.signs.reduce((n, s) => n + s.photos.length, 0);
+  const quoteId = (job && typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) && job.quoteId) || survey.quoteId || '';
+  const view = {
+    id: survey.id,
+    client: survey.client,
+    address: survey.address || '',
+    lat: survey.lat,
+    lng: survey.lng,
+    date: survey.date,
+    surveyor: survey.surveyor || '',
+    contact: survey.contact || '',
+    notes: survey.notes || '',
+    signCount: survey.signs.length,
+    photoCount,
+    signNames: survey.signs.map(s => s.name).filter(Boolean),
+    createdAt: survey.createdAt,
+    updatedAt: survey.updatedAt,
+    ...(survey.jobId ? { jobId: survey.jobId, jobMissing: !job } : {}),
+    ...(job && job.jobNumber ? { jobNumber: job.jobNumber } : {}),
+    ...(quoteId ? { quoteId } : {})
+  };
+  if (summary) return view;
+  view.signs = survey.signs.map(sign => ({
+    id: sign.id,
+    name: sign.name,
+    location: sign.location || '',
+    type: sign.type,
+    widthMm: sign.widthMm,
+    heightMm: sign.heightMm,
+    installHeightMm: sign.installHeightMm,
+    depthMm: sign.depthMm,
+    substrate: sign.substrate || '',
+    access: sign.access || '',
+    illumination: sign.illumination || '',
+    quantity: sign.quantity || 1,
+    notes: sign.notes || '',
+    photos: sign.photos.map(photo => {
+      const url = `${base()}/api/surveys/${survey.id}/signs/${sign.id}/photos/${photo.id}`;
+      return {
+        id: photo.id,
+        originalName: photo.originalName,
+        size: photo.size || 0,
+        at: photo.at,
+        ...(photo.markup ? { markup: photo.markup } : {}),
+        url,
+        ...(photo.annotated ? { annotatedUrl: `${url}?mark=1`, markedAt: photo.markedAt || photo.at } : {})
+      };
+    })
+  }));
+  return view;
+}
+async function resolveSurveyJob(b) {
+  const hasId = b && Object.prototype.hasOwnProperty.call(b, 'jobId');
+  const hasNum = b && Object.prototype.hasOwnProperty.call(b, 'jobNumber');
+  if (!hasId && !hasNum) return { keep: true };
+  const jid = String((hasId ? b.jobId : '') ?? '').trim();
+  const num = String((hasNum ? b.jobNumber : '') ?? '').trim();
+  if (!jid && !num) return { jobId: '', quoteId: '' };
+  let job = null;
+  if (/^[a-f0-9]{12}$/.test(jid)) job = await loadJob(jid);
+  if (!job && num) job = await jobByNumber(num);
+  if (!job) return { error: 'No job with that number.' };
+  const quoteId = typeof job.quoteId === 'string' && /^[a-f0-9]{16}$/.test(job.quoteId) ? job.quoteId : '';
+  return { jobId: job.id, quoteId };
+}
+async function syncJobSurvey(survey, prevJobId) {
+  if (prevJobId && prevJobId !== survey.jobId) {
+    const prev = await loadJob(prevJobId);
+    if (prev && prev.surveyId === survey.id) {
+      delete prev.surveyId;
+      await saveJob(prev);
+    }
+  }
+  if (!survey.jobId) return;
+  const job = await loadJob(survey.jobId);
+  if (job && job.surveyId !== survey.id) {
+    job.surveyId = survey.id;
+    await saveJob(job);
+  }
+}
+function findSign(doc, surveyId, signId) {
+  const survey = doc.surveys.find(s => s.id === surveyId);
+  const sign = survey && survey.signs.find(s => s.id === signId);
+  return { survey, sign };
+}
+async function handleSurveys(req, res, p, m, u) {
+  let r;
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/signs\/([a-f0-9]{12})\/photos\/([a-f0-9]{12})\/mark$/))) return surveyPhotoMark(req, res, m, r[1], r[2], r[3]);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/signs\/([a-f0-9]{12})\/photos\/([a-f0-9]{12})$/))) return surveyPhotoOne(req, res, m, r[1], r[2], r[3], u);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/signs\/([a-f0-9]{12})\/photos$/))) return surveyPhotoCreate(req, res, m, r[1], r[2], u);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/signs\/([a-f0-9]{12})$/))) return surveySignOne(req, res, m, r[1], r[2]);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/signs$/))) return surveySignCreate(req, res, m, r[1]);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/pdf$/))) return surveyPdf(req, res, m, r[1]);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})\/(quote|job)$/))) return surveySpawn(req, res, m, r[1], r[2]);
+  if ((r = p.match(/^\/api\/surveys\/([a-f0-9]{16})$/))) return surveyOne(req, res, m, r[1]);
+  if (p === '/api/surveys') return surveyCollection(req, res, m);
+  return err(res, 404, 'Not found');
+}
+async function surveyCollection(req, res, m) {
+  if (m === 'GET') {
+    const doc = await loadSurveys();
+    const surveys = await Promise.all(doc.surveys.map(s => presentSurvey(req, s, true)));
+    surveys.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(b.id).localeCompare(String(a.id)));
+    return send(res, 200, { surveys });
+  }
+  if (m === 'POST') {
+    const b = await readJSON(req);
+    const header = cleanSurveyHeader(b);
+    if (header.error) return err(res, 400, header.error);
+    const link = await resolveSurveyJob(b);
+    if (link.error) return err(res, 400, link.error);
+    const created = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      let sid = id(8);
+      while (doc.surveys.some(s => s.id === sid)) sid = id(8);
+      const stamp = now();
+      const survey = { id: sid, ...header, signs: [], ...(link.keep ? {} : { ...(link.jobId ? { jobId: link.jobId } : {}), ...(link.quoteId ? { quoteId: link.quoteId } : {}) }), createdAt: stamp, updatedAt: stamp };
+      if (!link.keep && !link.jobId) { delete survey.jobId; delete survey.quoteId; }
+      doc.surveys.push(survey);
+      await writeSurveysDoc(doc);
+      return survey;
+    });
+    if (!link.keep) await syncJobSurvey(created, '');
+    return send(res, 201, await presentSurvey(req, created));
+  }
+  return err(res, 405, 'Method not allowed');
+}
+async function surveyOne(req, res, m, sid) {
+  if (m === 'GET') {
+    const survey = (await loadSurveys()).surveys.find(s => s.id === sid);
+    if (!survey) return err(res, 404, 'No survey with that id.');
+    return send(res, 200, await presentSurvey(req, survey));
+  }
+  if (m === 'PUT') {
+    const b = await readJSON(req);
+    const header = cleanSurveyHeader(b);
+    if (header.error) return err(res, 400, header.error);
+    const link = await resolveSurveyJob(b);
+    if (link.error) return err(res, 400, link.error);
+    let prevJobId = '';
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const i = doc.surveys.findIndex(s => s.id === sid);
+      if (i < 0) return { status: 404, error: 'No survey with that id.' };
+      const prev = doc.surveys[i];
+      prevJobId = prev.jobId || '';
+      const next = { ...prev, ...header, id: prev.id, signs: prev.signs, createdAt: prev.createdAt, updatedAt: now() };
+      if (link.keep) {
+        if (prev.jobId) next.jobId = prev.jobId;
+        if (prev.quoteId) next.quoteId = prev.quoteId;
+      } else if (link.jobId) {
+        next.jobId = link.jobId;
+        if (link.quoteId) next.quoteId = link.quoteId;
+        else delete next.quoteId;
+      } else {
+        delete next.jobId;
+        delete next.quoteId;
+      }
+      if (Array.isArray(b.signs)) {
+        if (b.signs.length > MAX_SIGNS) return { status: 400, error: `A survey can hold ${MAX_SIGNS} signs.` };
+        for (const incoming of b.signs) {
+          const signId = incoming && incoming.id;
+          const sign = next.signs.find(s => s.id === signId);
+          if (!sign) return { status: 409, error: 'That sign is no longer on this survey. Reload the page.' };
+          const cleaned = cleanSign(incoming, sign.name);
+          if (cleaned.error) return { status: 400, error: cleaned.error };
+          Object.assign(sign, cleaned, { id: sign.id, photos: sign.photos });
+        }
+      }
+      doc.surveys[i] = next;
+      await writeSurveysDoc(doc);
+      return { survey: next };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    if (!link.keep) await syncJobSurvey(result.survey, prevJobId);
+    return send(res, 200, await presentSurvey(req, result.survey));
+  }
+  if (m === 'DELETE') {
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const i = doc.surveys.findIndex(s => s.id === sid);
+      if (i < 0) return { status: 404, error: 'No survey with that id.' };
+      const row = doc.surveys[i];
+      doc.surveys.splice(i, 1);
+      await writeSurveysDoc(doc);
+      if (row.jobId) {
+        const job = await loadJob(row.jobId);
+        if (job && job.surveyId === row.id) {
+          delete job.surveyId;
+          await saveJob(job);
+        }
+      }
+      await fsp.rm(path.join(filesDir(), 'surveys', sid), { recursive: true, force: true }).catch(() => {});
+      return { ok: true };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, { ok: true });
+  }
+  return err(res, 405, 'Method not allowed');
+}
+async function surveySignCreate(req, res, m, sid) {
+  if (m !== 'POST') return err(res, 405, 'Method not allowed');
+  const b = await readJSON(req);
+  const result = await withSurveys(async () => {
+    const doc = await readSurveysDoc();
+    const survey = doc.surveys.find(s => s.id === sid);
+    if (!survey) return { status: 404, error: 'No survey with that id.' };
+    if (survey.signs.length >= MAX_SIGNS) return { status: 400, error: `A survey can hold ${MAX_SIGNS} signs.` };
+    const cleaned = cleanSign(b && Object.keys(b).length ? b : {}, `Sign ${survey.signs.length + 1}`);
+    if (cleaned.error) return { status: 400, error: cleaned.error };
+    let signId = id(6);
+    while (survey.signs.some(s => s.id === signId)) signId = id(6);
+    survey.signs.push({ id: signId, ...cleaned, photos: [] });
+    survey.updatedAt = now();
+    await writeSurveysDoc(doc);
+    return { survey };
+  });
+  if (result.error) return err(res, result.status, result.error);
+  return send(res, 201, await presentSurvey(req, result.survey));
+}
+async function surveySignOne(req, res, m, sid, signId) {
+  if (m === 'PUT') {
+    const b = await readJSON(req);
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const { survey, sign } = findSign(doc, sid, signId);
+      if (!survey || !sign) return { status: 404, error: 'No sign with that id.' };
+      const cleaned = cleanSign(b, sign.name);
+      if (cleaned.error) return { status: 400, error: cleaned.error };
+      Object.assign(sign, cleaned, { id: sign.id, photos: sign.photos });
+      survey.updatedAt = now();
+      await writeSurveysDoc(doc);
+      return { survey };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, await presentSurvey(req, result.survey));
+  }
+  if (m === 'DELETE') {
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const { survey, sign } = findSign(doc, sid, signId);
+      if (!survey || !sign) return { status: 404, error: 'No sign with that id.' };
+      survey.signs = survey.signs.filter(s => s.id !== signId);
+      survey.updatedAt = now();
+      await writeSurveysDoc(doc);
+      await fsp.rm(path.join(filesDir(), 'surveys', sid, signId), { recursive: true, force: true }).catch(() => {});
+      return { survey };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, await presentSurvey(req, result.survey));
+  }
+  return err(res, 405, 'Method not allowed');
+}
+async function surveyPhotoCreate(req, res, m, sid, signId, u) {
+  if (m !== 'POST') return err(res, 405, 'Method not allowed');
+  const existing = await loadSurveys();
+  const survey = existing.surveys.find(s => s.id === sid);
+  const sign = survey && survey.signs.find(s => s.id === signId);
+  if (!survey || !sign) return err(res, 404, 'No sign with that id.');
+  if (sign.photos.length >= MAX_SIGN_PHOTOS) return err(res, 400, `A sign can hold ${MAX_SIGN_PHOTOS} photos.`);
+  const dir = path.join(filesDir(), 'surveys', sid, signId);
+  await fsp.mkdir(dir, { recursive: true });
+  const pid = id(6);
+  const abs = path.join(dir, `${pid}.jpg`);
+  let size;
+  try { size = await streamToFile(req, abs, MAX_SURVEY_PHOTO); }
+  catch (e) {
+    await fsp.rm(abs, { force: true });
+    if (e && (e.code === 413 || e.code === 400)) return err(res, e.code, e.code === 413 ? 'That photo is too large.' : e.message);
+    throw e;
+  }
+  if (!(await isJpeg(abs))) {
+    await fsp.rm(abs, { force: true });
+    return err(res, 415, 'Photos need to be JPEG.');
+  }
+  let originalName = displayName(u.searchParams.get('name') || 'photo.jpg').replace(/\.[^.]+$/, '') || 'photo';
+  originalName = `${originalName}.jpg`;
+  const photo = { id: pid, originalName, stored: photoRel(sid, signId, pid, false), annotated: '', size, at: now() };
+  const result = await withSurveys(async () => {
+    const doc = await readSurveysDoc();
+    const found = findSign(doc, sid, signId);
+    if (!found.survey || !found.sign) return { status: 404, error: 'No sign with that id.' };
+    if (found.sign.photos.length >= MAX_SIGN_PHOTOS) return { status: 400, error: `A sign can hold ${MAX_SIGN_PHOTOS} photos.` };
+    found.sign.photos.push(photo);
+    found.survey.updatedAt = now();
+    await writeSurveysDoc(doc);
+    return { survey: found.survey };
+  });
+  if (result.error) {
+    await fsp.rm(abs, { force: true });
+    return err(res, result.status, result.error);
+  }
+  return send(res, 201, await presentSurvey(req, result.survey));
+}
+async function surveyPhotoOne(req, res, m, sid, signId, pid, u) {
+  if (m === 'GET' || m === 'HEAD') {
+    const survey = (await loadSurveys()).surveys.find(s => s.id === sid);
+    const sign = survey && survey.signs.find(s => s.id === signId);
+    const photo = sign && sign.photos.find(p => p.id === pid);
+    if (!photo) return err(res, 404, 'Not found');
+    const marked = u.searchParams.has('mark');
+    const rel = marked ? photo.annotated : photo.stored;
+    if (!rel) return err(res, 404, 'Not found');
+    const abs = surveyAbs(rel);
+    if (!abs) return err(res, 404, 'Not found');
+    const name = String(photo.originalName || 'photo.jpg').replace(/"/g, '');
+    return serveFile(req, res, abs, { 'Content-Disposition': `inline; filename="${name}"`, 'Cache-Control': 'private, max-age=86400' });
+  }
+  if (m === 'PUT') {
+    const b = await readJSON(req);
+    if (!b || !Object.prototype.hasOwnProperty.call(b, 'markup')) return err(res, 400, 'Those marks aren’t valid.');
+    const markup = cleanMarkup(b.markup);
+    if (markup.error) return err(res, 400, markup.error);
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const found = findSign(doc, sid, signId);
+      const photo = found.sign && found.sign.photos.find(p => p.id === pid);
+      if (!photo) return { status: 404, error: 'Not found' };
+      if (markup.value) photo.markup = markup.value;
+      else {
+        delete photo.markup;
+        if (photo.annotated) {
+          const abs = surveyAbs(photo.annotated);
+          if (abs) await fsp.rm(abs, { force: true }).catch(() => {});
+          photo.annotated = '';
+          delete photo.markedAt;
+        }
+      }
+      found.survey.updatedAt = now();
+      await writeSurveysDoc(doc);
+      return { survey: found.survey };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, await presentSurvey(req, result.survey));
+  }
+  if (m === 'DELETE') {
+    const result = await withSurveys(async () => {
+      const doc = await readSurveysDoc();
+      const found = findSign(doc, sid, signId);
+      const photo = found.sign && found.sign.photos.find(p => p.id === pid);
+      if (!photo) return { status: 404, error: 'Not found' };
+      found.sign.photos = found.sign.photos.filter(p => p.id !== pid);
+      found.survey.updatedAt = now();
+      await writeSurveysDoc(doc);
+      for (const rel of [photo.stored, photo.annotated]) {
+        const abs = rel && surveyAbs(rel);
+        if (abs) await fsp.rm(abs, { force: true }).catch(() => {});
+      }
+      return { survey: found.survey };
+    });
+    if (result.error) return err(res, result.status, result.error);
+    return send(res, 200, await presentSurvey(req, result.survey));
+  }
+  return err(res, 405, 'Method not allowed');
+}
+async function surveyPhotoMark(req, res, m, sid, signId, pid) {
+  if (m !== 'POST') return err(res, 405, 'Method not allowed');
+  const existing = await loadSurveys();
+  const photo = (((existing.surveys.find(s => s.id === sid) || {}).signs || []).find(s => s.id === signId) || {}).photos;
+  const row = photo && photo.find(p => p.id === pid);
+  if (!row) return err(res, 404, 'Not found');
+  const abs = surveyAbs(photoRel(sid, signId, pid, true));
+  if (!abs) return err(res, 500, 'Could not store that photo.');
+  await fsp.mkdir(path.dirname(abs), { recursive: true });
+  const tmp = abs + '.part';
+  let size;
+  try { size = await streamToFile(req, tmp, MAX_SURVEY_PHOTO); }
+  catch (e) {
+    await fsp.rm(tmp, { force: true });
+    if (e && (e.code === 413 || e.code === 400)) return err(res, e.code, e.code === 413 ? 'That photo is too large.' : e.message);
+    throw e;
+  }
+  if (!(await isJpeg(tmp))) {
+    await fsp.rm(tmp, { force: true });
+    return err(res, 415, 'Photos need to be JPEG.');
+  }
+  await fsp.rename(tmp, abs);
+  const result = await withSurveys(async () => {
+    const doc = await readSurveysDoc();
+    const found = findSign(doc, sid, signId);
+    const current = found.sign && found.sign.photos.find(p => p.id === pid);
+    if (!current) return { status: 404, error: 'Not found' };
+    current.annotated = photoRel(sid, signId, pid, true);
+    current.markedAt = now();
+    current.size = current.size;
+    void size;
+    found.survey.updatedAt = current.markedAt;
+    await writeSurveysDoc(doc);
+    return { survey: found.survey };
+  });
+  if (result.error) {
+    await fsp.rm(abs, { force: true });
+    return err(res, result.status, result.error);
+  }
+  return send(res, 200, await presentSurvey(req, result.survey));
+}
+async function surveyPdf(req, res, m, sid) {
+  if (m !== 'GET' && m !== 'HEAD') return err(res, 405, 'Method not allowed');
+  const survey = (await loadSurveys()).surveys.find(s => s.id === sid);
+  if (!survey) return err(res, 404, 'No survey with that id.');
+  const job = survey.jobId ? await loadJob(survey.jobId) : null;
+  const signs = [];
+  for (const sign of survey.signs) {
+    const photos = [];
+    for (const photo of sign.photos) {
+      const prefer = photo.annotated || photo.stored;
+      const abs = surveyAbs(prefer);
+      if (!abs) continue;
+      try {
+        const bytes = await fsp.readFile(abs);
+        photos.push({ bytes, annotated: !!photo.annotated });
+      } catch { /* missing file stays off the report */ }
+    }
+    signs.push({
+      name: sign.name,
+      typeLabel: SURVEY_TYPES[sign.type] || 'Sign',
+      location: sign.location || '',
+      widthMm: sign.widthMm,
+      heightMm: sign.heightMm,
+      installHeightMm: sign.installHeightMm,
+      depthMm: sign.depthMm,
+      substrate: sign.substrate || '',
+      access: sign.access || '',
+      lightLabel: sign.illumination ? (SURVEY_LIGHTS[sign.illumination] || '') : '',
+      quantity: sign.quantity || 1,
+      notes: sign.notes || '',
+      sizeLabel: sign.widthMm || sign.heightMm ? `${sign.widthMm || '—'} x ${sign.heightMm || '—'} mm` : '',
+      photos
+    });
+  }
+  const payload = {
+    surveyNo: `SV-${survey.id.slice(0, 6).toUpperCase()}`,
+    client: survey.client,
+    contact: survey.contact || '',
+    address: survey.address || '',
+    gps: gpsText(survey.lat, survey.lng),
+    date: survey.date,
+    surveyor: survey.surveyor || '',
+    notes: survey.notes || '',
+    jobNumber: job && job.jobNumber ? job.jobNumber : '',
+    signs
+  };
+  let pdf;
+  try { pdf = await buildSurveyPdf(payload, publicBrand()); }
+  catch (e) { console.error('[survey.pdf]', e); return err(res, 500, 'Could not build the survey PDF.'); }
+  const fname = `YBI-FX-survey-${safeName(survey.client)}.pdf`;
+  const download = uParam(req);
+  res.writeHead(200, {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename="${fname}"`,
+    'Content-Length': pdf.length,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  return m === 'HEAD' ? res.end() : res.end(pdf);
+}
+function uParam(req) {
+  try { return new URL(req.url, 'http://x').searchParams.has('download'); }
+  catch { return false; }
+}
+async function surveySpawn(req, res, m, sid, kind) {
+  if (m !== 'POST') return err(res, 405, 'Method not allowed');
+  const survey = (await loadSurveys()).surveys.find(s => s.id === sid);
+  if (!survey) return err(res, 404, 'No survey with that id.');
+  if (survey.jobId) {
+    const linked = await loadJob(survey.jobId);
+    if (linked) {
+      const view = await presentSurvey(req, survey);
+      view.job = studioJob(req, linked);
+      return send(res, 200, view);
+    }
+  }
+  const b = await readJSON(req);
+  const num = String(b.jobNumber || '').trim();
+  if (!JOBNUM_RE.test(num) || RESERVED.has(norm(num))) return err(res, 400, 'Job number can only use letters, numbers, - _ or . (max 40), e.g. FX-2201.');
+  const dupe = await jobByNumber(num);
+  if (dupe) return send(res, 409, { error: `Job ${dupe.jobNumber} already exists — open it and upload a new version instead.`, existing: studioJob(req, dupe) });
+  const description = surveyJobDescription(survey);
+  const client = survey.client.slice(0, 120);
+  const contact = (survey.contact || '').slice(0, 120);
+  let job;
+  let quoteId = '';
+  if (kind === 'quote') {
+    const cleaned = await cleanQuote({
+      client: survey.client,
+      contactName: survey.contact || '',
+      date: melbourneDay(new Date()),
+      validity: '30 days',
+      description: description || `Site survey for ${survey.client}`,
+      notes: surveyQuoteNotes(survey),
+      terms: 'Valid for the period shown. Prices are in Australian dollars and exclude GST. Artwork proofs start once this quote is approved.',
+      lines: (survey.signs.length ? survey.signs : [{ name: 'Site survey', type: 'other', quantity: 1 }]).slice(0, 20).map(sign => ({
+        description: signLine(sign),
+        qty: String(sign.quantity || 1),
+        price: ''
+      }))
+    });
+    if (cleaned.error) return err(res, 400, cleaned.error);
+    job = { id: id(6), token: token(), jobNumber: num, description: cleaned.description.slice(0, 2000), clientName: cleaned.client.slice(0, 120), clientCompany: cleaned.contactName.slice(0, 120), clientEmail: '', clientPhone: '', access: 'private', production: 'awaiting_approval', phase: 'quoting', quoteState: 'open', surveyId: survey.id, createdAt: now(), versions: [] };
+    const quote = await withQuotes(async () => {
+      const doc = await readQuotesDoc();
+      let qid = id(8);
+      while (doc.quotes.some(q => q.id === qid)) qid = id(8);
+      const stamp = now();
+      const row = { id: qid, token: token(), responses: [], version: 1, revisions: [], jobId: job.id, ...cleaned, createdAt: stamp, updatedAt: stamp };
+      doc.quotes.push(row);
+      await writeQuotesDoc(doc);
+      return row;
+    });
+    quoteId = quote.id;
+    job.quoteId = quote.id;
+  } else {
+    job = { id: id(6), token: token(), jobNumber: num, description: description || `Site survey for ${survey.client}`, clientName: client, clientCompany: contact, clientEmail: '', clientPhone: '', access: 'private', production: 'awaiting_approval', surveyId: survey.id, createdAt: now(), versions: [] };
+  }
+  await fsp.mkdir(path.join(filesDir(), job.id), { recursive: true });
+  await saveJob(job);
+  const updated = await withSurveys(async () => {
+    const doc = await readSurveysDoc();
+    const row = doc.surveys.find(s => s.id === sid);
+    if (!row) return null;
+    row.jobId = job.id;
+    if (quoteId) row.quoteId = quoteId;
+    row.updatedAt = now();
+    await writeSurveysDoc(doc);
+    return row;
+  });
+  const view = await presentSurvey(req, updated || { ...survey, jobId: job.id, ...(quoteId ? { quoteId } : {}) });
+  view.job = studioJob(req, job);
+  return send(res, 201, view);
+}
+
 // ---------- auth ----------
 const cookies = req => Object.fromEntries((req.headers.cookie || '').split(';').map(c => c.trim().split('=').map(decodeURIComponent)).filter(p => p[0]));
 const isStudio = req => cookies(req)[studioCookieName()] === studioSession() || req.headers['x-studio-key'] === studioPassword();
@@ -1674,6 +2453,7 @@ function fxHtml(html) {
     .replaceAll('width="300" height="126" ', '')
     .replace(/<a href="[^"]*\/studio\/calendar">Calendar<\/a>/g, '')
     .replace(/<div class="navdrop" data-tools>[\s\S]*?<\/div><\/div>/, '')
+    .replace(/(<a href="[^"]*\/studio">Jobs<\/a>)/, `$1<a href="${base()}/studio/survey">Site survey</a>`)
     .replaceAll('https://www.ybicreative.com.au', 'https://www.ybifx.com')
     .replaceAll('YBI Proofs', 'YBI FX Proofs')
     .replaceAll('Artwork proofs · YBI Creative', 'Artwork proofs · YBI FX Proofs')
@@ -1728,6 +2508,7 @@ async function handle(req, res) {
     if (u.searchParams.get('key') === studioPassword()) return back(res, base() + p, { 'Set-Cookie': setCookie() });
     if (!isStudio(req)) return back(res, `${base()}/?next=${encodeURIComponent(base() + p)}`);
     if (activeBrand() === 'fx' && fxStudioRemoved(p)) return back(res, base() + '/studio');
+    if (activeBrand() !== 'fx' && (p === '/studio/survey' || p.startsWith('/studio/survey/'))) return back(res, base() + '/studio');
     return servePage(req, res, 'studio.html');
   }
   if ((r = p.match(/^\/quote\/([a-f0-9]{16})\/?$/)) && (m === 'GET' || m === 'HEAD')) return servePage(req, res, 'quote.html');
@@ -1781,6 +2562,10 @@ async function handle(req, res) {
     if (!isStudio(req)) return err(res, 401, 'Studio login required');
     if (activeBrand() === 'fx' && (p === '/api/calendar' || p.startsWith('/api/calendar/'))) return err(res, 404, 'Not found');
     if (p === '/api/calendar' || p.startsWith('/api/calendar/')) return handleCalendar(req, res, p, m, u);
+    if (p === '/api/surveys' || p.startsWith('/api/surveys/')) {
+      if (activeBrand() !== 'fx') return err(res, 404, 'Not found');
+      return handleSurveys(req, res, p, m, u);
+    }
     if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/pdf$/)) && (m === 'GET' || m === 'HEAD')) return sendQuotePdf(req, res, r[1], '', true);
     if ((r = p.match(/^\/api\/quotes\/([a-f0-9]{16})\/job$/)) && m === 'POST') return openQuoteJob(req, res, r[1]);
     if (p === '/api/quotes' || p.startsWith('/api/quotes/')) return handleQuotes(req, res, p, m);
