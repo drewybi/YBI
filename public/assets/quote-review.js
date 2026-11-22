@@ -72,7 +72,7 @@ function quoteFilm() {
   if (!FX) return '';
   const poster = `${B}/assets/img/fx-quote-video-poster.jpg`;
   const src = `${B}/assets/video/fx-quote-video.mp4`;
-  return `<figure class="q-promo"><video class="q-promo__vid" controls playsinline webkit-playsinline preload="metadata" poster="${esc(poster)}" width="1920" height="1080" aria-label="YBI FX truck art"><source src="${esc(src)}" type="video/mp4"></video></figure>`;
+  return `<figure class="q-promo"><video class="q-promo__vid" controls playsinline webkit-playsinline preload="metadata" poster="${esc(poster)}" width="1920" height="1080" aria-label="YBI FX truck art"><source src="${esc(src)}" type="video/mp4"></video></figure><p class="q-promo__more"><a class="btn btn--ghost" href="https://www.ybifx.com" target="_blank" rel="noopener">Learn more about YBI-FX Truck Art</a></p>`;
 }
 
 function showUntil(iso) {

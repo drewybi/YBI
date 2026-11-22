@@ -172,12 +172,17 @@ const lines = [
     assert.ok(quoteReview.indexOf('${decision(accepted, mail)}') < filmAt, 'the film sits after the accept area');
     assert.ok(quoteReview.includes("if (!FX) return '';"), 'YBI quotes do not render the film');
     assert.ok(quoteReview.includes('controls playsinline') && quoteReview.includes('preload="metadata"') && quoteReview.includes('fx-quote-video-poster.jpg') && quoteReview.includes('fx-quote-video.mp4'));
+    const filmFn = quoteReview.slice(quoteReview.indexOf('function quoteFilm()'), quoteReview.indexOf('function showUntil'));
+    assert.ok(filmFn.includes('Learn more about YBI-FX Truck Art'), 'fx quote link label');
+    assert.ok(filmFn.includes('href="https://www.ybifx.com" target="_blank" rel="noopener"'), 'fx quote link opens ybifx in a new tab');
+    assert.ok(filmFn.indexOf('fx-quote-video.mp4') < filmFn.indexOf('Learn more about YBI-FX Truck Art'), 'the link sits under the film');
     assert.ok(!quoteReview.includes('autoplay'), 'the quote film does not autoplay');
     assert.ok(!fs.readFileSync(path.join(__dirname, '../public/assets/studio.js'), 'utf8').includes('fx-quote-video'), 'studio editor has no quote film');
     assert.ok(!fs.readFileSync(path.join(__dirname, '../public/assets/review.js'), 'utf8').includes('fx-quote-video'), 'proof view has no quote film');
     assert.ok(!fs.readFileSync(path.join(__dirname, '../quote-pdf.js'), 'utf8').includes('fx-quote-video'), 'quote PDF has no film');
     assert.ok(!fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8').includes('fx-quote-video'), 'mail and pages do not embed the film');
     assert.ok(css.includes('.q-promo__vid{display:block;width:100%;max-width:100%;min-width:0;height:auto;aspect-ratio:16/9'));
+    assert.ok(css.includes('.q-promo__more .btn{max-width:100%;height:auto;min-height:52px') && css.includes('white-space:normal'), 'the ybifx link can wrap on a phone');
     const filmHead = await req(server, 'HEAD', `${FX}/assets/video/fx-quote-video.mp4`);
     assert.strictEqual(filmHead.status, 200);
     assert.ok(filmHead.headers['content-type'].includes('video/mp4'));

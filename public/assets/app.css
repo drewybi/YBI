@@ -401,7 +401,9 @@ body.is-cal-drag .calev{pointer-events:none}
 .qtotals .grand{border-top-color:var(--line2);font-family:var(--display);font-stretch:112%;font-weight:700;font-size:1.35rem;letter-spacing:.02em;text-transform:uppercase}
 .q-promo{margin:32px 0 0;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#050506;line-height:0}
 .q-promo__vid{display:block;width:100%;max-width:100%;min-width:0;height:auto;aspect-ratio:16/9;object-fit:cover;background:#050506;border-radius:18px}
-@media print{.q-promo{display:none!important}}
+.q-promo__more{display:flex;justify-content:center;margin:18px 0 0;max-width:100%;min-width:0}
+.q-promo__more .btn{max-width:100%;height:auto;min-height:52px;padding:14px 26px;white-space:normal;line-height:1.35;text-align:center;text-wrap:balance}
+@media print{.q-promo,.q-promo__more{display:none!important}}
 .q-brand,.q-brandfoot{display:none}
 @media print{
   body.is-quote{background:#fff!important;color:#111!important}
