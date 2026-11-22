@@ -327,7 +327,10 @@ async function buildSurveyPdf(survey, brand) {
       page.drawRectangle({ x: x - 1, y: y - h - 1, width: w + 2, height: h + 2, borderColor: HAIR, borderWidth: 0.8 });
       page.drawImage(img, { x, y: y - h, width: w, height: h });
       y -= h + 14;
-      const capText = `Photo ${pi + 1}${photo.annotated ? ' · marked up' : ''}`;
+      const capBits = [`Photo ${pi + 1}`];
+      if (photo.annotated) capBits.push('marked up');
+      if (Array.isArray(photo.labels) && photo.labels.length) capBits.push(photo.labels.join(', '));
+      const capText = capBits.join(' · ');
       text(capText, MARGIN, y, 8, sans, DIM);
       y -= 16;
     }

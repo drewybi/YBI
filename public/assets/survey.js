@@ -1,6 +1,7 @@
 // YBI FX site survey. Studio only. Sizes are typed (Measure app or a laser).
 // A reference scale on a photo is a rough check, not a measured survey.
 import { B, $, $$, esc, fmtDate, api, upload, toast, engineBand } from './common.js';
+import { commitDimensionLabel, dimensionFromDrag } from './survey-mark.mjs';
 
 const TYPES = [
   ['fascia', 'Fascia'],
@@ -316,12 +317,14 @@ function paintEdit(survey, jobs) {
       <div class="sv-dock" data-dock>
         <button type="button" class="btn sv-hit" data-save>Save</button>
         <button type="button" class="btn btn--ghost sv-hit" data-add>Add sign</button>
-        <a class="btn btn--ghost sv-hit" href="${B}/api/surveys/${survey.id}/pdf" target="_blank" rel="noopener"><span class="sv-wide">View PDF</span><span class="sv-narrow">PDF</span></a>
+        <button type="button" class="btn btn--ghost sv-hit" data-pdf><span class="sv-wide">View PDF</span><span class="sv-narrow">PDF</span></button>
       </div>
     </div>`;
   bindGps($('#sv-form'));
   const form = $('#sv-form');
   $('[data-save]', app).onclick = () => persist(survey.id, { toastOk: true }).catch(() => {});
+  const pdfBtn = $('[data-pdf]', app);
+  if (pdfBtn) pdfBtn.onclick = () => openSurveyPdf(survey.id);
   $('[data-add]', app).onclick = () => addSign(survey.id);
   $$('[data-sign]', app).forEach(card => bindSign(survey.id, card));
   const quoteBtn = $('[data-quote]', app);
@@ -338,7 +341,23 @@ function payloadFromDom() {
   return { ...header, signs };
 }
 
+async function openSurveyPdf(id) {
+  const popup = window.open('', '_blank');
+  try {
+    await persist(id);
+    const url = `${B}/api/surveys/${id}/pdf?t=${Date.now()}`;
+    if (popup) popup.location.href = url;
+    else location.href = url;
+  } catch (err) {
+    if (popup) popup.close();
+    const msg = $('[data-msg]');
+    if (msg) { msg.className = 'msg err'; msg.textContent = err.message || 'Could not build the PDF.'; }
+  }
+}
+
 async function persist(id, { toastOk = false } = {}) {
+  const active = document.activeElement;
+  if (active && active.matches && active.matches('input, textarea, select')) active.blur();
   const msg = $('[data-msg]');
   if (msg) { msg.className = 'msg'; msg.textContent = ''; }
   const body = payloadFromDom();
@@ -564,11 +583,19 @@ function mountMarkup(surveyId, sign, photo) {
   let scalePts = [];
   let pendingScale = null;
   let dirty = false;
+  let boundIndex = -1;
+  function syncDimLabel() {
+    const result = commitDimensionLabel(items, label.value, boundIndex);
+    items = result.items;
+    boundIndex = result.boundIndex;
+    if (result.changed) { dirty = true; paint(); }
+    return result.changed;
+  }
   const hints = {
     rect: 'Drag a box around where the sign sits.',
     arrow: 'Drag an arrow.',
     line: 'Drag a line.',
-    dim: 'Drag a dimension. Type a label first, or leave it blank to use the scale.',
+    dim: 'Drag the dimension, then type the measurement. It is drawn on the line.',
     text: 'Type the note, then tap the photo.',
     scale: 'Rough check only. Tap two points a known distance apart, then type the millimetres.'
   };
@@ -681,19 +708,20 @@ function mountMarkup(surveyId, sign, photo) {
         ctx.lineTo(x2 + nx * tick, y2 + ny * tick);
         ctx.stroke();
         if (item.label) {
-          const size = Math.max(16, Math.round(w * 0.032));
+          const size = Math.max(18, Math.round(w * 0.042));
           ctx.shadowBlur = 0;
           ctx.font = `600 ${size}px "Work Sans", sans-serif`;
           const tw = ctx.measureText(item.label).width;
           const mx = (x1 + x2) / 2;
-          const my = (y1 + y2) / 2;
+          const my = (y1 + y2) / 2 - size * 0.85;
           const pad = size * 0.4;
-          ctx.fillStyle = 'rgba(9,9,10,0.86)';
-          ctx.fillRect(mx - tw / 2 - pad, my - size * 0.72, tw + pad * 2, size + pad);
+          const plateY = Math.max(pad, my - size * 0.55);
+          ctx.fillStyle = 'rgba(9,9,10,0.9)';
+          ctx.fillRect(mx - tw / 2 - pad, plateY, tw + pad * 2, size + pad);
           ctx.fillStyle = '#ffe14a';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(item.label, mx, my);
+          ctx.fillText(item.label, mx, plateY + (size + pad) / 2);
         }
       }
     }
@@ -716,15 +744,7 @@ function mountMarkup(surveyId, sign, photo) {
     }
     const dist = Math.hypot(b.x - a.x, b.y - a.y);
     if (dist < 0.012) return null;
-    if (tool === 'dim') {
-      const typed = label.value.trim().slice(0, 40);
-      let text = typed;
-      if (!text && scale) {
-        const mm = measureMm(a.x, a.y, b.x, b.y, scale, canvas.width, canvas.height);
-        if (mm) text = `${mm} mm`;
-      }
-      return { type: 'dim', x1: a.x, y1: a.y, x2: b.x, y2: b.y, label: text };
-    }
+    if (tool === 'dim') return dimensionFromDrag(a, b, label.value, scale, canvas.width, canvas.height);
     if (tool === 'arrow' || tool === 'line') return { type: tool, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
     return null;
   }
@@ -767,19 +787,29 @@ function mountMarkup(surveyId, sign, photo) {
     const item = shape(drag, norm(e));
     drag = null;
     draft = null;
-    if (item) { items.push(item); dirty = true; if (tool === 'dim') label.value = ''; }
+    if (item) {
+      items.push(item);
+      dirty = true;
+      if (item.type === 'dim') {
+        boundIndex = items.length - 1;
+        if (!label.value.trim() && item.label) label.value = item.label;
+        setHint(item.label ? 'Measurement is on the line. Change it here, then Save marks.' : 'Type the measurement. It is drawn on the line.');
+        setTimeout(() => { try { label.focus({ preventScroll: true }); } catch { /* iOS may ignore */ } }, 30);
+      }
+    }
     paint();
   });
   canvas.addEventListener('pointercancel', () => { drag = null; draft = null; paint(); });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
   $$('[data-tool]', host).forEach(btn => btn.onclick = () => {
+    if (tool === 'dim') syncDimLabel();
     tool = btn.dataset.tool;
     $$('[data-tool]', host).forEach(b => b.classList.toggle('on', b === btn));
     scalePts = [];
     pendingScale = null;
     applyBtn.hidden = true;
-    label.placeholder = tool === 'text' ? 'Note to place' : (tool === 'dim' ? 'Measurement label' : 'Label');
+    label.placeholder = tool === 'text' ? 'Note to place' : (tool === 'dim' ? 'Measurement, e.g. 2400 mm' : 'Label');
     setHint(tool === 'rect' && scale ? `${hints.rect} Scale is set (${scale.mm} mm).` : hints[tool]);
     paint();
   });
@@ -797,9 +827,17 @@ function mountMarkup(surveyId, sign, photo) {
     setHint(`Scale set at ${scale.mm} mm. Drag a dimension to check a length.`);
     paint();
   };
+  label.addEventListener('input', () => syncDimLabel());
+  label.addEventListener('change', () => syncDimLabel());
+  label.addEventListener('compositionend', () => syncDimLabel());
+  label.addEventListener('blur', () => syncDimLabel());
+  label.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); syncDimLabel(); label.blur(); }
+  });
   $('[data-mk-undo]', host).onclick = () => {
     if (!items.length) return;
     items.pop();
+    if (boundIndex >= items.length) boundIndex = -1;
     dirty = true;
     paint();
   };
@@ -810,6 +848,8 @@ function mountMarkup(surveyId, sign, photo) {
     scale = null;
     pendingScale = null;
     scalePts = [];
+    boundIndex = -1;
+    label.value = '';
     dirty = false;
     try {
       await api(`${B}/api/surveys/${surveyId}/signs/${sign.id}/photos/${photo.id}`, { method: 'PUT', body: JSON.stringify({ markup: null }) });
@@ -817,11 +857,17 @@ function mountMarkup(surveyId, sign, photo) {
       paint();
     } catch (err) { setHint(err.message); }
   };
+  let saveLock = false;
   async function save() {
+    if (saveLock) return;
+    saveLock = true;
     const btn = $('[data-mk-save]', host);
     btn.disabled = true;
     setHint('Saving…');
     try {
+      if (document.activeElement === label) label.blur();
+      syncDimLabel();
+      if (document.fonts && document.fonts.ready) await document.fonts.ready;
       const markup = { items, ...(scale ? { scale } : {}) };
       await api(`${B}/api/surveys/${surveyId}/signs/${sign.id}/photos/${photo.id}`, { method: 'PUT', body: JSON.stringify({ markup }) });
       paint({ guides: false });
@@ -830,6 +876,8 @@ function mountMarkup(surveyId, sign, photo) {
       await upload(`${B}/api/surveys/${surveyId}/signs/${sign.id}/photos/${photo.id}/mark`, file);
       dirty = false;
       toast('Marked photo saved');
+      try { await persist(surveyId); }
+      catch { /* the marked photo is saved; the form message shows why the sizes were not */ }
       close(false);
       await refresh(surveyId);
       const again = document.getElementById(`sign-${sign.id}`);
@@ -837,6 +885,7 @@ function mountMarkup(surveyId, sign, photo) {
     } catch (err) {
       setHint(err.message || 'Could not save. Try again when you have signal.');
       btn.disabled = false;
+      saveLock = false;
     }
   }
   function close(ask) {
@@ -846,7 +895,9 @@ function mountMarkup(surveyId, sign, photo) {
     host.remove();
     document.body.classList.remove('mk-open');
   }
-  $('[data-mk-save]', host).onclick = () => save();
+  const saveBtnEl = $('[data-mk-save]', host);
+  saveBtnEl.addEventListener('pointerup', () => { syncDimLabel(); save(); });
+  saveBtnEl.onclick = () => save();
   $('[data-mk-close]', host).onclick = () => close(true);
   host.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(true); } });
   $('[data-tool="rect"]', host).focus();

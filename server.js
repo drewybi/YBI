@@ -1672,7 +1672,7 @@ function clipBlock(v, n) {
 }
 function cleanMm(v, label) {
   if (v == null || String(v).trim() === '') return { value: null };
-  const n = Number(String(v).trim().replace(/,/g, '').replace(/mm\s*$/i, '').trim());
+  const n = Number(String(v).trim().replace(/,/g, '').replace(/\s+/g, '').replace(/mm$/i, ''));
   if (!Number.isFinite(n) || n < 0 || n > 100000) return { error: `${label} needs to be a size in millimetres.` };
   return { value: Math.round(n) };
 }
@@ -2306,7 +2306,10 @@ async function surveyPdf(req, res, m, sid) {
       if (!abs) continue;
       try {
         const bytes = await fsp.readFile(abs);
-        photos.push({ bytes, annotated: !!photo.annotated });
+        const labels = photo.markup && Array.isArray(photo.markup.items)
+          ? photo.markup.items.filter(it => it && it.type === 'dim' && it.label).map(it => String(it.label))
+          : [];
+        photos.push({ bytes, annotated: !!photo.annotated, labels });
       } catch { /* missing file stays off the report */ }
     }
     signs.push({
