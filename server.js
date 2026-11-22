@@ -2434,10 +2434,40 @@ const setCookie = () => `${studioCookieName()}=${studioSession()}; Path=${cookie
 const clearCookie = () => `${studioCookieName()}=; Path=${cookiePath()}; Max-Age=0`;
 
 // ---------- static ----------
+// iPhone Safari will not play an MP4 unless the file answers a single byte range.
+function videoByteRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!m || (m[1] === '' && m[2] === '')) return { unsatisfiable: true };
+  let start = m[1] === '' ? null : Number(m[1]);
+  let end = m[2] === '' ? null : Number(m[2]);
+  if (start === null) {
+    if (!Number.isInteger(end) || end <= 0) return { unsatisfiable: true };
+    start = Math.max(0, size - end);
+    end = size - 1;
+  } else if (!Number.isInteger(start) || start < 0) return { unsatisfiable: true };
+  else if (end === null || !Number.isInteger(end) || end >= size) end = size - 1;
+  if (start >= size || start > end) return { unsatisfiable: true };
+  return { start, end };
+}
 async function serveFile(req, res, file, extra = {}) {
   let st; try { st = await fsp.stat(file); if (!st.isFile()) throw 0; } catch { return err(res, 404, 'Not found'); }
   const type = MIME[extOf(file)] || 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'X-Content-Type-Options': 'nosniff', ...extra });
+  const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', ...extra };
+  const range = type.startsWith('video/') ? req.headers.range : '';
+  if (range) {
+    const part = videoByteRange(range, st.size);
+    headers['Accept-Ranges'] = 'bytes';
+    if (part.unsatisfiable) {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${st.size}` });
+      return res.end();
+    }
+    const { start, end } = part;
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 });
+    if (req.method === 'HEAD') return res.end();
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  if (type.startsWith('video/')) headers['Accept-Ranges'] = 'bytes';
+  res.writeHead(200, { ...headers, 'Content-Length': st.size });
   if (req.method === 'HEAD') return res.end();
   fs.createReadStream(file).pipe(res);
 }

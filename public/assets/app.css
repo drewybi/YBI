@@ -399,6 +399,9 @@ body.is-cal-drag .calev{pointer-events:none}
 .qtotals{margin-top:18px;margin-left:auto;width:min(380px,100%);display:grid;gap:0}
 .qtotals div{display:flex;justify-content:space-between;gap:18px;align-items:baseline;padding:10px 0;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
 .qtotals .grand{border-top-color:var(--line2);font-family:var(--display);font-stretch:112%;font-weight:700;font-size:1.35rem;letter-spacing:.02em;text-transform:uppercase}
+.q-promo{margin:32px 0 0;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#050506;line-height:0}
+.q-promo__vid{display:block;width:100%;max-width:100%;min-width:0;height:auto;aspect-ratio:16/9;object-fit:cover;background:#050506;border-radius:18px}
+@media print{.q-promo{display:none!important}}
 .q-brand,.q-brandfoot{display:none}
 @media print{
   body.is-quote{background:#fff!important;color:#111!important}
