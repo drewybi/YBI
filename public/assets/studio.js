@@ -194,6 +194,7 @@ async function jobPage(key, showV) {
      <div><span class="k">Contact</span>${esc(j.clientCompany) || '<span class="dim">—</span>'}</div>
      <div><span class="k">Versions</span>${j.versions.length || 0}</div>
      <div><span class="k">Created</span>${fmtDate(j.createdAt)}</div>
+     ${fx() && j.surveyId ? `<div><span class="k">Site survey</span><a class="lnk" href="${B}/studio/survey/${esc(j.surveyId)}">Open survey</a></div>` : ''}
      ${j.archivedAt ? `<div><span class="k">Archived</span>${fmtDate(j.archivedAt)}</div>` : ''}
     </div></div>
    <div class="jgrid">
@@ -1394,7 +1395,7 @@ function markNav() {
   });
   $$('.hdr__r a').forEach(a => {
     const path = a.pathname.replace(/\/$/, '');
-    const nested = path.endsWith('/studio/quote') || toolPaths.includes(path);
+    const nested = path.endsWith('/studio/quote') || path.endsWith('/studio/survey') || toolPaths.includes(path);
     const on = nested ? (here === path || here.startsWith(path + '/')) : path === here;
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -1411,15 +1412,24 @@ async function route() {
   markNav();
   let rest = decodeURIComponent(location.pathname.slice(B.length).replace(/^\/studio\/?/, '').replace(/\/$/, ''));
   document.body.classList.toggle('is-quote', rest === 'quote' || rest.startsWith('quote/'));
+  document.body.classList.toggle('is-survey', fx() && (rest === 'survey' || rest.startsWith('survey/')));
   document.body.classList.toggle('is-halftone', rest === 'halftone');
   document.body.classList.toggle('is-radio', rest === 'radio');
   if (fx() && (rest === 'calendar' || rest === 'halftone' || rest === 'radio')) {
     history.replaceState(null, '', `${B}/studio`);
     rest = '';
   }
+  if (!fx() && (rest === 'survey' || rest.startsWith('survey/'))) {
+    history.replaceState(null, '', `${B}/studio`);
+    rest = '';
+  }
   try {
     if (rest === 'settings') await settings();
     else if (rest === 'calendar') await calendar();
+    else if (fx() && (rest === 'survey' || rest.startsWith('survey/'))) {
+      const { surveyRoute } = await import('./survey.js');
+      await surveyRoute(rest);
+    }
     else if (rest === 'quote') await quotePage('');
     else if (rest.startsWith('quote/')) await quotePage(rest.slice('quote/'.length));
     else if (rest === 'halftone') {
