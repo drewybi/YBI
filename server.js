@@ -2472,11 +2472,22 @@ async function serveFile(req, res, file, extra = {}) {
   fs.createReadStream(file).pipe(res);
 }
 const htmlCache = {};
+// Link cards always name the public proofs host. PUBLIC_URL is that host in production.
+function fxPublicOrigin() {
+  return PUBLIC_URL || 'https://proofs.ybicreative.com.au';
+}
+function fxShareHead() {
+  const asset = `${base()}/assets/img`;
+  const image = `${fxPublicOrigin()}${asset}/fx-og.png`;
+  return `<link rel="icon" href="${asset}/fx-favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="${asset}/fx-icon-16.png"><link rel="icon" type="image/png" sizes="32x32" href="${asset}/fx-icon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="${asset}/fx-icon-192.png"><link rel="icon" type="image/png" sizes="512x512" href="${asset}/fx-icon-512.png"><link rel="apple-touch-icon" sizes="180x180" href="${asset}/fx-icon-180.png"><meta property="og:site_name" content="YBI FX"><meta property="og:title" content="YBI FX"><meta property="og:image" content="${image}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:type" content="image/png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="YBI FX"><meta name="twitter:image" content="${image}">`;
+}
 function fxHtml(html) {
   const c = fxContact();
   const ybiFoot = '<span><a href="tel:+61354442127">(03) 5444 2127</a> &nbsp;·&nbsp; <a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a> &nbsp;·&nbsp; <a href="https://www.ybicreative.com.au" target="_blank" rel="noopener">ybicreative.com.au</a></span>';
   const fxFoot = `<span>${c.address} &nbsp;·&nbsp; <a href="${phoneHref(c.phone)}">Office ${c.phone}</a> &nbsp;·&nbsp; <a href="${phoneHref(c.direct)}">Direct ${c.direct}</a> &nbsp;·&nbsp; <a href="mailto:${c.email}">${c.email}</a> &nbsp;·&nbsp; <a href="https://www.ybifx.com" target="_blank" rel="noopener">www.ybifx.com</a></span>`;
+  const ybiIcons = `<link rel="icon" href="${base()}/assets/img/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="${base()}/assets/img/favicon-32.png"><link rel="apple-touch-icon" href="${base()}/assets/img/favicon-180.png">`;
   return html
+    .replaceAll(ybiIcons, fxShareHead())
     .replaceAll(ybiFoot, fxFoot)
     .replace(/<link rel="preload" as="image" href="[^"]*engine-1280\.webp"[^>]*>/, `<link rel="preload" as="image" href="${base()}/assets/img/fx-hero-poster-1920.webp">`)
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')
