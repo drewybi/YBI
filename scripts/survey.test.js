@@ -50,6 +50,21 @@ const FX = '/fx/proof';
 const jpeg = fs.readFileSync(path.join(__dirname, '../samples/poster-A2.jpg'));
 
 (async () => {
+  const { commitDimensionLabel, dimensionFromDrag } = await import('../public/assets/survey-mark.mjs');
+  const drawn = dimensionFromDrag({ x: 0.1, y: 0.4 }, { x: 0.8, y: 0.4 }, '', null, 1200, 800);
+  assert.ok(drawn && drawn.type === 'dim' && drawn.label === '');
+  const typedAfter = commitDimensionLabel([drawn], '1850 mm', 0);
+  assert.strictEqual(typedAfter.changed, true);
+  assert.strictEqual(typedAfter.items[0].label, '1850 mm');
+  const typedBefore = dimensionFromDrag({ x: 0.1, y: 0.2 }, { x: 0.7, y: 0.2 }, '2,400 mm', null, 800, 600);
+  assert.strictEqual(typedBefore.label, '2,400 mm');
+  const kept = commitDimensionLabel([{ type: 'dim', x1: 0, y1: 0, x2: 1, y2: 0, label: '900 mm' }], '   ', 0);
+  assert.strictEqual(kept.changed, false);
+  assert.strictEqual(kept.items[0].label, '900 mm');
+  const unbound = commitDimensionLabel([{ type: 'dim', x1: 0, y1: 0, x2: 1, y2: 0, label: '' }], '640 mm', -1);
+  assert.strictEqual(unbound.items[0].label, '640 mm');
+  assert.strictEqual(unbound.boundIndex, 0);
+
   const server = createAppServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -129,6 +144,26 @@ const jpeg = fs.readFileSync(path.join(__dirname, '../samples/poster-A2.jpg'));
     assert.strictEqual(sign.json.signs[0].heightMm, 600);
     assert.strictEqual(sign.json.signs[0].quantity, 2);
     const signId = sign.json.signs[0].id;
+    const sized = await req(server, 'PUT', `${FX}/api/surveys/${sid}`, {
+      key: fxKey,
+      body: {
+        client: "Hovey's Transport",
+        address: '12 Example St, Bendigo',
+        lat: -36.757, lng: 144.278,
+        date: '2026-11-22',
+        surveyor: 'Drew',
+        contact: 'Sam on site',
+        notes: 'Gate code 4512',
+        signs: [{ id: signId, name: 'Front fascia', location: 'Above the roller door', type: 'fascia', widthMm: '2,400 mm', heightMm: '600mm', installHeightMm: '3 200', depthMm: '', substrate: 'Colorbond', access: 'Ladder, power nearby', illumination: 'front', quantity: 2, notes: 'Existing skin stays' }]
+      }
+    });
+    assert.strictEqual(sized.status, 200, sized.text);
+    assert.strictEqual(sized.json.signs[0].widthMm, 2400);
+    assert.strictEqual(sized.json.signs[0].heightMm, 600);
+    assert.strictEqual(sized.json.signs[0].installHeightMm, 3200);
+    const reloaded = await req(server, 'GET', `${FX}/api/surveys/${sid}`, { key: fxKey });
+    assert.strictEqual(reloaded.json.signs[0].widthMm, 2400);
+    assert.strictEqual(reloaded.json.signs[0].heightMm, 600);
 
     const badType = await req(server, 'PUT', `${FX}/api/surveys/${sid}/signs/${signId}`, { key: fxKey, body: { type: 'billboard', name: 'Front fascia' } });
     assert.strictEqual(badType.status, 400);
