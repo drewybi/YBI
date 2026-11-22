@@ -544,7 +544,7 @@ function mountMarkup(surveyId, sign, photo) {
   ];
   host.innerHTML = `<div class="mk__top"><button type="button" class="lnk sv-hit" data-mk-close>Close</button><p class="mk__title">${esc(sign.name || 'Sign')}</p><button type="button" class="lnk sv-hit" data-mk-undo>Undo</button></div>
     <p class="mk__hint" data-mk-hint>Drag a box around the sign.</p>
-    <div class="mk__stage"><canvas data-mk-canvas></canvas></div>
+    <div class="mk__stage"><div class="mk__fit"><canvas data-mk-canvas></canvas></div></div>
     <div class="mk__foot">
       <div class="mk__tools">${tools.map(([id, label], i) => `<button type="button" class="mk__tool sv-hit${i === 0 ? ' on' : ''}" data-tool="${id}">${label}</button>`).join('')}<button type="button" class="mk__tool sv-hit" data-mk-clear>Clear</button></div>
       <div class="mk__type"><input data-mk-label maxlength="80" placeholder="Label" enterkeyhint="done" autocomplete="off"><button type="button" class="btn btn--sm sv-hit" data-mk-apply hidden>Apply scale</button><button type="button" class="btn sv-hit" data-mk-save>Save marks</button></div>
@@ -581,6 +581,7 @@ function mountMarkup(surveyId, sign, photo) {
   img.onload = () => {
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
+    canvas.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
     paint();
     saveBtn.disabled = false;
   };
