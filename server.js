@@ -2434,19 +2434,60 @@ const setCookie = () => `${studioCookieName()}=${studioSession()}; Path=${cookie
 const clearCookie = () => `${studioCookieName()}=; Path=${cookiePath()}; Max-Age=0`;
 
 // ---------- static ----------
+// iPhone Safari will not play an MP4 unless the file answers a single byte range.
+function videoByteRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!m || (m[1] === '' && m[2] === '')) return { unsatisfiable: true };
+  let start = m[1] === '' ? null : Number(m[1]);
+  let end = m[2] === '' ? null : Number(m[2]);
+  if (start === null) {
+    if (!Number.isInteger(end) || end <= 0) return { unsatisfiable: true };
+    start = Math.max(0, size - end);
+    end = size - 1;
+  } else if (!Number.isInteger(start) || start < 0) return { unsatisfiable: true };
+  else if (end === null || !Number.isInteger(end) || end >= size) end = size - 1;
+  if (start >= size || start > end) return { unsatisfiable: true };
+  return { start, end };
+}
 async function serveFile(req, res, file, extra = {}) {
   let st; try { st = await fsp.stat(file); if (!st.isFile()) throw 0; } catch { return err(res, 404, 'Not found'); }
   const type = MIME[extOf(file)] || 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'X-Content-Type-Options': 'nosniff', ...extra });
+  const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', ...extra };
+  const range = type.startsWith('video/') ? req.headers.range : '';
+  if (range) {
+    const part = videoByteRange(range, st.size);
+    headers['Accept-Ranges'] = 'bytes';
+    if (part.unsatisfiable) {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${st.size}` });
+      return res.end();
+    }
+    const { start, end } = part;
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 });
+    if (req.method === 'HEAD') return res.end();
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  if (type.startsWith('video/')) headers['Accept-Ranges'] = 'bytes';
+  res.writeHead(200, { ...headers, 'Content-Length': st.size });
   if (req.method === 'HEAD') return res.end();
   fs.createReadStream(file).pipe(res);
 }
 const htmlCache = {};
+// Link cards always name the public proofs host. PUBLIC_URL is that host in production.
+function fxPublicOrigin() {
+  return PUBLIC_URL || 'https://proofs.ybicreative.com.au';
+}
+function fxShareHead() {
+  const asset = `${base()}/assets/img`;
+  const image = `${fxPublicOrigin()}${asset}/fx-og.png`;
+  return `<link rel="icon" href="${asset}/fx-favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="16x16" href="${asset}/fx-icon-16.png"><link rel="icon" type="image/png" sizes="32x32" href="${asset}/fx-icon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="${asset}/fx-icon-192.png"><link rel="icon" type="image/png" sizes="512x512" href="${asset}/fx-icon-512.png"><link rel="apple-touch-icon" sizes="180x180" href="${asset}/fx-icon-180.png"><meta property="og:site_name" content="YBI FX"><meta property="og:title" content="YBI FX"><meta property="og:image" content="${image}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:type" content="image/png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="YBI FX"><meta name="twitter:image" content="${image}">`;
+}
 function fxHtml(html) {
   const c = fxContact();
   const ybiFoot = '<span><a href="tel:+61354442127">(03) 5444 2127</a> &nbsp;·&nbsp; <a href="mailto:website@ybicreative.com.au">website@ybicreative.com.au</a> &nbsp;·&nbsp; <a href="https://www.ybicreative.com.au" target="_blank" rel="noopener">ybicreative.com.au</a></span>';
   const fxFoot = `<span>${c.address} &nbsp;·&nbsp; <a href="${phoneHref(c.phone)}">Office ${c.phone}</a> &nbsp;·&nbsp; <a href="${phoneHref(c.direct)}">Direct ${c.direct}</a> &nbsp;·&nbsp; <a href="mailto:${c.email}">${c.email}</a> &nbsp;·&nbsp; <a href="https://www.ybifx.com" target="_blank" rel="noopener">www.ybifx.com</a></span>`;
+  const ybiIcons = `<link rel="icon" href="${base()}/assets/img/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="${base()}/assets/img/favicon-32.png"><link rel="apple-touch-icon" href="${base()}/assets/img/favicon-180.png">`;
   return html
+    .replaceAll(ybiIcons, fxShareHead())
     .replaceAll(ybiFoot, fxFoot)
     .replace(/<link rel="preload" as="image" href="[^"]*engine-1280\.webp"[^>]*>/, `<link rel="preload" as="image" href="${base()}/assets/img/fx-hero-poster-1920.webp">`)
     .replaceAll('assets/img/logo-white-300.png', 'assets/img/ybifx-logo-white.svg')

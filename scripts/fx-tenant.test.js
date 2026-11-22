@@ -67,7 +67,45 @@ const lines = [
     assert.ok(fxPage.text.includes(`${FX}/assets/img/ybifx-logo-white.svg`), 'fx logo url');
     assert.ok(fxPage.text.includes(`${FX}/assets/app.css`), 'fx css url');
     assert.ok(fxPage.text.includes('<title>Artwork proofs · YBI FX Proofs</title>'));
-    assert.ok(!fxPage.text.includes('property="og:'));
+    const ogImage = `https://proofs.ybicreative.com.au${FX}/assets/img/fx-og.png`;
+    const assertFxShare = (html, label) => {
+      assert.ok(html.includes('property="og:site_name" content="YBI FX"'), label);
+      assert.ok(html.includes('property="og:title" content="YBI FX"'), label);
+      assert.ok(html.includes(`property="og:image" content="${ogImage}"`), label);
+      assert.ok(html.includes('property="og:image:width" content="1200"'), label);
+      assert.ok(html.includes('property="og:image:height" content="630"'), label);
+      assert.ok(html.includes('name="twitter:card" content="summary_large_image"'), label);
+      assert.ok(html.includes(`name="twitter:image" content="${ogImage}"`), label);
+      for (const file of ['fx-favicon.ico', 'fx-icon-16.png', 'fx-icon-32.png', 'fx-icon-180.png', 'fx-icon-192.png', 'fx-icon-512.png', 'fx-og.png']) {
+        assert.ok(html.includes(`${FX}/assets/img/${file}`), `${label} ${file}`);
+      }
+      assert.ok(!html.includes('/assets/img/favicon.ico') && !html.includes('/assets/img/favicon-32.png') && !html.includes('/assets/img/favicon-180.png'), `${label} keeps the YBI icons off`);
+    };
+    const assertYbiShare = (html, label) => {
+      assert.ok(!html.includes('property="og:'), label);
+      assert.ok(!html.includes('twitter:card'), label);
+      assert.ok(!html.includes('fx-og.png') && !html.includes('fx-icon-') && !html.includes('fx-favicon'), label);
+      assert.ok(html.includes('/assets/img/favicon-32.png') && html.includes('/assets/img/favicon-180.png'), label);
+    };
+    assertFxShare(fxPage.text, 'fx login');
+    function pngSize(file) {
+      const buf = fs.readFileSync(file);
+      assert.strictEqual(buf.toString('ascii', 1, 4), 'PNG');
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    const imgDir = path.join(__dirname, '../public/assets/img');
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-og.png')), { width: 1200, height: 630 });
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-icon-180.png')), { width: 180, height: 180 });
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-icon-512.png')), { width: 512, height: 512 });
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-icon-192.png')), { width: 192, height: 192 });
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-icon-32.png')), { width: 32, height: 32 });
+    assert.deepStrictEqual(pngSize(path.join(imgDir, 'fx-icon-16.png')), { width: 16, height: 16 });
+    const og = await req(server, 'GET', `${FX}/assets/img/fx-og.png`);
+    assert.strictEqual(og.status, 200);
+    assert.ok(og.headers['content-type'].includes('image/png'));
+    const ico = await req(server, 'GET', `${FX}/assets/img/fx-favicon.ico`);
+    assert.strictEqual(ico.status, 200);
+    assert.ok(ico.headers['content-type'].includes('image/x-icon'));
     assert.ok(fxPage.text.includes('51 Pratts Park Road, Strathdale VIC 3550'), 'fx footer address');
     assert.ok(fxPage.text.includes('Direct 0419 386 142'), 'fx direct number');
     assert.ok(fxPage.text.includes('>www.ybifx.com<'), 'fx site label');
@@ -75,6 +113,7 @@ const lines = [
     const ybiPage = await req(server, 'GET', `${Y}/`);
     assert.ok(ybiPage.text.includes('data-brand="creative"'));
     assert.ok(ybiPage.text.includes('<title>Artwork proofs · YBI Creative</title>'));
+    assertYbiShare(ybiPage.text, 'ybi login');
     assert.ok(!ybiPage.text.includes('ybifx-logo-white.svg'));
     assert.ok(!ybiPage.text.includes('Strathdale'), 'YBI pages keep their own address');
     assert.ok(!ybiPage.text.includes('0419 386 142'));
@@ -108,6 +147,10 @@ const lines = [
     const fxStudio = await req(server, 'GET', `${FX}/studio`, { headers: { Cookie: fxCookie } });
     assert.strictEqual(fxStudio.status, 200);
     assert.ok(fxStudio.text.includes('<title>Studio · YBI FX Proofs</title>'), fxStudio.text.match(/<title>[^<]+<\/title>/)[0]);
+    assertFxShare(fxStudio.text, 'fx studio');
+    const fxSurvey = await req(server, 'GET', `${FX}/studio/survey`, { headers: { Cookie: fxCookie } });
+    assert.strictEqual(fxSurvey.status, 200);
+    assertFxShare(fxSurvey.text, 'fx survey');
     assert.ok(fxStudio.text.includes('/assets/img/fx-hero-poster-1920.webp'), 'fx preloads the truck poster');
     assert.ok(!fxStudio.text.includes('engine-1280.webp'), 'fx studio does not preload the engine');
     assert.ok(!fxStudio.text.includes('fx-hero.webp'));
@@ -124,6 +167,40 @@ const lines = [
     assert.ok(hero.headers['content-type'].includes('video/mp4') || hero.text.length > 1000);
     const poster = await req(server, 'GET', `${FX}/assets/img/fx-hero-poster-1920.webp`);
     assert.strictEqual(poster.status, 200);
+    const quoteReview = fs.readFileSync(path.join(__dirname, '../public/assets/quote-review.js'), 'utf8');
+    const filmAt = quoteReview.indexOf('${quoteFilm()}');
+    assert.ok(quoteReview.indexOf('${decision(accepted, mail)}') < filmAt, 'the film sits after the accept area');
+    assert.ok(quoteReview.includes("if (!FX) return '';"), 'YBI quotes do not render the film');
+    assert.ok(quoteReview.includes('controls playsinline') && quoteReview.includes('preload="metadata"') && quoteReview.includes('fx-quote-video-poster.jpg') && quoteReview.includes('fx-quote-video.mp4'));
+    const filmFn = quoteReview.slice(quoteReview.indexOf('function quoteFilm()'), quoteReview.indexOf('function showUntil'));
+    assert.ok(filmFn.includes('Learn more about YBI-FX Truck Art'), 'fx quote link label');
+    assert.ok(filmFn.includes('href="https://www.ybifx.com" target="_blank" rel="noopener"'), 'fx quote link opens ybifx in a new tab');
+    assert.ok(filmFn.indexOf('fx-quote-video.mp4') < filmFn.indexOf('Learn more about YBI-FX Truck Art'), 'the link sits under the film');
+    assert.ok(!quoteReview.includes('autoplay'), 'the quote film does not autoplay');
+    assert.ok(!fs.readFileSync(path.join(__dirname, '../public/assets/studio.js'), 'utf8').includes('fx-quote-video'), 'studio editor has no quote film');
+    assert.ok(!fs.readFileSync(path.join(__dirname, '../public/assets/review.js'), 'utf8').includes('fx-quote-video'), 'proof view has no quote film');
+    assert.ok(!fs.readFileSync(path.join(__dirname, '../quote-pdf.js'), 'utf8').includes('fx-quote-video'), 'quote PDF has no film');
+    assert.ok(!fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8').includes('fx-quote-video'), 'mail and pages do not embed the film');
+    assert.ok(css.includes('.q-promo__vid{display:block;width:100%;max-width:100%;min-width:0;height:auto;aspect-ratio:16/9'));
+    assert.ok(css.includes('.q-promo__more .btn{max-width:100%;height:auto;min-height:52px') && css.includes('white-space:normal'), 'the ybifx link can wrap on a phone');
+    const filmHead = await req(server, 'HEAD', `${FX}/assets/video/fx-quote-video.mp4`);
+    assert.strictEqual(filmHead.status, 200);
+    assert.ok(filmHead.headers['content-type'].includes('video/mp4'));
+    assert.strictEqual(filmHead.headers['accept-ranges'], 'bytes');
+    const filmSize = Number(filmHead.headers['content-length']);
+    assert.ok(filmSize > 1000000, 'quote film bytes');
+    const filmClip = await req(server, 'GET', `${FX}/assets/video/fx-quote-video.mp4`, { headers: { Range: 'bytes=0-3' } });
+    assert.strictEqual(filmClip.status, 206);
+    assert.strictEqual(filmClip.headers['content-range'], `bytes 0-3/${filmSize}`);
+    assert.strictEqual(filmClip.headers['content-length'], '4');
+    const filmMiss = await req(server, 'GET', `${FX}/assets/video/fx-quote-video.mp4`, { headers: { Range: 'bytes=999999999-999999999' } });
+    assert.strictEqual(filmMiss.status, 416);
+    const filmPoster = await req(server, 'GET', `${FX}/assets/img/fx-quote-video-poster.jpg`);
+    assert.strictEqual(filmPoster.status, 200);
+    assert.ok(filmPoster.headers['content-type'].includes('image/jpeg'));
+    const ybiQuotePage = await req(server, 'GET', `${Y}/quote/0123456789abcdef`);
+    assert.ok(!ybiQuotePage.text.includes('fx-quote-video'));
+    assertYbiShare(ybiQuotePage.text, 'ybi quote');
     assert.ok(!fxStudio.text.includes('/studio/calendar'), 'fx nav has no calendar');
     assert.ok(!fxStudio.text.includes('data-tools'), 'fx nav has no tools menu');
     for (const path of ['/studio/quote', '/studio/settings']) {
@@ -143,10 +220,15 @@ const lines = [
     assert.ok(ybiStudio.text.includes('/studio/calendar'));
     assert.ok(ybiStudio.text.includes('data-tools'));
     assert.ok(!ybiStudio.text.includes('YBI FX Proofs'));
+    assertYbiShare(ybiStudio.text, 'ybi studio');
     const fxQuotePage = await req(server, 'GET', `${FX}/quote/0123456789abcdef`);
     assert.ok(fxQuotePage.text.includes('<title>Quote · YBI FX Proofs</title>'));
+    assertFxShare(fxQuotePage.text, 'fx quote');
     const fxProofPage = await req(server, 'GET', `${FX}/FX-1`);
     assert.ok(fxProofPage.text.includes('<title>Artwork proof · YBI FX Proofs</title>'));
+    assertFxShare(fxProofPage.text, 'fx proof');
+    const ybiProofPage = await req(server, 'GET', `${Y}/30434`);
+    assertYbiShare(ybiProofPage.text, 'ybi proof');
     const halftoneJs = await req(server, 'GET', `${FX}/assets/halftone.js`);
     assert.ok(halftoneJs.text.includes('Halftone · YBI FX Proofs'));
     const radioJs = await req(server, 'GET', `${FX}/assets/radio.js`);

@@ -67,6 +67,14 @@ function lineRows(lines) {
   return `<div class="q-scroll"><table class="qlines"><thead><tr><th>Description</th><th class="qty">Qty</th><th class="price">Price</th><th class="amt">Amount</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.description) || '—'}</td><td class="qty">${esc(line.qty || '1')}</td><td class="price">${line.price ? audPrice(line.price) : '—'}</td><td class="amt">${aud(line.amount)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
+// Client FX quotes only. The studio editor, YBI quotes, PDFs and mail do not use this.
+function quoteFilm() {
+  if (!FX) return '';
+  const poster = `${B}/assets/img/fx-quote-video-poster.jpg`;
+  const src = `${B}/assets/video/fx-quote-video.mp4`;
+  return `<figure class="q-promo"><video class="q-promo__vid" controls playsinline webkit-playsinline preload="metadata" poster="${esc(poster)}" width="1920" height="1080" aria-label="YBI FX truck art"><source src="${esc(src)}" type="video/mp4"></video></figure><p class="q-promo__more"><a class="btn btn--ghost" href="https://www.ybifx.com" target="_blank" rel="noopener">Learn more about YBI-FX Truck Art</a></p>`;
+}
+
 function showUntil(iso) {
   const [y, m, d] = String(iso || '').split('-').map(Number);
   if (!y || !m || !d) return iso || '—';
@@ -96,6 +104,7 @@ function render(openMail) {
     </div>
     <div class="btns" style="margin-top:18px">${FX ? `<a class="btn btn--ghost" href="${B}/api/quote/${encodeURIComponent(quoteId)}/pdf${kq}">Download PDF</a>` : ''}</div>
     <div style="margin-top:22px">${decision(accepted, mail)}</div>
+    ${quoteFilm()}
   </div>`;
   bind(openMail ? mail : '');
 }
