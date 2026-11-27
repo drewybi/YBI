@@ -56,11 +56,24 @@ let pdfjsP;
 const pdfjs = () => pdfjsP ||= import(B + '/vendor/pdfjs/pdf.min.mjs').then(m => { m.GlobalWorkerOptions.workerSrc = B + '/vendor/pdfjs/pdf.worker.min.mjs'; return m; });
 
 // Fit the whole page in the stage, then pull back so the tight axis keeps about
-// 10% clear on each side (83% of a fit-to-view). Zoom multiplies that base.
+// 10% clear on each side (83% of a fit-to-view). That fit stays at or under the
+// page's native size: 1 CSS px per PDF point. A small page is not enlarged to
+// fill the stage. Zoom multiplies the capped fit and may go above 100%.
 export const PDF_FIT_PAD = 1.2;
 export function pdfFitScale(pageWidth, pageHeight, boxWidth, boxHeight, zoom = 1) {
   if (!(pageWidth > 0) || !(pageHeight > 0) || !(boxWidth > 0) || !(boxHeight > 0)) return 0;
-  return Math.min(boxWidth / pageWidth, boxHeight / pageHeight) / PDF_FIT_PAD * zoom;
+  const fit = Math.min(boxWidth / pageWidth, boxHeight / pageHeight) / PDF_FIT_PAD;
+  return Math.min(1, fit) * zoom;
+}
+// CSS scale for a raster proof. 1 is the file's own pixel size.
+// Inline fits the whole image. Full screen, and any manual zoom, fit the width
+// so a tall proof can be read large. A small image is not enlarged to fill the
+// stage. Zoom multiplies the capped fit and may go above 100%.
+export function imageFitScale(naturalWidth, naturalHeight, boxWidth, boxHeight, zoom = 1, widthOnly = false) {
+  if (!(naturalWidth > 0) || !(naturalHeight > 0) || !(boxWidth > 0) || !(boxHeight > 0)) return 0;
+  const fitW = boxWidth / naturalWidth, fitH = boxHeight / naturalHeight;
+  const fit = widthOnly ? fitW : Math.min(fitW, fitH);
+  return Math.min(1, fit) * zoom;
 }
 // Space above and below a page so it sits centred in the stage. That is the fit padding.
 export function pdfStackEdgePad(stageHeight, pageHeight) {
@@ -97,6 +110,7 @@ export function engineBand(inner) {
 // A zip is not shown as pages. Several JPG/PNG files in one version are pages: files = [{ name, url }].
 // A multi-page PDF is one vertical stack — scroll the stage to read every page. The default
 // scale fits each page in the stage, then pulls back (pdfFitScale) so the page is not edge to edge.
+// A page or image smaller than that fit stays at its native size and sits centred in the stage.
 // ⤢ opens a real viewport-sized stage. opts.place lets the client drop numbered stickies.
 // opts.pins = [{id,n,page,x,y,text}] with x/y as 0–1 fractions of the page.
 // opts.labelledDownload (client proof page and staff studio) swaps the toolbar arrow for a DOWNLOAD FILE button.
@@ -326,11 +340,14 @@ export async function mountViewer(root, version, opts = {}) {
     const sizeImage = () => {
       if (!img || !img.naturalWidth || !stage.clientWidth) return;
       const box = availBox();
-      const fitW = box.w / img.naturalWidth, fitH = box.h / img.naturalHeight;
       // Inline shows the whole image. Full screen (and zoom) fit the width so a tall proof can be read large.
-      const fit = (expanded || zoomLevel > 0) ? fitW : Math.min(fitW, fitH);
-      img.style.width = Math.max(1, Math.round(img.naturalWidth * fit * ZOOMS[zoomLevel])) + 'px';
+      const scale = imageFitScale(img.naturalWidth, img.naturalHeight, box.w, box.h, ZOOMS[zoomLevel], expanded || zoomLevel > 0);
+      const cssW = Math.max(1, Math.round(img.naturalWidth * scale));
+      const cssH = Math.max(1, Math.round(img.naturalHeight * scale));
+      img.style.width = cssW + 'px';
       img.style.height = 'auto';
+      // A proof smaller than the stage stays centred, including after a zoom that is still inside the stage.
+      stage.classList.toggle('is-contained', cssW <= box.w + 1 && cssH <= box.h + 1);
     };
     render = sizeImage;
     const showImage = target => {
@@ -477,6 +494,21 @@ export async function mountViewer(root, version, opts = {}) {
     const r = slot.getBoundingClientRect(), sr = stage.getBoundingClientRect();
     stage.scrollTop += (r.top + a.frac * r.height) - sr.top;
   }
+  // A page shorter than the stage stays centred. Fit and the native-size cap both
+  // leave zoom 0 inside the stage; fullscreen and resize change that stage, so
+  // the scroll anchor alone would leave a short last page sitting low.
+  function centerCurrentPage() {
+    const meta = metas[page - 1];
+    if (!meta) return;
+    const h = parseFloat(meta.canvas.style.height) || 0;
+    if (!(h > 0) || h >= stage.clientHeight - 1) return;
+    const cr = meta.slot.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    const delta = (cr.top + cr.height / 2) - (sr.top + sr.height / 2);
+    if (Math.abs(delta) < 1) return;
+    scrollLock = true;
+    stage.scrollTop = Math.max(0, stage.scrollTop + delta);
+    scrollLock = false;
+  }
   function visibleIdx() {
     if (n <= 8) return metas.map((_, i) => i);
     const sr = stage.getBoundingClientRect();
@@ -559,6 +591,7 @@ export async function mountViewer(root, version, opts = {}) {
       restoreAnchor(anchor);
       scrollLock = false;
     }
+    centerCurrentPage();
     updatePager();
     layoutPins();
     await requestPaint();
